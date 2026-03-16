@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = "127.0.0.1"
     POSTGRES_PORT: int = 5433
 
+    HF_TOKEN: str | None = None
+
     @property
     def DATABASE_URL(self) -> str:
         from urllib.parse import quote_plus

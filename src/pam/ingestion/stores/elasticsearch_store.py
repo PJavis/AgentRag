@@ -5,7 +5,10 @@ import uuid
 
 class ElasticsearchStore:
     def __init__(self):
-        self.client = AsyncElasticsearch(["http://localhost:9200"])
+        self.client = AsyncElasticsearch(
+            ["http://localhost:9200"],
+            headers={"Accept": "application/vnd.elasticsearch+json; compatible-with=8"}
+        )
         self.index_name = "pam_segments"
 
     async def index_segments(self, chunks: List[Dict], document_title: str):

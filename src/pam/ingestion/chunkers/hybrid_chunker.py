@@ -1,4 +1,5 @@
 # src/pam/ingestion/chunkers/hybrid_chunker.py
+import hashlib
 from typing import List, Dict
 import tiktoken  # dùng để đếm token chính xác (OpenAI style)
 

@@ -925,6 +925,15 @@ wheels = [
 ]
 
 [[package]]
+name = "graphiti"
+version = "0.1.13"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/13/e7e4eba09504b0831da305414cdb7b22121d883d9690b45e1e8fcff3bad3/graphiti-0.1.13.tar.gz", hash = "sha256:6d2b72fc32f6db3861182cf73753ee3bc5f4b32f4850372cb15a7e3cb874b462", size = 8459, upload-time = "2018-11-22T10:32:02.393Z" }
+
+[[package]]
 name = "greenlet"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1963,6 +1972,7 @@ dependencies = [
     { name = "docling" },
     { name = "elasticsearch", extra = ["async"] },
     { name = "fastapi", extra = ["standard"] },
+    { name = "graphiti" },
     { name = "huggingface-hub" },
     { name = "openai" },
     { name = "psycopg", extra = ["binary"] },
@@ -1982,6 +1992,7 @@ requires-dist = [
     { name = "docling", specifier = ">=2.80.0" },
     { name = "elasticsearch", extras = ["async"], specifier = ">=9.3.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.135.1" },
+    { name = "graphiti", specifier = ">=0.1.13" },
     { name = "huggingface-hub", specifier = ">=0.36.2" },
     { name = "openai", specifier = ">=2.28.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.3" },

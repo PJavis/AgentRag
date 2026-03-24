@@ -21,9 +21,7 @@ from .chunkers.hybrid_chunker import HybridChunker
 from .embedders.hf_inference_embedder import HFInferenceEmbedder
 from .stores.postgres_store import PostgresStore
 from .stores.elasticsearch_store import ElasticsearchStore
-
-# Graphiti (tạm thời comment nếu chưa tạo GraphitiService)
-# from src.pam.graph.graphiti_service import GraphitiService
+from src.pam.graph.graphiti_service import GraphitiService
 
 engine = create_async_engine(settings.DATABASE_URL)
 # AsyncSessionLocal đã được định nghĩa ở src/pam/database/__init__.py
@@ -68,14 +66,18 @@ async def ingest_folder(folder_path: str):
                 # Index ES
                 await es_store.index_segments(chunks, doc["title"])
 
-                # Graphiti sync (comment tạm nếu chưa có GraphitiService)
-                # graph_results = await graph_service.sync_chunks(chunks, doc_id)
-                # await session.execute(
-                #     update(Document)
-                #     .where(Document.id == doc_id)
-                #     .values(graph_synced=True)
-                # )
-                # await session.commit()
+                # === Graphiti sync ===
+                graph_service = GraphitiService()
+                await graph_service.build_indices()
+                graph_results = await graph_service.sync_chunks(chunks, str(doc_id))
+
+                # Update flag graph_synced
+                await session.execute(
+                    update(Document)
+                    .where(Document.id == doc_id)
+                    .values(graph_synced=True)
+                )
+                await session.commit()
 
                 ingested_count += 1
 

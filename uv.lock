@@ -219,6 +219,15 @@ wheels = [
 ]
 
 [[package]]
+name = "backoff"
+version = "2.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba", size = 17001, upload-time = "2022-10-05T19:19:32.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/73/b6e24bd22e6720ca8ee9a85a0c4a2971af8497d8f3193fa05390cbd46e09/backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8", size = 15148, upload-time = "2022-10-05T19:19:30.546Z" },
+]
+
+[[package]]
 name = "beautifulsoup4"
 version = "4.14.3"
 source = { registry = "https://pypi.org/simple" }
@@ -563,37 +572,27 @@ wheels = [
 
 [[package]]
 name = "elastic-transport"
-version = "9.2.1"
+version = "8.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
-    { name = "sniffio" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/23/0a/a92140b666afdcb9862a16e4d80873b3c887c1b7e3f17e945fc3460edf1b/elastic_transport-9.2.1.tar.gz", hash = "sha256:97d9abd638ba8aa90faa4ca1bf1a18bde0fe2088fbc8757f2eb7b299f205773d", size = 77403, upload-time = "2025-12-23T11:54:12.849Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/54/d498a766ac8fa475f931da85a154666cc81a70f8eb4a780bc8e4e934e9ac/elastic_transport-8.17.1.tar.gz", hash = "sha256:5edef32ac864dca8e2f0a613ef63491ee8d6b8cfb52881fa7313ba9290cac6d2", size = 73425, upload-time = "2025-03-13T07:28:30.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/e6/a42b600ae8b808371f740381f6c32050cad93f870d36cc697b8b7006bf7c/elastic_transport-9.2.1-py3-none-any.whl", hash = "sha256:39e1a25e486af34ce7aa1bc9005d1c736f1b6fb04c9b64ea0604ded5a61fc1d4", size = 65327, upload-time = "2025-12-23T11:54:11.681Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/cd/b71d5bc74cde7fc6fd9b2ff9389890f45d9762cbbbf81dc5e51fd7588c4a/elastic_transport-8.17.1-py3-none-any.whl", hash = "sha256:192718f498f1d10c5e9aa8b9cf32aed405e469a7f0e9d6a8923431dbb2c59fb8", size = 64969, upload-time = "2025-03-13T07:28:29.031Z" },
 ]
 
 [[package]]
 name = "elasticsearch"
-version = "9.3.0"
+version = "8.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
     { name = "elastic-transport" },
-    { name = "python-dateutil" },
-    { name = "sniffio" },
-    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/15/283459c9299d412ffa2aaab69b082857631c519233f5491d6c567e3320ca/elasticsearch-9.3.0.tar.gz", hash = "sha256:f76e149c0a22d5ccbba58bdc30c9f51cf894231b359ef4fd7e839b558b59f856", size = 893538, upload-time = "2026-02-03T20:26:38.914Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/b0/735e07106fe67c20b95ac02feb3b843b5a36df95bdd79eac21b7d43fa34b/elasticsearch-8.15.0.tar.gz", hash = "sha256:d4702b4fa698ef154c6f1187988192343fb5505aee97fc4450a6d20df1683f35", size = 412860, upload-time = "2024-08-13T16:01:28.205Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/37/3a196f8918743f2104cb66b1f56218079ecac6e128c061de7df7f4faef02/elasticsearch-9.3.0-py3-none-any.whl", hash = "sha256:67bd2bb4f0800f58c2847d29cd57d6e7bf5bc273483b4f17421f93e75ba09f39", size = 979405, upload-time = "2026-02-03T20:26:34.552Z" },
-]
-
-[package.optional-dependencies]
-async = [
-    { name = "aiohttp" },
+    { url = "https://files.pythonhosted.org/packages/ab/dc/87c47f9c42f8188d24f6c589ed0e8168a0fef7091e5ccffdbc950be7ab66/elasticsearch-8.15.0-py3-none-any.whl", hash = "sha256:7ec4d0771b8f6f76c6331e61b408261f9307264735ec7f2539f580824faaafe3", size = 523322, upload-time = "2024-08-13T16:01:23.765Z" },
 ]
 
 [[package]]
@@ -925,13 +924,18 @@ wheels = [
 ]
 
 [[package]]
-name = "graphiti"
-version = "0.1.13"
-source = { registry = "https://pypi.org/simple" }
+name = "graphiti-core"
+version = "0.28.2"
+source = { git = "https://github.com/getzep/graphiti.git#d631437dfac73b7b1af74042b6928eca7c29fd76" }
 dependencies = [
-    { name = "six" },
+    { name = "neo4j" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "posthog" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/13/e7e4eba09504b0831da305414cdb7b22121d883d9690b45e1e8fcff3bad3/graphiti-0.1.13.tar.gz", hash = "sha256:6d2b72fc32f6db3861182cf73753ee3bc5f4b32f4850372cb15a7e3cb874b462", size = 8459, upload-time = "2018-11-22T10:32:02.393Z" }
 
 [[package]]
 name = "greenlet"
@@ -1656,6 +1660,18 @@ wheels = [
 ]
 
 [[package]]
+name = "neo4j"
+version = "6.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/01/d6ce65e4647f6cb2b9cca3b813978f7329b54b4e36660aaec1ddf0ccce7a/neo4j-6.1.0.tar.gz", hash = "sha256:b5dde8c0d8481e7b6ae3733569d990dd3e5befdc5d452f531ad1884ed3500b84", size = 239629, upload-time = "2026-01-12T11:27:34.777Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/5c/ee71e2dd955045425ef44283f40ba1da67673cf06404916ca2950ac0cd39/neo4j-6.1.0-py3-none-any.whl", hash = "sha256:3bd93941f3a3559af197031157220af9fd71f4f93a311db687bd69ffa417b67d", size = 325326, upload-time = "2026-01-12T11:27:33.196Z" },
+]
+
+[[package]]
 name = "networkx"
 version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1967,12 +1983,13 @@ name = "pam"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "alembic" },
     { name = "cachetools" },
     { name = "docling" },
-    { name = "elasticsearch", extra = ["async"] },
+    { name = "elasticsearch" },
     { name = "fastapi", extra = ["standard"] },
-    { name = "graphiti" },
+    { name = "graphiti-core" },
     { name = "huggingface-hub" },
     { name = "openai" },
     { name = "psycopg", extra = ["binary"] },
@@ -1987,12 +2004,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "cachetools", specifier = ">=7.0.5" },
     { name = "docling", specifier = ">=2.80.0" },
-    { name = "elasticsearch", extras = ["async"], specifier = ">=9.3.0" },
+    { name = "elasticsearch", specifier = "==8.15.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.135.1" },
-    { name = "graphiti", specifier = ">=0.1.13" },
+    { name = "graphiti-core", git = "https://github.com/getzep/graphiti.git" },
     { name = "huggingface-hub", specifier = ">=0.36.2" },
     { name = "openai", specifier = ">=2.28.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.3" },
@@ -2172,6 +2190,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/85/68/7717bd9e63ed254617a7d3dc9260904fb736d6ea203e58ffddcb186c64e4/polyfactory-3.3.0.tar.gz", hash = "sha256:237258b6ff43edf362ffd1f68086bb796466f786adfa002b0ac256dbf2246e9a", size = 348668, upload-time = "2026-02-22T09:46:28.01Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/34/b6f19941adcdaf415b5e8a8d577499f5b6a76b59cbae37f9b125a9ffe9f2/polyfactory-3.3.0-py3-none-any.whl", hash = "sha256:686abcaa761930d3df87b91e95b26b8d8cb9fdbbbe0b03d5f918acff5c72606e", size = 62707, upload-time = "2026-02-22T09:46:25.985Z" },
+]
+
+[[package]]
+name = "posthog"
+version = "7.9.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "backoff" },
+    { name = "distro" },
+    { name = "python-dateutil" },
+    { name = "requests" },
+    { name = "six" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/a7/2865487853061fbd62383492237b546d2d8f7c1846272350d2b9e14138cd/posthog-7.9.12.tar.gz", hash = "sha256:ebabf2eb2e1c1fbf22b0759df4644623fa43cc6c9dcbe9fd429b7937d14251ec", size = 176828, upload-time = "2026-03-12T09:01:15.184Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/a9/7a803aed5a5649cf78ea7b31e90d0080181ba21f739243e1741a1e607f1f/posthog-7.9.12-py3-none-any.whl", hash = "sha256:7175bd1698a566bfea98a016c64e3456399f8046aeeca8f1d04ae5bf6c5a38d0", size = 202469, upload-time = "2026-03-12T09:01:13.38Z" },
 ]
 
 [[package]]
@@ -2738,6 +2773,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/52/a9/0c0db8d37b2b8a645666f7fd8accea4c6224e013c42b1d5c17c93590cd06/python_pptx-1.0.2.tar.gz", hash = "sha256:479a8af0eaf0f0d76b6f00b0887732874ad2e3188230315290cd1f9dd9cc7095", size = 10109297, upload-time = "2024-08-07T17:33:37.772Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d9/4f/00be2196329ebbff56ce564aa94efb0fbc828d00de250b1980de1a34ab49/python_pptx-1.0.2-py3-none-any.whl", hash = "sha256:160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba", size = 472788, upload-time = "2024-08-07T17:33:28.192Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.1.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/db/b8721d71d945e6a8ac63c0fc900b2067181dbb50805958d4d4661cf7d277/pytz-2026.1.post1.tar.gz", hash = "sha256:3378dde6a0c3d26719182142c56e60c7f9af7e968076f31aae569d72a0358ee1", size = 321088, upload-time = "2026-03-03T07:47:50.683Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/99/781fe0c827be2742bcc775efefccb3b048a3a9c6ce9aec0cbf4a101677e5/pytz-2026.1.post1-py2.py3-none-any.whl", hash = "sha256:f2fd16142fda348286a75e1a524be810bb05d444e5a081f37f7affc635035f7a", size = 510489, upload-time = "2026-03-03T07:47:49.167Z" },
 ]
 
 [[package]]

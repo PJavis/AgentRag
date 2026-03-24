@@ -20,6 +20,9 @@ class Settings(BaseSettings):
 
     HF_TOKEN: str | None = None
 
+    NEO4J_PASSWORD: str = "neo4j123456"   # default từ docker-compose
+    NEO4J_USER: str = "neo4j"
+
     @property
     def DATABASE_URL(self) -> str:
         from urllib.parse import quote_plus

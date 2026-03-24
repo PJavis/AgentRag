@@ -1,5 +1,5 @@
 # src/pam/database/models.py
-from sqlalchemy import Column, Integer, String, UUID, DateTime, func, ForeignKey, Enum, JSON, Boolean
+from sqlalchemy import Column, Integer, String, UUID, DateTime, func, ForeignKey, Enum, JSON, Boolean, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from .base import Base
@@ -27,6 +27,9 @@ class Document(Base):
     title = Column(String, nullable=False)
     content_hash = Column(String(64))
     graph_synced = Column(Boolean, default=False)
+    #: pending | queued | processing | done | failed (NULL = bản ghi cũ trước migration)
+    graph_status = Column(String(32), nullable=True)
+    graph_last_error = Column(Text, nullable=True)
     modified_at = Column(DateTime(timezone=True))
     last_synced = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -2,6 +2,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from urllib.parse import quote_plus  # để escape password an toàn
+from typing import Literal
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -22,6 +23,13 @@ class Settings(BaseSettings):
 
     NEO4J_PASSWORD: str = "neo4j123456"   # default từ docker-compose
     NEO4J_USER: str = "neo4j"
+
+    #: sync: Graphiti chạy ngay trong ingest. async: đưa vào hàng đợi (cần worker, xem main.py lifespan).
+    GRAPH_INGEST_MODE: Literal["sync", "async"] = "async"
+    #: Chunk cho Postgres / Elasticsearch / embed
+    SEARCH_CHUNK_MAX_TOKENS: int = 512
+    #: Chunk riêng cho Graphiti (thường lớn hơn → ít episode, ít vòng LLM)
+    GRAPH_CHUNK_MAX_TOKENS: int = 1024
 
     @property
     def DATABASE_URL(self) -> str:

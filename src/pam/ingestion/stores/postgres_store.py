@@ -54,7 +54,9 @@ class PostgresStore:
                 source_id=doc_data["source_id"],
                 title=doc_data["title"],
                 content_hash=doc_data["content_hash"],
-                graph_synced=False,  # sẽ sync graph sau
+                graph_synced=False,
+                graph_status="pending",
+                graph_last_error=None,
             )
             session.add(doc)
             await session.flush()  # lấy doc.id

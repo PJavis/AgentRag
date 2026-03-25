@@ -41,7 +41,12 @@ async def _get_graph_service() -> GraphitiService:
 
 async def process_graph_job(job: GraphIngestJob) -> None:
     graph_svc = await _get_graph_service()
-    chunker = HybridChunker(max_tokens=settings.GRAPH_CHUNK_MAX_TOKENS)
+    chunker = HybridChunker(
+        max_tokens=settings.GRAPH_CHUNK_MAX_TOKENS,
+        overlap_tokens=settings.GRAPH_CHUNK_OVERLAP_TOKENS,
+        tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
+        split_on_headings=True,
+    )
     path = Path(job.folder_path) / job.source_id
     content = path.read_text(encoding="utf-8")
     chunks = chunker.chunk(content, metadata={"document_title": job.title})
@@ -55,7 +60,11 @@ async def process_graph_job(job: GraphIngestJob) -> None:
         await session.commit()
 
     try:
-        await graph_svc.sync_chunks(chunks, str(job.document_id))
+        await graph_svc.sync_chunks(
+            chunks=chunks,
+            group_id=job.source_id,
+            document_ref=str(job.document_id),
+        )
     except Exception as e:
         logger.exception("Graph ingest failed for document %s", job.document_id)
         async with AsyncSessionLocal() as session:

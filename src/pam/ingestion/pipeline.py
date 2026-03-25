@@ -14,7 +14,7 @@ from src.pam.config import settings
 from .connectors.markdown import MarkdownConnector
 from .parsers.docling_parser import DoclingParser
 from .chunkers.hybrid_chunker import HybridChunker
-from .embedders.hf_inference_embedder import HFInferenceEmbedder
+from .embedders.factory import build_embedding_provider
 from .stores.postgres_store import PostgresStore
 from .stores.elasticsearch_store import ElasticsearchStore
 from src.pam.graph.graphiti_service import GraphitiService
@@ -35,9 +35,19 @@ async def ingest_folder(
     documents = connector.list_documents()
 
     parser = DoclingParser()
-    search_chunker = HybridChunker(max_tokens=settings.SEARCH_CHUNK_MAX_TOKENS)
-    graph_chunker = HybridChunker(max_tokens=settings.GRAPH_CHUNK_MAX_TOKENS)
-    embedder = HFInferenceEmbedder(model="intfloat/multilingual-e5-large-instruct")
+    search_chunker = HybridChunker(
+        max_tokens=settings.SEARCH_CHUNK_MAX_TOKENS,
+        overlap_tokens=settings.SEARCH_CHUNK_OVERLAP_TOKENS,
+        tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
+        split_on_headings=True,
+    )
+    graph_chunker = HybridChunker(
+        max_tokens=settings.GRAPH_CHUNK_MAX_TOKENS,
+        overlap_tokens=settings.GRAPH_CHUNK_OVERLAP_TOKENS,
+        tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
+        split_on_headings=True,
+    )
+    embedder = build_embedding_provider(settings)
     pg_store = PostgresStore()
     es_store = ElasticsearchStore()
 
@@ -59,9 +69,12 @@ async def ingest_folder(
             }
             timings: dict[str, float] = {}
 
-            t0 = time.perf_counter()
-            parser.parse(file_path)
-            timings["parse_ms"] = (time.perf_counter() - t0) * 1000
+            if settings.ENABLE_DOCLING_PARSE:
+                t0 = time.perf_counter()
+                parser.parse(file_path)
+                timings["parse_ms"] = (time.perf_counter() - t0) * 1000
+            else:
+                timings["parse_ms"] = 0.0
 
             content = Path(file_path).read_text(encoding="utf-8")
 
@@ -105,7 +118,9 @@ async def ingest_folder(
                     assert graph_service is not None
                     t0 = time.perf_counter()
                     graph_results = await graph_service.sync_chunks(
-                        chunks_graph, str(doc_id)
+                        chunks=chunks_graph,
+                        group_id=doc["source_id"],
+                        document_ref=str(doc_id),
                     )
                     timings["graphiti_ms"] = (time.perf_counter() - t0) * 1000
                     await session.execute(

@@ -40,12 +40,14 @@ async def ingest_folder(
         overlap_tokens=settings.SEARCH_CHUNK_OVERLAP_TOKENS,
         tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
         split_on_headings=True,
+        split_on_paragraphs=settings.SEARCH_CHUNK_BY_PARAGRAPH,
     )
     graph_chunker = HybridChunker(
         max_tokens=settings.GRAPH_CHUNK_MAX_TOKENS,
         overlap_tokens=settings.GRAPH_CHUNK_OVERLAP_TOKENS,
         tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
         split_on_headings=True,
+        split_on_paragraphs=False,
     )
     embedder = build_embedding_provider(settings)
     pg_store = PostgresStore()
@@ -100,6 +102,7 @@ async def ingest_folder(
             doc_id, status = await pg_store.save_document_and_segments(
                 session, doc, chunks_search
             )
+            report["document_id"] = str(doc_id)
             report["status"] = status
 
             if status == "skipped":
@@ -130,6 +133,9 @@ async def ingest_folder(
                             graph_synced=True,
                             graph_status="done",
                             graph_last_error=None,
+                            graph_total_chunks=len(chunks_graph),
+                            graph_processed_chunks=len(chunks_graph),
+                            graph_failed_chunks=0,
                         )
                     )
                     report["graph_status"] = "done"
@@ -143,6 +149,9 @@ async def ingest_folder(
                             graph_synced=False,
                             graph_status="queued",
                             graph_last_error=None,
+                            graph_total_chunks=len(chunks_graph),
+                            graph_processed_chunks=0,
+                            graph_failed_chunks=0,
                         )
                     )
                     report["graph_status"] = "queued"
@@ -168,6 +177,7 @@ async def ingest_folder(
                         graph_synced=False,
                         graph_status="failed",
                         graph_last_error=str(e)[:8000],
+                        graph_failed_chunks=len(chunks_graph),
                     )
                 )
                 await session.commit()

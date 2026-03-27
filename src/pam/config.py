@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     EXTRACTION_BASE_URL: str | None = None
     EXTRACTION_TEMPERATURE: float = 0.0
 
+    # Optional agent-specific runtime model config.
+    # If omitted, agent falls back to EXTRACTION_* settings.
+    AGENT_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] | None = None
+    AGENT_MODEL: str | None = None
+    AGENT_BASE_URL: str | None = None
+    AGENT_TEMPERATURE: float | None = None
+
     GRAPH_EMBEDDING_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] = "ollama"
     GRAPH_EMBEDDING_MODEL: str = "nomic-embed-text"
     GRAPH_EMBEDDING_BASE_URL: str | None = None
@@ -53,6 +60,7 @@ class Settings(BaseSettings):
     #: Chunk cho Postgres / Elasticsearch / embed
     SEARCH_CHUNK_MAX_TOKENS: int = 512
     SEARCH_CHUNK_OVERLAP_TOKENS: int = 64
+    SEARCH_CHUNK_BY_PARAGRAPH: bool = True
     #: Chunk riêng cho Graphiti (thường lớn hơn → ít episode, ít vòng LLM)
     GRAPH_CHUNK_MAX_TOKENS: int = 1536
     GRAPH_CHUNK_OVERLAP_TOKENS: int = 128
@@ -63,6 +71,23 @@ class Settings(BaseSettings):
     GRAPH_CHUNK_RETRIES: int = 2
     GRAPH_ENABLE_CACHE: bool = True
     GRAPH_CACHE_DIR: str = ".cache/pam/graph"
+
+    ELASTICSEARCH_URL: str = "http://localhost:9200"
+    ELASTICSEARCH_INDEX_NAME: str = "pam_segments"
+    RETRIEVAL_TOP_K: int = 10
+    RETRIEVAL_NUM_CANDIDATES: int = 50
+    RETRIEVAL_RRF_K: int = 60
+    RETRIEVAL_RERANK_ENABLED: bool = False
+    RETRIEVAL_RERANK_TOP_N: int = 20
+    RETRIEVAL_RERANK_BACKEND: Literal["llm_chat", "local_cross_encoder"] = "llm_chat"
+    RETRIEVAL_RERANK_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] | None = None
+    RETRIEVAL_RERANK_MODEL: str | None = None
+    RETRIEVAL_RERANK_BASE_URL: str | None = None
+    RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
+
+    AGENT_MAX_STEPS: int = 4
+    AGENT_TOOL_TOP_K: int = 5
+    AGENT_MAX_CONTEXT_CHUNKS: int = 6
 
     @property
     def DATABASE_URL(self) -> str:

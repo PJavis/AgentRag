@@ -1,0 +1,27 @@
+[
+  {
+    "query": "MoneyPrinter",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "moneyprinter_v2"
+  },
+  {
+    "query": "tool to automate making money online",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "moneyprinter_v2"
+  },
+  {
+    "query": "twitter bot and youtube shorts automation",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "features"
+  },
+  {
+    "query": "affiliate marketing and local businesses cold outreach",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "features"
+  },
+  {
+    "query": "project license information",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "license"
+  }
+]

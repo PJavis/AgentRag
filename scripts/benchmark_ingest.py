@@ -23,6 +23,7 @@ def build_search_chunker() -> HybridChunker:
         overlap_tokens=settings.SEARCH_CHUNK_OVERLAP_TOKENS,
         tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
         split_on_headings=True,
+        split_on_paragraphs=settings.SEARCH_CHUNK_BY_PARAGRAPH,
     )
 
 
@@ -32,6 +33,7 @@ def build_graph_chunker() -> HybridChunker:
         overlap_tokens=settings.GRAPH_CHUNK_OVERLAP_TOKENS,
         tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
         split_on_headings=True,
+        split_on_paragraphs=False,
     )
 
 

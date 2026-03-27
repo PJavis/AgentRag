@@ -1,0 +1,32 @@
+[
+  {
+    "question": "Pamlogix module là gì?",
+    "document_title": "achievement-system",
+    "expected_document_title": "achievement-system",
+    "expected_section_path": "overview",
+    "expected_answer_contains": [
+      "Pamlogix",
+      "AchievementsSystem"
+    ]
+  },
+  {
+    "question": "MoneyPrinter có tính năng gì?",
+    "document_title": "MoneyPrinter",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "features",
+    "expected_answer_contains": [
+      "Twitter Bot",
+      "YouTube Shorts"
+    ]
+  },
+  {
+    "question": "MoneyPrinter là gì?",
+    "document_title": "MoneyPrinter",
+    "expected_document_title": "MoneyPrinter",
+    "expected_section_path": "moneyprinter_v2",
+    "expected_answer_contains": [
+      "automates",
+      "MoneyPrinter"
+    ]
+  }
+]

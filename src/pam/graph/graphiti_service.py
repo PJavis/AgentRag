@@ -34,6 +34,14 @@ class OpenAICompatibleConfig:
 
 
 class GraphitiService:
+    DEFAULT_EXTRACTION_INSTRUCTIONS = (
+        "When extracting relationships, every source_entity_name and "
+        "target_entity_name must exactly match an extracted node name from the current "
+        "episode. If a relationship references a concept not yet listed as a node, "
+        "add that concept as a node first. Do not emit edges with missing endpoints. "
+        "Only mark duplicate_facts indexes that actually exist in the provided EXISTING FACTS list."
+    )
+
     def __init__(self):
         llm_backend = self._build_llm_backend()
 
@@ -200,6 +208,7 @@ class GraphitiService:
             ),
             reference_time=datetime.utcnow(),
             group_id=group_id,
+            custom_extraction_instructions=self.DEFAULT_EXTRACTION_INSTRUCTIONS,
         )
 
         return {

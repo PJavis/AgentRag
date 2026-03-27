@@ -46,24 +46,47 @@ async def process_graph_job(job: GraphIngestJob) -> None:
         overlap_tokens=settings.GRAPH_CHUNK_OVERLAP_TOKENS,
         tokenizer_model=settings.CHUNK_TOKENIZER_MODEL,
         split_on_headings=True,
+        split_on_paragraphs=False,
     )
     path = Path(job.folder_path) / job.source_id
     content = path.read_text(encoding="utf-8")
     chunks = chunker.chunk(content, metadata={"document_title": job.title})
+    total_chunks = len(chunks)
 
     async with AsyncSessionLocal() as session:
         await session.execute(
             update(Document)
             .where(Document.id == job.document_id)
-            .values(graph_status="processing")
+            .values(
+                graph_status="processing",
+                graph_total_chunks=total_chunks,
+                graph_processed_chunks=0,
+                graph_failed_chunks=0,
+                graph_last_error=None,
+            )
         )
         await session.commit()
 
     try:
+        async def on_progress(payload: dict) -> None:
+            async with AsyncSessionLocal() as session:
+                await session.execute(
+                    update(Document)
+                    .where(Document.id == job.document_id)
+                    .values(
+                        graph_status="processing",
+                        graph_total_chunks=payload["total"],
+                        graph_processed_chunks=payload["completed"],
+                        graph_failed_chunks=0,
+                    )
+                )
+                await session.commit()
+
         await graph_svc.sync_chunks(
             chunks=chunks,
             group_id=job.source_id,
             document_ref=str(job.document_id),
+            progress_callback=on_progress,
         )
     except Exception as e:
         logger.exception("Graph ingest failed for document %s", job.document_id)
@@ -75,6 +98,8 @@ async def process_graph_job(job: GraphIngestJob) -> None:
                     graph_status="failed",
                     graph_last_error=str(e)[:8000],
                     graph_synced=False,
+                    graph_total_chunks=total_chunks,
+                    graph_failed_chunks=max(total_chunks, 1),
                 )
             )
             await session.commit()
@@ -88,6 +113,9 @@ async def process_graph_job(job: GraphIngestJob) -> None:
                 graph_status="done",
                 graph_synced=True,
                 graph_last_error=None,
+                graph_total_chunks=total_chunks,
+                graph_processed_chunks=total_chunks,
+                graph_failed_chunks=0,
             )
         )
         await session.commit()

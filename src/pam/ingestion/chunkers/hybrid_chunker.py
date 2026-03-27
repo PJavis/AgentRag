@@ -25,10 +25,12 @@ class HybridChunker:
         overlap_tokens: int = 0,
         tokenizer_model: str = "text-embedding-3-large",
         split_on_headings: bool = True,
+        split_on_paragraphs: bool = False,
     ):
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
         self.split_on_headings = split_on_headings
+        self.split_on_paragraphs = split_on_paragraphs
         if tiktoken is None:
             self.tokenizer = SimpleTokenizer()
         else:
@@ -43,17 +45,8 @@ class HybridChunker:
         sections = self._split_sections(content)
 
         for section_name, section_text in sections:
-            tokens = self.tokenizer.encode(section_text)
-            position = 0
-
-            while position < len(tokens):
-                end = min(position + self.max_tokens, len(tokens))
-                chunk_tokens = tokens[position:end]
-                chunk_text = self.tokenizer.decode(chunk_tokens).strip()
-                if not chunk_text:
-                    position = self._next_position(position, end)
-                    continue
-
+            section_chunks = self._chunk_section(section_text)
+            for chunk_text in section_chunks:
                 chunks.append(
                     {
                         "content": chunk_text,
@@ -66,8 +59,69 @@ class HybridChunker:
                         "metadata": metadata or {},
                     }
                 )
-                position = self._next_position(position, end)
                 chunk_id += 1
+
+        return chunks
+
+    def _chunk_section(self, section_text: str) -> list[str]:
+        if self.split_on_paragraphs:
+            return self._chunk_section_by_paragraph(section_text)
+        return self._chunk_section_by_tokens(section_text)
+
+    def _chunk_section_by_paragraph(self, section_text: str) -> list[str]:
+        paragraphs = [
+            paragraph.strip()
+            for paragraph in re.split(r"\n\s*\n", section_text)
+            if paragraph.strip()
+        ]
+        if not paragraphs:
+            return []
+
+        chunks: list[str] = []
+        current_parts: list[str] = []
+        current_tokens = 0
+
+        for paragraph in paragraphs:
+            paragraph_tokens = self.tokenizer.encode(paragraph)
+            paragraph_len = len(paragraph_tokens)
+
+            if paragraph_len > self.max_tokens:
+                if current_parts:
+                    chunks.append("\n\n".join(current_parts).strip())
+                    current_parts = []
+                    current_tokens = 0
+                chunks.extend(self._chunk_section_by_tokens(paragraph))
+                continue
+
+            projected = current_tokens + paragraph_len
+            if current_parts and projected > self.max_tokens:
+                chunks.append("\n\n".join(current_parts).strip())
+                current_parts = [paragraph]
+                current_tokens = paragraph_len
+                continue
+
+            current_parts.append(paragraph)
+            current_tokens = projected
+
+        if current_parts:
+            chunks.append("\n\n".join(current_parts).strip())
+
+        return [chunk for chunk in chunks if chunk]
+
+    def _chunk_section_by_tokens(self, section_text: str) -> list[str]:
+        chunks: list[str] = []
+        tokens = self.tokenizer.encode(section_text)
+        position = 0
+
+        while position < len(tokens):
+            end = min(position + self.max_tokens, len(tokens))
+            chunk_tokens = tokens[position:end]
+            chunk_text = self.tokenizer.decode(chunk_tokens).strip()
+            if not chunk_text:
+                position = self._next_position(position, end)
+                continue
+            chunks.append(chunk_text)
+            position = self._next_position(position, end)
 
         return chunks
 

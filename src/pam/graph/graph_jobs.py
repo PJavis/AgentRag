@@ -13,8 +13,11 @@ from sqlalchemy import update
 from src.pam.config import settings
 from src.pam.database import AsyncSessionLocal
 from src.pam.database.models import Document
+from src.pam.graph.entity_sync import index_graph_entity_views
 from src.pam.graph.graphiti_service import GraphitiService
 from src.pam.ingestion.chunkers.hybrid_chunker import HybridChunker
+from src.pam.ingestion.embedders.factory import build_embedding_provider
+from src.pam.ingestion.stores.elasticsearch_store import ElasticsearchStore
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,8 @@ async def _get_graph_service() -> GraphitiService:
 
 async def process_graph_job(job: GraphIngestJob) -> None:
     graph_svc = await _get_graph_service()
+    embedder = build_embedding_provider(settings)
+    es_store = ElasticsearchStore()
     chunker = HybridChunker(
         max_tokens=settings.GRAPH_CHUNK_MAX_TOKENS,
         overlap_tokens=settings.GRAPH_CHUNK_OVERLAP_TOKENS,
@@ -82,11 +87,18 @@ async def process_graph_job(job: GraphIngestJob) -> None:
                 )
                 await session.commit()
 
-        await graph_svc.sync_chunks(
+        graph_results = await graph_svc.sync_chunks(
             chunks=chunks,
             group_id=job.source_id,
             document_ref=str(job.document_id),
             progress_callback=on_progress,
+        )
+        await index_graph_entity_views(
+            es_store=es_store,
+            embedder=embedder,
+            graph_results=graph_results,
+            document_title=job.title,
+            group_id=GraphitiService.normalize_group_id(job.source_id),
         )
     except Exception as e:
         logger.exception("Graph ingest failed for document %s", job.document_id)

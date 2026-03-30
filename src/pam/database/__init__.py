@@ -14,4 +14,4 @@ AsyncSessionLocal = async_sessionmaker(
 
 # Export Base và models
 from .base import Base
-from .models import Project, Document, Segment, SyncLog
+from .models import Project, Document, Segment, SyncLog, Conversation, ChatMessage

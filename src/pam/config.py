@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     ELASTICSEARCH_URL: str = "http://localhost:9200"
     ELASTICSEARCH_INDEX_NAME: str = "pam_segments"
+    ELASTICSEARCH_ENTITY_INDEX_NAME: str = "pam_entities"
+    ELASTICSEARCH_RELATIONSHIP_INDEX_NAME: str = "pam_relationships"
+    REDIS_URL: str | None = "redis://127.0.0.1:6379/0"
     RETRIEVAL_TOP_K: int = 10
     RETRIEVAL_NUM_CANDIDATES: int = 50
     RETRIEVAL_RRF_K: int = 60
@@ -88,6 +91,8 @@ class Settings(BaseSettings):
     AGENT_MAX_STEPS: int = 4
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 6
+    CHAT_HISTORY_WINDOW: int = 10
+    CHAT_REDIS_TTL_SECONDS: int = 300
 
     @property
     def DATABASE_URL(self) -> str:

@@ -78,6 +78,12 @@ Search now supports:
 - `graph_lookup`: temporal graph fact lookup (used by agent tool loop)
 - optional LLM reranking on top of retrieved candidates
 
+During ingest, Elasticsearch now stores:
+
+- `pam_segments`: chunk-level retrieval index
+- `pam_entities`: entity vector index (`name`, `type`, `description`, `embedding`)
+- `pam_relationships`: relationship vector index (`src_entity`, `tgt_entity`, `rel_type`, `keywords`, `embedding`)
+
 Example:
 
 ```bash
@@ -133,6 +139,23 @@ curl -X POST http://127.0.0.1:8000/chat \
 `document_title` is optional. `/chat` does not require `document_id`.
 If `document_title` is omitted, retrieval searches across all indexed documents.
 
+Conversation mode (multi-turn) is supported with Postgres + Redis cache:
+
+```bash
+# create conversation
+curl -X POST http://127.0.0.1:8000/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"title":"MoneyPrinter discussion"}'
+
+# chat with conversation_id
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"conversation_id":"<uuid>", "question":"tiếp tục nhé", "document_title":"MoneyPrinter"}'
+
+# list messages
+curl http://127.0.0.1:8000/conversations/<uuid>/messages
+```
+
 You should verify:
 
 - `tool_trace` has at least one retrieval step
@@ -150,8 +173,11 @@ python3 scripts/benchmark_retrieval.py data/benchmarks/retrieval_baseline.json -
 ```bash
 docker compose down -v --remove-orphans
 rm -rf data/neo4j_data data/es_data data/postgres_data
-rm -rf migrations/versions/*
+rm -rf .cache/pam/graph
 docker compose up -d
-alembic revision --autogenerate -m "initial"
-alembic upgrade head
+
+uv sync
+uv run alembic upgrade head
+uv run uvicorn main:app --reload --port 8000
+
 ```

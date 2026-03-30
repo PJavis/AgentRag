@@ -18,6 +18,7 @@ from .embedders.factory import build_embedding_provider
 from .stores.postgres_store import PostgresStore
 from .stores.elasticsearch_store import ElasticsearchStore
 from src.pam.graph.graphiti_service import GraphitiService
+from src.pam.graph.entity_sync import index_graph_entity_views
 from src.pam.graph.graph_jobs import GraphIngestJob, graph_ingest_queue
 
 
@@ -125,6 +126,13 @@ async def ingest_folder(
                         group_id=doc["source_id"],
                         document_ref=str(doc_id),
                     )
+                    kg_stats = await index_graph_entity_views(
+                        es_store=es_store,
+                        embedder=embedder,
+                        graph_results=graph_results,
+                        document_title=doc["title"],
+                        group_id=GraphitiService.normalize_group_id(doc["source_id"]),
+                    )
                     timings["graphiti_ms"] = (time.perf_counter() - t0) * 1000
                     await session.execute(
                         update(Document)
@@ -141,6 +149,10 @@ async def ingest_folder(
                     report["graph_status"] = "done"
                     report["graph_chunks"] = len(chunks_graph)
                     report["graph_episodes"] = len(graph_results)
+                    report["graph_entities_indexed"] = kg_stats["entities_indexed"]
+                    report["graph_relationships_indexed"] = kg_stats[
+                        "relationships_indexed"
+                    ]
                 else:
                     await session.execute(
                         update(Document)

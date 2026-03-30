@@ -211,17 +211,72 @@ class GraphitiService:
             custom_extraction_instructions=self.DEFAULT_EXTRACTION_INSTRUCTIONS,
         )
 
+        nodes = list(getattr(episode, "nodes", []) or [])
+        edges = list(getattr(episode, "edges", []) or [])
+        node_name_by_uuid: dict[str, str] = {}
+        entity_records: list[dict[str, Any]] = []
+        for node in nodes:
+            node_uuid = str(getattr(node, "uuid", "") or "")
+            node_name = str(getattr(node, "name", "") or "").strip()
+            if node_uuid:
+                node_name_by_uuid[node_uuid] = node_name
+            if not node_name:
+                continue
+            raw_type = getattr(node, "type", None)
+            node_type = str(raw_type).strip() if raw_type is not None else ""
+            description = (
+                str(
+                    getattr(node, "summary", None)
+                    or getattr(node, "description", None)
+                    or ""
+                ).strip()
+            )
+            entity_records.append(
+                {
+                    "node_uuid": node_uuid,
+                    "name": node_name,
+                    "type": node_type,
+                    "description": description,
+                }
+            )
+
+        relationship_records: list[dict[str, Any]] = []
+        for edge in edges:
+            edge_uuid = str(getattr(edge, "uuid", "") or "")
+            source_node_uuid = str(getattr(edge, "source_node_uuid", "") or "")
+            target_node_uuid = str(getattr(edge, "target_node_uuid", "") or "")
+            relation_label = str(getattr(edge, "name", "") or "").strip()
+            relation_fact = str(getattr(edge, "fact", "") or "").strip()
+            rel_type = relation_label or relation_fact or "RELATES_TO"
+            src_entity = node_name_by_uuid.get(source_node_uuid, source_node_uuid)
+            tgt_entity = node_name_by_uuid.get(target_node_uuid, target_node_uuid)
+            keywords = [word for word in rel_type.replace("_", " ").split() if word]
+            relationship_records.append(
+                {
+                    "edge_uuid": edge_uuid,
+                    "source_node_uuid": source_node_uuid,
+                    "target_node_uuid": target_node_uuid,
+                    "src_entity": src_entity,
+                    "tgt_entity": tgt_entity,
+                    "rel_type": rel_type,
+                    "description": relation_fact,
+                    "keywords": keywords,
+                }
+            )
+
         return {
             "episode_id": getattr(episode, "uuid", "unknown"),
-            "entities": [node.name for node in getattr(episode, "nodes", [])],
+            "entities": [node["name"] for node in entity_records],
+            "entity_records": entity_records,
             "relationships": [
                 (
                     f"{edge.source_node_uuid} --"
                     f"{edge.fact or edge.name or 'RELATES_TO'}--> "
                     f"{edge.target_node_uuid}"
                 )
-                for edge in getattr(episode, "edges", [])
+                for edge in edges
             ],
+            "relationship_records": relationship_records,
             "content_hash": chunk["content_hash"],
         }
 

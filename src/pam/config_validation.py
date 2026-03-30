@@ -177,3 +177,7 @@ def _validate_general_settings(settings: Settings) -> None:
         raise ValueError("AGENT_TOOL_TOP_K must be > 0")
     if settings.AGENT_MAX_CONTEXT_CHUNKS <= 0:
         raise ValueError("AGENT_MAX_CONTEXT_CHUNKS must be > 0")
+    if settings.CHAT_HISTORY_WINDOW <= 0:
+        raise ValueError("CHAT_HISTORY_WINDOW must be > 0")
+    if settings.CHAT_REDIS_TTL_SECONDS <= 0:
+        raise ValueError("CHAT_REDIS_TTL_SECONDS must be > 0")

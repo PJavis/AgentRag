@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from hashlib import sha256
 from typing import Any
 
 from elasticsearch import AsyncElasticsearch
@@ -12,6 +13,8 @@ class ElasticsearchStore:
     def __init__(self):
         self.client = AsyncElasticsearch([settings.ELASTICSEARCH_URL])
         self.index_name = settings.ELASTICSEARCH_INDEX_NAME
+        self.entity_index_name = settings.ELASTICSEARCH_ENTITY_INDEX_NAME
+        self.relationship_index_name = settings.ELASTICSEARCH_RELATIONSHIP_INDEX_NAME
 
     async def ensure_index(self, embedding_dims: int) -> None:
         exists = await self.client.indices.exists(index=self.index_name)
@@ -53,6 +56,102 @@ class ElasticsearchStore:
         }
         await self.client.indices.create(index=self.index_name, body=mapping)
 
+    async def ensure_entity_index(self, embedding_dims: int) -> None:
+        exists = await self.client.indices.exists(index=self.entity_index_name)
+        if exists:
+            return
+        mapping = {
+            "settings": {
+                "analysis": {
+                    "analyzer": {
+                        "default": {
+                            "type": "standard",
+                        }
+                    }
+                }
+            },
+            "mappings": {
+                "properties": {
+                    "name": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "type": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "description": {"type": "text"},
+                    "document_title": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "group_id": {"type": "keyword"},
+                    "source_node_uuid": {"type": "keyword"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": embedding_dims,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    "metadata": {"type": "object", "enabled": True},
+                }
+            },
+        }
+        await self.client.indices.create(index=self.entity_index_name, body=mapping)
+
+    async def ensure_relationship_index(self, embedding_dims: int) -> None:
+        exists = await self.client.indices.exists(index=self.relationship_index_name)
+        if exists:
+            return
+        mapping = {
+            "settings": {
+                "analysis": {
+                    "analyzer": {
+                        "default": {
+                            "type": "standard",
+                        }
+                    }
+                }
+            },
+            "mappings": {
+                "properties": {
+                    "src_entity": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "tgt_entity": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "rel_type": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "keywords": {"type": "keyword"},
+                    "description": {"type": "text"},
+                    "document_title": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "group_id": {"type": "keyword"},
+                    "source_node_uuid": {"type": "keyword"},
+                    "target_node_uuid": {"type": "keyword"},
+                    "edge_uuid": {"type": "keyword"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": embedding_dims,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    "metadata": {"type": "object", "enabled": True},
+                }
+            },
+        }
+        await self.client.indices.create(
+            index=self.relationship_index_name,
+            body=mapping,
+        )
+
     async def index_segments(self, chunks: list[dict[str, Any]], document_title: str):
         if not chunks:
             return
@@ -88,6 +187,60 @@ class ElasticsearchStore:
         response = await self.client.bulk(body=actions, refresh=True)
         if response.get("errors"):
             raise RuntimeError(f"Elasticsearch bulk indexing had errors: {response}")
+
+    async def index_entities(self, entities: list[dict[str, Any]]) -> None:
+        if not entities:
+            return
+        first_embedding = entities[0].get("embedding")
+        if not isinstance(first_embedding, list) or not first_embedding:
+            raise ValueError("Entities must contain non-empty embeddings before indexing")
+        await self.ensure_entity_index(len(first_embedding))
+
+        actions: list[dict[str, Any]] = []
+        for entity in entities:
+            entity_id = self._stable_entity_id(entity)
+            actions.append(
+                {
+                    "index": {
+                        "_index": self.entity_index_name,
+                        "_id": entity_id,
+                    }
+                }
+            )
+            actions.append(entity)
+
+        response = await self.client.bulk(body=actions, refresh=True)
+        if response.get("errors"):
+            raise RuntimeError(f"Elasticsearch entity indexing had errors: {response}")
+
+    async def index_relationships(self, relationships: list[dict[str, Any]]) -> None:
+        if not relationships:
+            return
+        first_embedding = relationships[0].get("embedding")
+        if not isinstance(first_embedding, list) or not first_embedding:
+            raise ValueError(
+                "Relationships must contain non-empty embeddings before indexing"
+            )
+        await self.ensure_relationship_index(len(first_embedding))
+
+        actions: list[dict[str, Any]] = []
+        for rel in relationships:
+            rel_id = self._stable_relationship_id(rel)
+            actions.append(
+                {
+                    "index": {
+                        "_index": self.relationship_index_name,
+                        "_id": rel_id,
+                    }
+                }
+            )
+            actions.append(rel)
+
+        response = await self.client.bulk(body=actions, refresh=True)
+        if response.get("errors"):
+            raise RuntimeError(
+                f"Elasticsearch relationship indexing had errors: {response}"
+            )
 
     async def sparse_search(
         self,
@@ -246,3 +399,27 @@ class ElasticsearchStore:
         for rank, item in enumerate(ranked, start=1):
             item["rank"] = rank
         return ranked[:top_k]
+
+    def _stable_entity_id(self, entity: dict[str, Any]) -> str:
+        material = "|".join(
+            [
+                str(entity.get("document_title", "")),
+                str(entity.get("group_id", "")),
+                str(entity.get("name", "")).strip().lower(),
+                str(entity.get("type", "")).strip().lower(),
+            ]
+        )
+        return sha256(material.encode("utf-8")).hexdigest()
+
+    def _stable_relationship_id(self, relationship: dict[str, Any]) -> str:
+        material = "|".join(
+            [
+                str(relationship.get("document_title", "")),
+                str(relationship.get("group_id", "")),
+                str(relationship.get("src_entity", "")).strip().lower(),
+                str(relationship.get("tgt_entity", "")).strip().lower(),
+                str(relationship.get("rel_type", "")).strip().lower(),
+                str(relationship.get("edge_uuid", "")),
+            ]
+        )
+        return sha256(material.encode("utf-8")).hexdigest()

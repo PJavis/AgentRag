@@ -3,8 +3,10 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Body, HTTPException
+from openai import RateLimitError
 from sqlalchemy import select
 
+from src.pam.chat.history import ConversationStore
 from src.pam.config import settings
 from src.pam.config_validation import validate_settings
 from src.pam.database import AsyncSessionLocal
@@ -125,5 +127,69 @@ async def chat(payload: dict = Body(...)):
     if not question:
         return {"error": "question is required"}
     document_title = payload.get("document_title")
+    conversation_id = payload.get("conversation_id")
+    conversation_title = payload.get("conversation_title")
+    store = ConversationStore()
+    conversation = await store.get_or_create_conversation(
+        conversation_id=conversation_id,
+        title=conversation_title,
+    )
+    history = await store.list_messages(
+        conversation_id=conversation["conversation_id"],
+        limit=settings.CHAT_HISTORY_WINDOW,
+    )
     agent = AgentService()
-    return await agent.chat(question=question, document_title=document_title)
+    try:
+        await store.append_message(
+            conversation_id=conversation["conversation_id"],
+            role="user",
+            content=question,
+            extra_metadata={"document_title": document_title},
+        )
+        result = await agent.chat(
+            question=question,
+            document_title=document_title,
+            chat_history=history,
+        )
+        await store.append_message(
+            conversation_id=conversation["conversation_id"],
+            role="assistant",
+            content=result.get("answer", ""),
+            citations=result.get("citations", []),
+            tool_trace=result.get("tool_trace", []),
+            timings_ms=result.get("timings_ms", {}),
+            extra_metadata={"document_title": document_title},
+        )
+        result["conversation_id"] = conversation["conversation_id"]
+        return result
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+@app.post("/conversations")
+async def create_conversation(payload: dict = Body(default={})):
+    store = ConversationStore()
+    conversation = await store.create_conversation(
+        title=payload.get("title"),
+        extra_metadata=payload.get("metadata"),
+    )
+    return conversation
+
+
+@app.get("/conversations")
+async def list_conversations(limit: int = 20):
+    store = ConversationStore()
+    return {"conversations": await store.list_conversations(limit=limit)}
+
+
+@app.get("/conversations/{conversation_id}/messages")
+async def list_conversation_messages(conversation_id: str, limit: int = 20):
+    store = ConversationStore()
+    conversation = await store.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    messages = await store.list_messages(conversation_id=conversation_id, limit=limit)
+    return {
+        "conversation_id": conversation_id,
+        "messages": messages,
+    }

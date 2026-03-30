@@ -75,7 +75,15 @@ class ContextAssembler:
             key=rank_score,
             reverse=True,
         )
-        return ranked[: settings.AGENT_MAX_CONTEXT_CHUNKS]
+        selected = ranked[: settings.AGENT_MAX_CONTEXT_CHUNKS]
+
+        has_graph_candidate = any(item.get("source") == "graph" for item in ranked)
+        has_graph_selected = any(item.get("source") == "graph" for item in selected)
+        if has_graph_candidate and not has_graph_selected and selected:
+            best_graph = next((item for item in ranked if item.get("source") == "graph"), None)
+            if best_graph is not None:
+                selected[-1] = best_graph
+        return selected
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:

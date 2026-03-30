@@ -33,12 +33,13 @@ class ElasticsearchRetriever:
             raise ValueError("mode must be one of: sparse, dense, hybrid, hybrid_kg")
 
         size = top_k or settings.RETRIEVAL_TOP_K
+        lexical_query = self._rewrite_query(query)
         should_rerank = settings.RETRIEVAL_RERANK_ENABLED if rerank is None else rerank
         candidate_size = self.reranker.candidate_size(size, force=should_rerank)
 
         if mode == "sparse":
             hits = await self.store.sparse_search(
-                query=query,
+                query=lexical_query,
                 top_k=candidate_size,
                 document_title=document_title,
             )
@@ -91,25 +92,28 @@ class ElasticsearchRetriever:
             }
 
         hits = await self.store.hybrid_search(
-            query=query,
+            query=lexical_query,
             query_embedding=query_embedding,
             top_k=candidate_size,
             document_title=document_title,
         )
         if mode == "hybrid_kg":
-            graph_hits, graph_reason = await self._graph_search(
-                query=query,
-                top_k=candidate_size,
-                document_title=document_title,
-            )
-            hits = self._rrf_fuse_multi_source(
-                sources={
-                    "chunk": hits,
-                    "graph": graph_hits,
-                },
-                top_k=candidate_size,
-                rrf_k=settings.RETRIEVAL_RRF_K,
-            )
+            if self._should_use_graph(query):
+                graph_hits, graph_reason = await self._graph_search(
+                    query=lexical_query,
+                    top_k=candidate_size,
+                    document_title=document_title,
+                )
+                hits = self._rrf_fuse_multi_source(
+                    sources={
+                        "chunk": hits,
+                        "graph": graph_hits,
+                    },
+                    top_k=candidate_size,
+                    rrf_k=settings.RETRIEVAL_RRF_K,
+                )
+            else:
+                graph_reason = "skipped_by_intent"
         else:
             graph_reason = "not_requested"
         hits = self._dedupe_hits(hits)
@@ -321,3 +325,23 @@ class ElasticsearchRetriever:
                 hit["retrieval_rank"] = hit["rank"]
             hit["rank"] = idx
         return hits
+
+    def _rewrite_query(self, query: str) -> str:
+        if not self._is_features_query(query):
+            return query
+        return f"{query} features capabilities tính năng chức năng"
+
+    def _should_use_graph(self, query: str) -> bool:
+        if self._is_features_query(query):
+            return False
+        q = query.lower()
+        graph_intent_keywords = (
+            "quan hệ",
+            "relationship",
+            "liên kết",
+            "timeline",
+            "temporal",
+            "phụ thuộc",
+            "depends on",
+        )
+        return any(keyword in q for keyword in graph_intent_keywords)

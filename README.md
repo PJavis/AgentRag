@@ -168,6 +168,22 @@ Benchmark flow (after infra is up):
 python3 scripts/benchmark_retrieval.py data/benchmarks/retrieval_baseline.json --top-k 5
 ```
 
+## Architecture Rollout
+
+Current rollout follows an incremental production path (see [ADR 0001](/home/nguyenquocdung/PAM/docs/adr/0001-target-architecture-rollout.md)):
+
+- `AgentService` acts as Supervisor orchestration.
+- `KnowledgeService` centralizes retrieval/tool execution.
+- `ContextAssemblyService` is a dedicated context assembly facade.
+- `SecurityService` is the query-time policy gate (v1).
+- `LLMGateway` is the central LLM invocation facade (v1, ready for routing/cost tracking).
+
+Target rollout phases:
+
+1. Phase A: service boundaries + backward compatibility.
+2. Phase B: policy enforcement, intent-aware retrieval, stage-level observability.
+3. Phase C: LLM routing/cost control and specialized worker agents.
+
 ## Reset
 
 ```bash

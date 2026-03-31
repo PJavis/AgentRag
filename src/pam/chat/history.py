@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select
 
 from src.pam.config import settings
@@ -25,7 +26,11 @@ class ConversationStore:
     async def _read_messages_cache(self, conversation_id: str) -> list[dict[str, Any]] | None:
         if self._redis is None:
             return None
-        raw = await self._redis.get(self._messages_cache_key(conversation_id))
+        try:
+            raw = await self._redis.get(self._messages_cache_key(conversation_id))
+        except RedisError:
+            self._redis = None
+            return None
         if not raw:
             return None
         try:
@@ -39,16 +44,22 @@ class ConversationStore:
     async def _write_messages_cache(self, conversation_id: str, messages: list[dict[str, Any]]) -> None:
         if self._redis is None:
             return
-        await self._redis.set(
-            self._messages_cache_key(conversation_id),
-            json.dumps(messages, ensure_ascii=False),
-            ex=settings.CHAT_REDIS_TTL_SECONDS,
-        )
+        try:
+            await self._redis.set(
+                self._messages_cache_key(conversation_id),
+                json.dumps(messages, ensure_ascii=False),
+                ex=settings.CHAT_REDIS_TTL_SECONDS,
+            )
+        except RedisError:
+            self._redis = None
 
     async def _delete_messages_cache(self, conversation_id: str) -> None:
         if self._redis is None:
             return
-        await self._redis.delete(self._messages_cache_key(conversation_id))
+        try:
+            await self._redis.delete(self._messages_cache_key(conversation_id))
+        except RedisError:
+            self._redis = None
 
     async def create_conversation(
         self,

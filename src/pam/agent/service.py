@@ -4,17 +4,21 @@ import json
 import time
 from typing import Any
 
-from src.pam.agent.context import ContextAssembler
-from src.pam.agent.llm import AgentLLM
-from src.pam.agent.tools import AgentTools
 from src.pam.config import settings
+from src.pam.services import (
+    ContextAssemblyService,
+    KnowledgeService,
+    LLMGateway,
+    SecurityService,
+)
 
 
 class AgentService:
     def __init__(self):
-        self.llm = AgentLLM()
-        self.tools = AgentTools()
-        self.context = ContextAssembler()
+        self.llm_gateway = LLMGateway()
+        self.knowledge = KnowledgeService()
+        self.context = ContextAssemblyService()
+        self.security = SecurityService()
 
     async def chat(
         self,
@@ -23,6 +27,7 @@ class AgentService:
         chat_history: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         total_started = time.perf_counter()
+        self.security.validate_chat_request(question=question, document_title=document_title)
         tool_trace: list[dict[str, Any]] = []
         final_answer: dict[str, Any] | None = None
         seen_calls: set[str] = set()
@@ -31,18 +36,19 @@ class AgentService:
         answer_latency_ms = 0.0
         assemble_latency_ms = 0.0
 
-        bootstrap_input = {
-            "query": question,
-            "top_k": settings.AGENT_TOOL_TOP_K,
-            "document_title": document_title,
-        }
-        bootstrap_fp = json.dumps(
-            {"tool_name": "search_hybrid_kg", "tool_input": bootstrap_input},
-            ensure_ascii=True,
-            sort_keys=True,
+        bootstrap_input, bootstrap_output = await self.knowledge.bootstrap_search(
+            query=question,
+            document_title=document_title,
+        )
+        bootstrap_fp = self.knowledge.fingerprint_call(
+            tool_name="search_hybrid_kg",
+            tool_input=bootstrap_input,
         )
         started = time.perf_counter()
-        bootstrap_output = await self.tools.call("search_hybrid_kg", bootstrap_input)
+        bootstrap_output = self.security.filter_tool_results(
+            tool_output=bootstrap_output,
+            document_title=document_title,
+        )
         tool_latency_ms += (time.perf_counter() - started) * 1000
         tool_trace.append(
             {
@@ -66,31 +72,37 @@ class AgentService:
 
             tool_name = decision.get("tool_name")
             tool_input = decision.get("tool_input") or {}
-            if document_title and "document_title" not in tool_input:
-                tool_input["document_title"] = document_title
-            if not self.tools.has_tool(tool_name):
-                tool_name = "search_hybrid_kg"
-                tool_input = {
-                    "query": question,
-                    "top_k": settings.AGENT_TOOL_TOP_K,
-                    "document_title": document_title,
-                }
-            call_fingerprint = json.dumps(
-                {"tool_name": tool_name, "tool_input": tool_input},
-                ensure_ascii=True,
-                sort_keys=True,
+
+            normalized_tool_name, normalized_tool_input = self.knowledge.normalize_tool_call(
+                tool_name=tool_name or "search_hybrid_kg",
+                tool_input=tool_input,
+                question=question,
+                document_title=document_title,
+            )
+            call_fingerprint = self.knowledge.fingerprint_call(
+                tool_name=normalized_tool_name,
+                tool_input=normalized_tool_input,
             )
             if call_fingerprint in seen_calls:
                 break
             seen_calls.add(call_fingerprint)
             started = time.perf_counter()
-            tool_output = await self.tools.call(tool_name, tool_input)
+            _, _, tool_output = await self.knowledge.execute_tool(
+                tool_name=normalized_tool_name,
+                tool_input=normalized_tool_input,
+                question=question,
+                document_title=document_title,
+            )
+            tool_output = self.security.filter_tool_results(
+                tool_output=tool_output,
+                document_title=document_title,
+            )
             tool_elapsed = (time.perf_counter() - started) * 1000
             tool_latency_ms += tool_elapsed
             tool_trace.append(
                 {
-                    "tool_name": tool_name,
-                    "tool_input": tool_input,
+                    "tool_name": normalized_tool_name,
+                    "tool_input": normalized_tool_input,
                     "tool_output": tool_output,
                     "decision_latency_ms": round(decide_elapsed, 2),
                     "tool_latency_ms": round(tool_elapsed, 2),
@@ -161,7 +173,7 @@ class AgentService:
                 "question": question,
                 "document_title": document_title,
                 "chat_history": self.summarize_history(chat_history, limit=6),
-                "available_tools": self.tools.describe(),
+                "available_tools": self.knowledge.describe_tools(),
                 "tool_trace_summary": [
                     {
                         "tool_name": step.get("tool_name"),
@@ -177,7 +189,11 @@ class AgentService:
             },
             ensure_ascii=True,
         )
-        decision = await self.llm.json_response(system_prompt, user_prompt)
+        decision, _latency_ms = await self.llm_gateway.json_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            task="decide",
+        )
         if decision.get("done"):
             return decision
         tool_name = decision.get("tool_name") or "search_hybrid_kg"
@@ -257,4 +273,9 @@ class AgentService:
             },
             ensure_ascii=True,
         )
-        return await self.llm.json_response(system_prompt, user_prompt)
+        answer, _latency_ms = await self.llm_gateway.json_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            task="answer",
+        )
+        return answer

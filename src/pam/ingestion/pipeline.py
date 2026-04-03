@@ -85,6 +85,9 @@ async def ingest_folder(
             chunks_search = search_chunker.chunk(
                 content, metadata={"document_title": doc["title"]}
             )
+            # Bỏ các chunk chỉ có heading hoặc quá ngắn để tránh nhiễu retrieval.
+            # Threshold 80 chars loại bỏ "## API", "## Overview" nhưng giữ lại nội dung thực.
+            chunks_search = [c for c in chunks_search if len(c["content"].strip()) >= 80]
             timings["chunk_search_ms"] = (time.perf_counter() - t0) * 1000
 
             t0 = time.perf_counter()

@@ -11,6 +11,8 @@ from src.pam.services import (
     LLMGateway,
     SecurityService,
 )
+from src.pam.structured.pipeline import StructuredReasoningPipeline
+from src.pam.structured.query_classifier import QueryIntentClassifier
 
 
 class AgentService:
@@ -19,6 +21,12 @@ class AgentService:
         self.knowledge = KnowledgeService()
         self.context = ContextAssemblyService()
         self.security = SecurityService()
+        self.classifier = QueryIntentClassifier(llm_gateway=self.llm_gateway)
+        self.structured_pipeline = StructuredReasoningPipeline(
+            knowledge_service=self.knowledge,
+            llm_gateway=self.llm_gateway,
+            security_service=self.security,
+        )
 
     async def chat(
         self,
@@ -28,6 +36,28 @@ class AgentService:
     ) -> dict[str, Any]:
         total_started = time.perf_counter()
         self.security.validate_chat_request(question=question, document_title=document_title)
+
+        # ── Structured SQL reasoning gate (ADR 0002) ──────────────────────────
+        if settings.STRUCTURED_REASONING_ENABLED:
+            classifier_output = await self.classifier.classify(
+                question=question,
+                document_title=document_title,
+                chat_history=chat_history,
+            )
+            if classifier_output.intent == "structured":
+                result = await self.structured_pipeline.run(
+                    question=question,
+                    document_title=document_title,
+                    chat_history=chat_history,
+                    query_type=classifier_output.query_type or "comparison",
+                    classifier_confidence=classifier_output.confidence,
+                )
+                if not result.get("_structured_fallback"):
+                    # Structured path success — trả về ngay
+                    return result
+                # Fallback: tiếp tục nhánh semantic bên dưới
+        # ─────────────────────────────────────────────────────────────────────
+
         tool_trace: list[dict[str, Any]] = []
         final_answer: dict[str, Any] | None = None
         seen_calls: set[str] = set()
@@ -60,7 +90,7 @@ class AgentService:
         )
         seen_calls.add(bootstrap_fp)
 
-        additional_steps = max(min(settings.AGENT_MAX_STEPS - 1, 1), 0)
+        additional_steps = max(settings.AGENT_MAX_STEPS - 1, 0)
         for _ in range(additional_steps):
             started = time.perf_counter()
             decision = await self._decide(question, document_title, tool_trace, chat_history)
@@ -129,6 +159,8 @@ class AgentService:
             "context": assembly["packed_context"],
             "answer": answer.get("answer", ""),
             "citations": grounded_citations,
+            "reasoning_path": "semantic",
+            "sql_query": None,
             "timings_ms": {
                 "total": round(total_latency_ms, 2),
                 "decide": round(decide_latency_ms, 2),
@@ -179,8 +211,11 @@ class AgentService:
                         "tool_name": step.get("tool_name"),
                         "tool_input": step.get("tool_input"),
                         "result_count": len((step.get("tool_output") or {}).get("results") or []),
-                        "top_sections": [
-                            item.get("section_path")
+                        "top_results": [
+                            {
+                                "section_path": item.get("section_path"),
+                                "excerpt": (item.get("content") or "")[:200],
+                            }
                             for item in ((step.get("tool_output") or {}).get("results") or [])[:3]
                         ],
                     }

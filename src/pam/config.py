@@ -94,6 +94,22 @@ class Settings(BaseSettings):
     CHAT_HISTORY_WINDOW: int = 10
     CHAT_REDIS_TTL_SECONDS: int = 300
 
+    # Structured SQL Reasoning (ADR 0002)
+    STRUCTURED_REASONING_ENABLED: bool = True
+    STRUCTURED_CLASSIFIER_METHOD: Literal["rule", "llm", "rule+llm"] = "rule+llm"
+    STRUCTURED_MAX_CHUNKS_FOR_SCHEMA: int = 10
+    STRUCTURED_MAX_CHUNKS_FOR_EXTRACT: int = 20
+    STRUCTURED_SQL_MAX_RETRIES: int = 2
+    STRUCTURED_CONFIDENCE_THRESHOLD: float = 0.7
+
+    # LLM Routing (ADR 0001 Phase C)
+    LLM_ROUTING_ENABLED: bool = False
+    LLM_TASK_MODEL_MAP: str = "{}"
+    LLM_COST_TRACKING_ENABLED: bool = False
+
+    # Observability (ADR 0001 Phase B)
+    OBSERVABILITY_TRACE_ENABLED: bool = True
+
     @property
     def DATABASE_URL(self) -> str:
         password = quote_plus(self.POSTGRES_PASSWORD)

@@ -21,12 +21,15 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
             tasks = [self._embed_single(session, text) for text in texts]
             return await asyncio.gather(*tasks)
 
+    # Gemini embedding-001 giới hạn ~2048 tokens (~8000 ký tự)
+    _TRUNCATE_SAFE_CHARS = 8_000
+
     async def _embed_single(
         self, session: aiohttp.ClientSession, text: str
     ) -> list[float]:
         payload = {
             "content": {
-                "parts": [{"text": text}],
+                "parts": [{"text": text[:self._TRUNCATE_SAFE_CHARS]}],
             }
         }
         async with session.post(self._url, json=payload) as response:

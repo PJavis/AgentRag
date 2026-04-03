@@ -9,8 +9,10 @@ from src.pam.config import settings
 
 
 class AgentLLM:
-    def __init__(self):
+    def __init__(self, model_override: str | None = None) -> None:
         self.model, self.base_url, self.api_key = self._resolve_backend()
+        if model_override:
+            self.model = model_override
         self.temperature = (
             settings.AGENT_TEMPERATURE
             if settings.AGENT_TEMPERATURE is not None

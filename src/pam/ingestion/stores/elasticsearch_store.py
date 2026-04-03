@@ -16,7 +16,30 @@ class ElasticsearchStore:
         self.entity_index_name = settings.ELASTICSEARCH_ENTITY_INDEX_NAME
         self.relationship_index_name = settings.ELASTICSEARCH_RELATIONSHIP_INDEX_NAME
 
+    async def _get_index_embedding_dims(self, index_name: str) -> int | None:
+        """Trả về số dims hiện tại của field embedding trong index, hoặc None nếu không có."""
+        try:
+            mapping = await self.client.indices.get_mapping(index=index_name)
+            props = mapping[index_name]["mappings"].get("properties", {})
+            return props.get("embedding", {}).get("dims")
+        except Exception:
+            return None
+
+    async def _recreate_index_if_dims_changed(
+        self, index_name: str, embedding_dims: int
+    ) -> bool:
+        """Xóa và trả về True nếu index tồn tại với dims khác. False nếu không cần xóa."""
+        exists = await self.client.indices.exists(index=index_name)
+        if not exists:
+            return False
+        current_dims = await self._get_index_embedding_dims(index_name)
+        if current_dims is not None and current_dims != embedding_dims:
+            await self.client.indices.delete(index=index_name)
+            return True
+        return False
+
     async def ensure_index(self, embedding_dims: int) -> None:
+        await self._recreate_index_if_dims_changed(self.index_name, embedding_dims)
         exists = await self.client.indices.exists(index=self.index_name)
         if exists:
             return
@@ -57,6 +80,7 @@ class ElasticsearchStore:
         await self.client.indices.create(index=self.index_name, body=mapping)
 
     async def ensure_entity_index(self, embedding_dims: int) -> None:
+        await self._recreate_index_if_dims_changed(self.entity_index_name, embedding_dims)
         exists = await self.client.indices.exists(index=self.entity_index_name)
         if exists:
             return
@@ -100,6 +124,7 @@ class ElasticsearchStore:
         await self.client.indices.create(index=self.entity_index_name, body=mapping)
 
     async def ensure_relationship_index(self, embedding_dims: int) -> None:
+        await self._recreate_index_if_dims_changed(self.relationship_index_name, embedding_dims)
         exists = await self.client.indices.exists(index=self.relationship_index_name)
         if exists:
             return

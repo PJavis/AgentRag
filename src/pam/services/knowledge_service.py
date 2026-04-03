@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.pam.agent.tools import AgentTools
 from src.pam.config import settings
+
+if TYPE_CHECKING:
+    from src.pam.structured.query_classifier import ClassifierOutput
 
 
 class KnowledgeService:
     """
     Retrieval + tool-execution facade.
 
-    This centralizes tool access so Supervisor Agent can stay orchestration-only.
+    Phase B additions:
+    - intent-aware retrieval mode selection
+    - rule-based query expansion
     """
 
     def __init__(self):
@@ -36,13 +41,19 @@ class KnowledgeService:
         query: str,
         document_title: str | None,
         top_k: int | None = None,
+        intent: ClassifierOutput | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        mode = self._select_retrieval_mode(intent)
+        expanded_query = self.expand_query(query, intent)
         tool_input = {
-            "query": query,
+            "query": expanded_query,
+            "mode": mode,
             "top_k": top_k or settings.AGENT_TOOL_TOP_K,
             "document_title": document_title,
         }
-        output = await self._tools.call("search_hybrid_kg", tool_input)
+        # map mode → tool name
+        tool_name = self._mode_to_tool(mode)
+        output = await self._tools.call(tool_name, tool_input)
         return tool_input, output
 
     async def execute_tool(
@@ -82,3 +93,52 @@ class KnowledgeService:
                 "document_title": document_title,
             }
         return chosen_name, chosen_input
+
+    # ── Intent-aware helpers ──────────────────────────────────────────────────
+
+    def _select_retrieval_mode(self, intent: ClassifierOutput | None) -> str:
+        """
+        Chọn retrieval mode dựa trên intent:
+        - None / semantic → "hybrid_kg" (default, giữ nguyên behavior cũ)
+        - multi_hop       → "hybrid_kg" (graph giúp ích cho multi-hop)
+        - các loại còn lại → "hybrid" (structured pipeline tự lý luận, không cần graph)
+        """
+        if intent is None or intent.intent == "semantic":
+            return "hybrid_kg"
+        mapping: dict[str, str] = {
+            "multi_hop": "hybrid_kg",
+            "comparison": "hybrid",
+            "aggregation": "hybrid",
+            "ranking": "hybrid",
+            "multi_filter": "hybrid",
+        }
+        return mapping.get(intent.query_type or "", "hybrid_kg")
+
+    def expand_query(self, query: str, intent: ClassifierOutput | None) -> str:
+        """
+        Rule-based keyword expansion — không cần LLM call.
+        Giúp retrieval tìm được nhiều chunk liên quan hơn.
+        """
+        if intent is None or intent.intent == "semantic":
+            return query
+        expansions: dict[str, str] = {
+            "aggregation": "count total sum tổng số lượng",
+            "comparison": "compare difference versus khác nhau so sánh",
+            "ranking": "top best highest ranking xếp hạng tốt nhất",
+            "multi_filter": "list all filter điều kiện",
+            "multi_hop": "relationship connection chain quan hệ liên kết",
+        }
+        suffix = expansions.get(intent.query_type or "")
+        if suffix:
+            return f"{query} {suffix}"
+        return query
+
+    @staticmethod
+    def _mode_to_tool(mode: str) -> str:
+        """Map retrieval mode string → AgentTools tool name."""
+        return {
+            "hybrid_kg": "search_hybrid_kg",
+            "hybrid": "search_hybrid",
+            "dense": "search_dense",
+            "sparse": "search_sparse",
+        }.get(mode, "search_hybrid_kg")

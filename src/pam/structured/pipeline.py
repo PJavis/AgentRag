@@ -216,7 +216,7 @@ class StructuredReasoningPipeline:
                 "section_path": c.get("section_path"),
                 "position": c.get("position"),
                 "content_hash": c.get("content_hash"),
-                "excerpt": (c.get("content") or "")[:600],
+                "excerpt": (c.get("content") or "")[:1500],
             }
             for c in chunks
         ]

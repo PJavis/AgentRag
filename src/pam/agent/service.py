@@ -37,7 +37,8 @@ class AgentService:
         total_started = time.perf_counter()
         self.security.validate_chat_request(question=question, document_title=document_title)
 
-        # ── Structured SQL reasoning gate (ADR 0002) ──────────────────────────
+        # ── Classify intent (shared by structured gate + semantic path) ─────────
+        classifier_output = None
         if settings.STRUCTURED_REASONING_ENABLED:
             classifier_output = await self.classifier.classify(
                 question=question,
@@ -69,6 +70,7 @@ class AgentService:
         bootstrap_input, bootstrap_output = await self.knowledge.bootstrap_search(
             query=question,
             document_title=document_title,
+            intent=classifier_output,
         )
         bootstrap_fp = self.knowledge.fingerprint_call(
             tool_name="search_hybrid_kg",
@@ -294,7 +296,11 @@ class AgentService:
             "If context is insufficient, say so explicitly. "
             "Use the same language as the question. "
             "Answer in clear, natural sentences and avoid broken wording. "
-            "Only cite claims that are directly supported by the provided context."
+            "Only cite claims that are directly supported by the provided context. "
+            "Do NOT add examples, field names, or details that are not explicitly present in the context. "
+            "When listing items (fields, flags, values), only include items you can directly quote from the context. "
+            "You MAY perform simple arithmetic (×, ÷, +, −) on numeric values that are explicitly stated in the context; "
+            "show the calculation briefly (e.g. '10 × $1.25 = $12.50')."
         )
         user_prompt = json.dumps(
             {

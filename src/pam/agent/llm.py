@@ -35,7 +35,13 @@ class AgentLLM:
             ],
         )
         content = response.choices[0].message.content or "{}"
-        return json.loads(content)
+        result = json.loads(content)
+        # Some providers return a JSON array instead of an object; unwrap if needed
+        if isinstance(result, list):
+            result = result[0] if result and isinstance(result[0], dict) else {}
+        elif not isinstance(result, dict):
+            result = {}
+        return result
 
     def _resolve_backend(self) -> tuple[str, str | None, str]:
         provider = settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER

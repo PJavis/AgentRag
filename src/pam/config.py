@@ -66,9 +66,9 @@ class Settings(BaseSettings):
     GRAPH_CHUNK_OVERLAP_TOKENS: int = 128
     CHUNK_TOKENIZER_MODEL: str = "text-embedding-3-large"
 
-    GRAPH_MAX_CONCURRENCY: int = 3
-    GRAPH_CHUNK_TIMEOUT_SECONDS: int = 180
-    GRAPH_CHUNK_RETRIES: int = 2
+    GRAPH_MAX_CONCURRENCY: int = 1
+    GRAPH_CHUNK_TIMEOUT_SECONDS: int = 300
+    GRAPH_CHUNK_RETRIES: int = 3
     GRAPH_ENABLE_CACHE: bool = True
     GRAPH_CACHE_DIR: str = ".cache/pam/graph"
 
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
     AGENT_MAX_STEPS: int = 4
     AGENT_TOOL_TOP_K: int = 5
-    AGENT_MAX_CONTEXT_CHUNKS: int = 6
+    AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10
     CHAT_REDIS_TTL_SECONDS: int = 300
 
@@ -106,6 +106,18 @@ class Settings(BaseSettings):
     LLM_ROUTING_ENABLED: bool = False
     LLM_TASK_MODEL_MAP: str = "{}"
     LLM_COST_TRACKING_ENABLED: bool = False
+
+    # Multimodal / Vision (image description at ingest)
+    VISION_ENABLED: bool = False
+    VISION_PROVIDER: Literal["openai", "gemini", "ollama"] = "gemini"
+    VISION_MODEL: str = "gemini-2.0-flash"
+    VISION_BASE_URL: str | None = None
+    VISION_MAX_IMAGES_PER_DOC: int = 20
+
+    # Excel ingest strategy
+    EXCEL_INGEST_MODE: Literal["markdown", "sql"] = "markdown"
+    # markdown: sheet → markdown table → chunk như text thường
+    # sql:      sheet → SQLite, query trực tiếp qua structured pipeline
 
     # Observability (ADR 0001 Phase B)
     OBSERVABILITY_TRACE_ENABLED: bool = True

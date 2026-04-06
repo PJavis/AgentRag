@@ -608,3 +608,5 @@ Client receives notification, updates UI
 | `NewAchievementParseError` | User state corruption |
 
 Storage errors trigger retries via Nakama's optimistic locking. Config errors are fatal at startup.
+
+COpied

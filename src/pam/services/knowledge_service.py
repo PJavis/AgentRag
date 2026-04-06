@@ -45,10 +45,14 @@ class KnowledgeService:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         mode = self._select_retrieval_mode(intent)
         expanded_query = self.expand_query(query, intent)
+        # Aggregation queries need wider context to avoid truncating enumeration tables
+        effective_top_k = top_k or settings.AGENT_TOOL_TOP_K
+        if intent is not None and intent.query_type == "aggregation":
+            effective_top_k = max(effective_top_k, 15)
         tool_input = {
             "query": expanded_query,
             "mode": mode,
-            "top_k": top_k or settings.AGENT_TOOL_TOP_K,
+            "top_k": effective_top_k,
             "document_title": document_title,
         }
         # map mode → tool name

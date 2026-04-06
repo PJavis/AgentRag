@@ -17,6 +17,7 @@ from src.pam.graph.entity_sync import index_graph_entity_views
 from src.pam.graph.graphiti_service import GraphitiService
 from src.pam.ingestion.chunkers.hybrid_chunker import HybridChunker
 from src.pam.ingestion.embedders.factory import build_embedding_provider
+from src.pam.ingestion.parsers.excel_parser import ExcelParser
 from src.pam.ingestion.stores.elasticsearch_store import ElasticsearchStore
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,15 @@ async def process_graph_job(job: GraphIngestJob) -> None:
         split_on_paragraphs=False,
     )
     path = Path(job.folder_path) / job.source_id
-    content = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+    if suffix in (".xlsx", ".xls"):
+        parse_result = ExcelParser().parse(str(path), mode=settings.EXCEL_INGEST_MODE)
+        content = parse_result["parsed_content"]
+    elif suffix == ".csv":
+        parse_result = ExcelParser().parse(str(path), mode="markdown")
+        content = parse_result["parsed_content"]
+    else:
+        content = path.read_text(encoding="utf-8")
     chunks = chunker.chunk(content, metadata={"document_title": job.title})
     total_chunks = len(chunks)
 
@@ -144,6 +153,29 @@ async def run_graph_worker(stop_event: asyncio.Event) -> None:
             continue
         try:
             await process_graph_job(job)
+        except Exception:
+            # Catch any unhandled exception so the worker loop stays alive.
+            # process_graph_job already updates the DB to "failed" for known errors;
+            # this outer catch covers edge cases (e.g. DB unavailable, parse crash).
+            logger.exception(
+                "Unhandled error in graph worker for job %s — worker continues",
+                job.document_id,
+            )
+            # Best-effort: mark document as failed if still reachable
+            try:
+                async with AsyncSessionLocal() as session:
+                    await session.execute(
+                        update(Document)
+                        .where(Document.id == job.document_id)
+                        .values(
+                            graph_status="failed",
+                            graph_synced=False,
+                            graph_last_error="Unhandled worker error — see server logs",
+                        )
+                    )
+                    await session.commit()
+            except Exception:
+                pass
         finally:
             graph_ingest_queue.task_done()
     logger.info("Graph ingest worker stopped")

@@ -66,6 +66,13 @@ class QueryIntentClassifier:
             r"\bsố lượng\b",
             r"\bpercentage\b",
             r"\bphần trăm\b",
+            # Price × quantity calculation patterns
+            r"\b\d+\s+\w[\w\s]{0,40}\bgiá\b",          # "10 mythic shard giá"
+            r"\bgiá\b.{0,30}\b\d+\b",                   # "giá của 10 X"
+            r"\b\d+\b.{0,20}\b(cost|price)\b",           # "10 ... cost/price"
+            r"\bhow much.{0,30}\b\d+\b",                 # "how much do 10 X"
+            r"\btính (giá|tiền|chi phí)\b",              # "tính giá / tính tiền"
+            r"\b(giá|tiền|chi phí).{0,20}\btính\b",     # "giá ... tính"
         ]
     ]
 
@@ -128,6 +135,9 @@ class QueryIntentClassifier:
         {"question": "Có bao nhiêu sản phẩm loại X?", "intent": "structured", "query_type": "aggregation"},
         {"question": "Top 5 công ty có doanh thu cao nhất", "intent": "structured", "query_type": "ranking"},
         {"question": "Tìm tất cả nhân viên có lương > 10M và là senior", "intent": "structured", "query_type": "multi_filter"},
+        {"question": "10 mythic shard có giá bao nhiêu?", "intent": "structured", "query_type": "aggregation"},
+        {"question": "Tính giá của 5 legendary pack", "intent": "structured", "query_type": "aggregation"},
+        {"question": "How much do 20 epic trooper shards cost?", "intent": "structured", "query_type": "aggregation"},
         {"question": "Tính năng chính của sản phẩm là gì?", "intent": "semantic", "query_type": None},
         {"question": "Mô tả quy trình onboarding", "intent": "semantic", "query_type": None},
     ]

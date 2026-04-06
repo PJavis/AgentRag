@@ -1,0 +1,265 @@
+{
+  "document_title": "achievement-system",
+  "generated_at": "2026-04-06T04:44:38.458398+00:00",
+  "questions": [
+    {
+      "id": "q001",
+      "question": "What database is used by the Nakama storage for the Achievement System?",
+      "question_type": "factual",
+      "difficulty": "easy",
+      "expected_answer": "CockroachDB",
+      "relevant_sections": [
+        "overview"
+      ],
+      "relevant_keywords": [
+        "Nakama",
+        "Storage",
+        "CockroachDB"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q002",
+      "question": "Hệ thống thành tựu (Achievement System) là gì và nó chạy ở môi trường nào?",
+      "question_type": "factual",
+      "difficulty": "easy",
+      "expected_answer": "Nó là một module Pamlogix (Go library) chạy bên trong plugin server game Nakama.",
+      "relevant_sections": [
+        "overview"
+      ],
+      "relevant_keywords": [
+        "Pamlogix module",
+        "Go library",
+        "Nakama game server plugin"
+      ],
+      "language": "vi",
+      "notes": ""
+    },
+    {
+      "id": "q003",
+      "question": "What are the main differences between an Achievement and a SubAchievement in the data model?",
+      "question_type": "comparison",
+      "difficulty": "medium",
+      "expected_answer": "SubAchievements represent individual steps and do not contain the `sub_achievements` (nested achievements) or `total_reward` fields found in parent Achievements.",
+      "relevant_sections": [
+        "data models"
+      ],
+      "relevant_keywords": [
+        "SubAchievement",
+        "sub_achievements",
+        "total_reward"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q004",
+      "question": "Làm thế nào để cấu hình một nhiệm vụ lặp lại hàng ngày (daily quest) thông qua config?",
+      "question_type": "procedural",
+      "difficulty": "medium",
+      "expected_answer": "Bạn cần cấu hình trường `reset_cronexpr` thành '0 0 * * *' và đặt trường `auto_reset` thành true.",
+      "relevant_sections": [
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "Daily quest",
+        "reset_cronexpr",
+        "auto_reset"
+      ],
+      "language": "vi",
+      "notes": ""
+    },
+    {
+      "id": "q005",
+      "question": "How many different time-related fields (timestamps or durations) exist in the Achievement user state model, and what are they?",
+      "question_type": "aggregation",
+      "difficulty": "hard",
+      "expected_answer": "There are 7 time-related fields: claim_time_sec, total_claim_time_sec, current_time_sec, reset_time_sec, expire_time_sec, start_time_sec, and end_time_sec.",
+      "relevant_sections": [
+        "data models"
+      ],
+      "relevant_keywords": [
+        "claim_time_sec",
+        "timestamp",
+        "Achievement"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q006",
+      "question": "What field is used to link an achievement to its required predecessor achievements?",
+      "question_type": "factual",
+      "difficulty": "easy",
+      "expected_answer": "The `precondition_ids` field is used to specify required predecessor achievement IDs.",
+      "relevant_sections": [
+        "data models",
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "precondition_ids",
+        "predecessor",
+        "required"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q007",
+      "question": "How do you create a tiered achievement setup in the configuration?",
+      "question_type": "procedural",
+      "difficulty": "medium",
+      "expected_answer": "Use a parent achievement with sub-achievements representing tiers, chain the tiers in order using `precondition_ids`, and set a `total_reward` on the parent for completing all tiers.",
+      "relevant_sections": [
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "Tiered achievement",
+        "precondition_ids",
+        "total_reward"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q008",
+      "question": "Giá trị mặc định của trường `is_repeatable` trong cấu hình thành tựu là gì?",
+      "question_type": "factual",
+      "difficulty": "easy",
+      "expected_answer": "Giá trị mặc định là false.",
+      "relevant_sections": [
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "is_repeatable",
+        "Default",
+        "false"
+      ],
+      "language": "vi",
+      "notes": ""
+    },
+    {
+      "id": "q009",
+      "question": "Đối tượng lưu trữ AchievementList chứa những map nào?",
+      "question_type": "aggregation",
+      "difficulty": "medium",
+      "expected_answer": "Nó chứa hai map: `achievements` và `repeat_achievements`.",
+      "relevant_sections": [
+        "data models"
+      ],
+      "relevant_keywords": [
+        "AchievementList",
+        "achievements",
+        "repeat_achievements"
+      ],
+      "language": "vi",
+      "notes": ""
+    },
+    {
+      "id": "q010",
+      "question": "If a developer wants to automatically grant a completion reward when all sub-achievements are finished without user interaction, which flag must be set in the configuration?",
+      "question_type": "procedural",
+      "difficulty": "hard",
+      "expected_answer": "The `auto_claim_total` flag must be set to true.",
+      "relevant_sections": [
+        "data models",
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "auto_claim_total",
+        "total reward",
+        "sub-achievements"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q011",
+      "question": "Sự khác biệt giữa `reward` và `total_reward` trong cấu hình thành tựu là gì?",
+      "question_type": "comparison",
+      "difficulty": "medium",
+      "expected_answer": "`reward` là phần thưởng cho mỗi lần claim (hoàn thành) thành tựu, trong khi `total_reward` là phần thưởng được trao khi tất cả các sub-achievements đã được claim.",
+      "relevant_sections": [
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "reward",
+        "total_reward",
+        "sub-achievements"
+      ],
+      "language": "vi",
+      "notes": ""
+    },
+    {
+      "id": "q012",
+      "question": "Which system is responsible for rolling and granting rewards in the architecture?",
+      "question_type": "factual",
+      "difficulty": "easy",
+      "expected_answer": "The EconomySystem handles reward rolling and granting.",
+      "relevant_sections": [
+        "overview"
+      ],
+      "relevant_keywords": [
+        "EconomySystem",
+        "RewardRoll",
+        "Grant"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q013",
+      "question": "How does the system conceptually distinguish between a time-limited event and a repeatable grind in the configuration patterns?",
+      "question_type": "comparison",
+      "difficulty": "hard",
+      "expected_answer": "A time-limited event is defined by setting `start_time_sec`, `end_time_sec`, or `duration_sec`, whereas a repeatable grind is defined by setting `is_repeatable: true` and `auto_reset: true`.",
+      "relevant_sections": [
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "Time-limited event",
+        "Repeatable grind",
+        "duration_sec",
+        "is_repeatable"
+      ],
+      "language": "en",
+      "notes": ""
+    },
+    {
+      "id": "q014",
+      "question": "Trường nào được sử dụng để lưu trữ các metadata tùy chỉnh riêng cho từng game trong mô hình dữ liệu thành tựu?",
+      "question_type": "factual",
+      "difficulty": "medium",
+      "expected_answer": "Trường `additional_properties` (với kiểu map[string]string) được sử dụng để lưu trữ metadata tùy chỉnh.",
+      "relevant_sections": [
+        "data models",
+        "configuration"
+      ],
+      "relevant_keywords": [
+        "additional_properties",
+        "metadata",
+        "custom"
+      ],
+      "language": "vi",
+      "notes": ""
+    },
+    {
+      "id": "q015",
+      "question": "What are the three boolean flags related to 'auto' behaviors in the Achievement User State data model?",
+      "question_type": "aggregation",
+      "difficulty": "medium",
+      "expected_answer": "The three flags are `auto_claim`, `auto_claim_total`, and `auto_reset`.",
+      "relevant_sections": [
+        "data models"
+      ],
+      "relevant_keywords": [
+        "auto_claim",
+        "auto_claim_total",
+        "auto_reset"
+      ],
+      "language": "en",
+      "notes": ""
+    }
+  ]
+}

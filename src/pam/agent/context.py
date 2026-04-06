@@ -102,7 +102,7 @@ class ContextAssembler:
                     "section_path": item.get("section_path"),
                     "position": item.get("position"),
                     "content_hash": item.get("content_hash"),
-                    "excerpt": (item.get("content") or "")[:600],
+                    "excerpt": (item.get("content") or "")[:1500],
                 }
             )
         return packed

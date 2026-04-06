@@ -11,8 +11,10 @@ from src.pam.database.models import Document
 from src.pam.database import AsyncSessionLocal
 from src.pam.config import settings
 
-from .connectors.markdown import MarkdownConnector
+from .connectors.folder import FolderConnector
 from .parsers.docling_parser import DoclingParser
+from .parsers.excel_parser import ExcelParser
+from .parsers.image_describer import build_image_describer_from_settings
 from .chunkers.hybrid_chunker import HybridChunker
 from .embedders.factory import build_embedding_provider
 from .stores.postgres_store import PostgresStore
@@ -21,21 +23,28 @@ from src.pam.graph.graphiti_service import GraphitiService
 from src.pam.graph.entity_sync import index_graph_entity_views
 from src.pam.graph.graph_jobs import GraphIngestJob, graph_ingest_queue
 
+# Định dạng cần qua Docling (PDF, Word)
+_DOCLING_SOURCE_TYPES = {"pdf", "word"}
+# Định dạng Excel/CSV
+_EXCEL_SOURCE_TYPES = {"excel", "csv"}
+
 
 async def ingest_folder(
     folder_path: str,
     graph_ingest_mode: Literal["sync", "async"] | None = None,
 ) -> dict[str, Any]:
     """
-    Ingest markdown folder: Postgres + ES dùng chunk search; Graphiti dùng chunk graph (lớn hơn).
+    Ingest thư mục: hỗ trợ .md, .pdf, .docx, .xlsx, .xls, .csv
     graph_ingest_mode: override env GRAPH_INGEST_MODE (sync = chờ Graphiti xong; async = hàng đợi).
     """
     mode = graph_ingest_mode or settings.GRAPH_INGEST_MODE
 
-    connector = MarkdownConnector(folder_path)
+    connector = FolderConnector(folder_path)
     documents = connector.list_documents()
 
-    parser = DoclingParser()
+    image_describer = build_image_describer_from_settings(settings)
+    docling_parser = DoclingParser(image_describer=image_describer)
+    excel_parser = ExcelParser()
     search_chunker = HybridChunker(
         max_tokens=settings.SEARCH_CHUNK_MAX_TOKENS,
         overlap_tokens=settings.SEARCH_CHUNK_OVERLAP_TOKENS,
@@ -72,14 +81,28 @@ async def ingest_folder(
             }
             timings: dict[str, float] = {}
 
-            if settings.ENABLE_DOCLING_PARSE:
-                t0 = time.perf_counter()
-                parser.parse(file_path)
-                timings["parse_ms"] = (time.perf_counter() - t0) * 1000
-            else:
-                timings["parse_ms"] = 0.0
+            # ── Parse theo source_type ─────────────────────────────────────
+            source_type = doc.get("source_type", "markdown")
+            t0 = time.perf_counter()
 
-            content = Path(file_path).read_text(encoding="utf-8")
+            if source_type in _DOCLING_SOURCE_TYPES:
+                parse_result = await docling_parser.parse(file_path)
+                content = parse_result["parsed_content"]
+                report["images_described"] = parse_result.get("images_described", 0)
+                report["pages"] = parse_result.get("pages", 1)
+
+            elif source_type in _EXCEL_SOURCE_TYPES:
+                parse_result = excel_parser.parse(file_path, mode=settings.EXCEL_INGEST_MODE)
+                content = parse_result["parsed_content"]
+                report["sheets"] = parse_result.get("sheets", [])
+                report["total_rows"] = parse_result.get("total_rows", 0)
+
+            else:
+                # markdown — đọc trực tiếp
+                content = Path(file_path).read_text(encoding="utf-8")
+
+            timings["parse_ms"] = (time.perf_counter() - t0) * 1000
+            # ──────────────────────────────────────────────────────────────
 
             t0 = time.perf_counter()
             chunks_search = search_chunker.chunk(

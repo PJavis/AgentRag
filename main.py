@@ -17,8 +17,8 @@ from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Document, Segment
 from src.agentrag.health.providers import collect_provider_health
 from src.agentrag.ingestion.pipeline import ingest_folder
-from src.agentrag.graph.graph_jobs import run_graph_worker
-from src.agentrag.graph.consolidation_jobs import run_consolidation_worker
+from src.agentrag.graph.graph_jobs import run_graph_worker, graph_ingest_queue
+from src.agentrag.graph.consolidation_jobs import run_consolidation_worker, consolidation_queue
 from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 from src.agentrag.agent.service import AgentService
 from src.agentrag.services.llm_gateway import LLMGateway
@@ -89,26 +89,67 @@ async def ingest_upload(file: UploadFile = File(...)):
     return result
 
 
+@app.get("/ingest/queue")
+async def ingest_queue_status():
+    """Trạng thái hàng đợi ingest: pending jobs + thống kê theo graph_status."""
+    from sqlalchemy import func
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(Document.graph_status, func.count(Document.id))
+            .group_by(Document.graph_status)
+        )
+        counts = {status or "unknown": cnt for status, cnt in rows.all()}
+
+    return {
+        "queue": {
+            "pending_jobs": graph_ingest_queue.qsize(),
+            "pending_consolidation": consolidation_queue.qsize(),
+        },
+        "documents": {
+            "pending":    counts.get("pending", 0),
+            "queued":     counts.get("queued", 0),
+            "processing": counts.get("processing", 0),
+            "done":       counts.get("done", 0),
+            "failed":     counts.get("failed", 0),
+            "total":      sum(counts.values()),
+        },
+    }
+
+
+_STATUS_ORDER = {"processing": 0, "queued": 1, "pending": 2, "failed": 3, "done": 4}
+
+
 @app.get("/documents")
 async def list_documents(limit: int = 50):
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(Document).order_by(Document.created_at.desc()).limit(limit)
+            select(Document).limit(limit)
         )
         docs = result.scalars().all()
-    return {
-        "documents": [
-            {
-                "document_id": str(d.id),
-                "title": d.title,
-                "source_type": d.source_type,
-                "graph_status": d.graph_status,
-                "graph_synced": d.graph_synced,
-                "created_at": d.created_at.isoformat() if d.created_at else None,
-            }
-            for d in docs
-        ]
-    }
+
+    def _doc_row(d: Document) -> dict:
+        total = d.graph_total_chunks or 0
+        processed = d.graph_processed_chunks or 0
+        failed_chunks = d.graph_failed_chunks or 0
+        pct = round(processed / total * 100, 1) if total else (100.0 if d.graph_status == "done" else 0.0)
+        return {
+            "document_id": str(d.id),
+            "title": d.title,
+            "source_type": d.source_type,
+            "graph_status": d.graph_status,
+            "graph_synced": d.graph_synced,
+            "progress_pct": pct,
+            "chunks_total": total,
+            "chunks_done": processed,
+            "chunks_failed": failed_chunks,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+
+    rows = sorted(
+        [_doc_row(d) for d in docs],
+        key=lambda r: (_STATUS_ORDER.get(r["graph_status"] or "", 5), -(r["progress_pct"] or 0)),
+    )
+    return {"documents": rows}
 
 
 @app.delete("/documents/{document_id}")

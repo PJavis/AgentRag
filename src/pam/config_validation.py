@@ -8,7 +8,6 @@ def validate_settings(settings: Settings) -> None:
     _validate_extraction_settings(settings)
     _validate_agent_settings(settings)
     _validate_retrieval_reranker_settings(settings)
-    _validate_graph_embedding_settings(settings)
     _validate_general_settings(settings)
 
 
@@ -122,31 +121,6 @@ def _validate_retrieval_reranker_settings(settings: Settings) -> None:
         raise ValueError(
             "RETRIEVAL_RERANK_BASE_URL or AGENT_BASE_URL or EXTRACTION_BASE_URL or OLLAMA_BASE_URL "
             "is required when reranker provider resolves to ollama"
-        )
-
-
-def _validate_graph_embedding_settings(settings: Settings) -> None:
-    provider = settings.GRAPH_EMBEDDING_PROVIDER
-    if not settings.GRAPH_EMBEDDING_MODEL:
-        raise ValueError("GRAPH_EMBEDDING_MODEL is required")
-
-    if provider == "openai" and not settings.OPENAI_API_KEY:
-        raise ValueError(
-            "OPENAI_API_KEY is required when GRAPH_EMBEDDING_PROVIDER=openai"
-        )
-    if provider == "gemini" and not settings.GEMINI_API_KEY:
-        raise ValueError(
-            "GEMINI_API_KEY is required when GRAPH_EMBEDDING_PROVIDER=gemini"
-        )
-    if provider == "hf_inference" and not settings.HF_TOKEN:
-        raise ValueError(
-            "HF_TOKEN is required when GRAPH_EMBEDDING_PROVIDER=hf_inference"
-        )
-    if provider == "ollama" and not (
-        settings.GRAPH_EMBEDDING_BASE_URL or settings.OLLAMA_BASE_URL
-    ):
-        raise ValueError(
-            "GRAPH_EMBEDDING_BASE_URL or OLLAMA_BASE_URL is required when GRAPH_EMBEDDING_PROVIDER=ollama"
         )
 
 

@@ -61,13 +61,13 @@ class ContextAssembler:
             combined = f"{section} {content[:500]}"
             overlap = len(query_tokens & self._tokenize(combined))
             source = item.get("source")
-            source_boost = 0.0
-            if source == "graph":
-                source_boost = 0.08
-            elif source == "hybrid":
-                source_boost = 0.06
-            elif source == "sparse":
-                source_boost = 0.03
+            source_boost = {
+                "graph": 0.08,
+                "structmem": 0.08,
+                "synthesis": 0.07,
+                "hybrid": 0.06,
+                "sparse": 0.03,
+            }.get(source or "", 0.0)
             return base + overlap * 0.2 + source_boost
 
         ranked = sorted(
@@ -77,10 +77,11 @@ class ContextAssembler:
         )
         selected = ranked[: settings.AGENT_MAX_CONTEXT_CHUNKS]
 
-        has_graph_candidate = any(item.get("source") == "graph" for item in ranked)
-        has_graph_selected = any(item.get("source") == "graph" for item in selected)
+        _structmem_sources = {"graph", "structmem", "synthesis"}
+        has_graph_candidate = any(item.get("source") in _structmem_sources for item in ranked)
+        has_graph_selected = any(item.get("source") in _structmem_sources for item in selected)
         if has_graph_candidate and not has_graph_selected and selected:
-            best_graph = next((item for item in ranked if item.get("source") == "graph"), None)
+            best_graph = next((item for item in ranked if item.get("source") in _structmem_sources), None)
             if best_graph is not None:
                 selected[-1] = best_graph
         return selected

@@ -5,28 +5,38 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "aiohttp>=3.13.3",
-    "alembic>=1.18.4",
-    "cachetools>=7.0.5",
-    "docling>=2.80.0",
-    "elasticsearch==8.15.0",
-    "fastapi[standard]>=0.135.1",
-    "graphiti-core",
-    "huggingface-hub>=0.36.2",
-    "openai>=2.28.0",
-    "openpyxl>=3.1.5",
-    "psycopg[binary]>=3.3.3",
-    "pydantic-settings>=2.13.1",
-    "python-dotenv>=1.2.2",
-    "python-multipart>=0.0.22",
-    "redis>=6.4.0",
-    "sentence-transformers>=3.0.1",
-    "sqlalchemy[asyncio]>=2.0.48",
-    "tenacity>=9.1.4",
-    "tiktoken>=0.12.0",
-    "uvicorn[standard]>=0.41.0",
-    "xlrd>=2.0.2",
-]
+    # Web framework
+    "fastapi[standard]>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
 
-[tool.uv.sources]
-graphiti-core = { git = "https://github.com/getzep/graphiti.git" }
+    # Database
+    "sqlalchemy[asyncio]>=2.0.0",
+    "alembic>=1.13.0",
+    "psycopg[binary]>=3.1.0",
+
+    # Cache
+    "redis>=5.0.0",
+    "cachetools>=5.3.0",
+
+    # Search
+    "elasticsearch==8.15.0",
+    "tiktoken>=0.7.0",
+
+    # LLM / Embedding
+    "openai>=1.30.0",
+    "huggingface-hub>=0.23.0",
+    "sentence-transformers>=3.0.0",
+
+    # Ingestion / Parsing
+    "markitdown[all]>=0.1.0",
+    "openpyxl>=3.1.0",
+    "xlrd>=2.0.1",
+
+    # HTTP client (gemini embedder, reranker)
+    "aiohttp>=3.9.0",
+
+    # Config
+    "pydantic-settings>=2.2.0",
+    "python-dotenv>=1.0.0",
+]

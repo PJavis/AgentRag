@@ -7,7 +7,7 @@ from sqlalchemy import select
 from src.pam.config import settings
 from src.pam.database import AsyncSessionLocal
 from src.pam.database.models import Document
-from src.pam.graph.graphiti_service import GraphitiService
+from src.pam.graph.structmem_service import StructMemService
 from src.pam.ingestion.embedders.factory import build_embedding_provider
 from src.pam.ingestion.stores.elasticsearch_store import ElasticsearchStore
 from src.pam.retrieval.reranker import LLMReranker
@@ -19,7 +19,6 @@ class ElasticsearchRetriever:
         self.embedder = build_embedding_provider(settings)
         self.reranker = LLMReranker()
         self._last_rerank_reason = "not_attempted"
-        self.graph_service: GraphitiService | None = None
 
     async def search(
         self,
@@ -99,15 +98,16 @@ class ElasticsearchRetriever:
         )
         if mode == "hybrid_kg":
             if self._should_use_graph(query):
-                graph_hits, graph_reason = await self._graph_search(
+                entry_hits, graph_reason = await self._entries_search(
                     query=lexical_query,
+                    query_embedding=query_embedding,
                     top_k=candidate_size,
                     document_title=document_title,
                 )
                 hits = self._rrf_fuse_multi_source(
                     sources={
                         "chunk": hits,
-                        "graph": graph_hits,
+                        "structmem": entry_hits,
                     },
                     top_k=candidate_size,
                     rrf_k=settings.RETRIEVAL_RRF_K,
@@ -137,6 +137,48 @@ class ElasticsearchRetriever:
             "graph_reason": graph_reason,
         }
 
+    async def _entries_search(
+        self,
+        query: str,
+        query_embedding: list[float],
+        top_k: int,
+        document_title: str | None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        import asyncio
+
+        group_ids: list[str] | None = None
+        if document_title:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Document.source_id).where(Document.title == document_title)
+                )
+                source_ids = [row[0] for row in result.all() if row[0]]
+            if source_ids:
+                group_ids = [
+                    StructMemService.normalize_group_id(sid) for sid in source_ids
+                ]
+
+        try:
+            entry_hits, synth_hits = await asyncio.gather(
+                self.store.search_entries(
+                    query_embedding=query_embedding,
+                    query_text=query,
+                    group_ids=group_ids,
+                    top_k=top_k,
+                ),
+                self.store.search_synthesis(
+                    query_embedding=query_embedding,
+                    query_text=query,
+                    group_ids=group_ids,
+                    top_k=max(1, top_k // 2),
+                ),
+            )
+        except Exception as exc:
+            return [], f"entries_lookup_exception:{type(exc).__name__}"
+
+        combined = entry_hits + synth_hits
+        return combined, "ok" if combined else "empty"
+
     async def _rerank_hits(
         self,
         query: str,
@@ -155,68 +197,6 @@ class ElasticsearchRetriever:
         )
         self._last_rerank_reason = reason
         return reranked_hits, reranked
-
-    async def _get_graph_service(self) -> GraphitiService:
-        if self.graph_service is None:
-            self.graph_service = GraphitiService()
-            await self.graph_service.build_indices()
-        return self.graph_service
-
-    async def _graph_search(
-        self,
-        query: str,
-        top_k: int,
-        document_title: str | None,
-    ) -> tuple[list[dict[str, Any]], str]:
-        group_ids: list[str] | None = None
-        if document_title:
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(Document.source_id).where(Document.title == document_title)
-                )
-                source_ids = [row[0] for row in result.all() if row[0]]
-            if source_ids:
-                group_ids = [
-                    GraphitiService.normalize_group_id(source_id)
-                    for source_id in source_ids
-                ]
-
-        try:
-            graph = await self._get_graph_service()
-            edges = await graph.graph.search(
-                query=query,
-                group_ids=group_ids,
-                num_results=top_k,
-            )
-        except Exception as exc:
-            return [], f"graph_lookup_exception:{type(exc).__name__}"
-
-        hits: list[dict[str, Any]] = []
-        for rank, edge in enumerate(edges, start=1):
-            edge_uuid = str(getattr(edge, "uuid", f"graph-{rank}"))
-            fact = getattr(edge, "fact", None)
-            name = getattr(edge, "name", None)
-            content = fact or name or "graph fact"
-            hits.append(
-                {
-                    "id": f"graph:{edge_uuid}",
-                    "score": 1.0 / rank,
-                    "rank": rank,
-                    "source": "graph",
-                    "content": content,
-                    "document_title": document_title,
-                    "section_path": "graph_lookup",
-                    "position": rank,
-                    "content_hash": f"graph:{edge_uuid}",
-                    "metadata": {
-                        "group_id": getattr(edge, "group_id", None),
-                        "source_node_uuid": str(getattr(edge, "source_node_uuid", "")),
-                        "target_node_uuid": str(getattr(edge, "target_node_uuid", "")),
-                        "episodes": [str(item) for item in (getattr(edge, "episodes", None) or [])],
-                    },
-                }
-            )
-        return hits, "ok" if hits else "empty"
 
     @staticmethod
     def _rrf_fuse_multi_source(

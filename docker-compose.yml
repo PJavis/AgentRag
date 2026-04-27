@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5433:5432"           # dùng port 5433 local để tránh conflict
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,8 +23,8 @@ services:
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false          # tắt security cho dev
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"          # heap 1GB-2GB tùy máy
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
       - bootstrap.memory_lock=true
     ports:
       - "9200:9200"
@@ -53,34 +53,47 @@ services:
       timeout: 3s
       retries: 5
 
-  neo4j:
-    image: neo4j:5.26
-    container_name: pam-neo4j
+  # ── Ollama (profile: local-llm) ───────────────────────────────────────────
+  # Yêu cầu: NVIDIA GPU + NVIDIA Container Toolkit
+  # Cài toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+  #
+  # Khởi động:
+  #   docker compose --profile local-llm up -d
+  #
+  # Pull model sau khi container chạy:
+  #   docker exec pam-ollama ollama pull qwen2.5:7b-instruct
+  #   docker exec pam-ollama ollama pull nomic-embed-text
+  #
+  # .env khi dùng container Ollama:
+  #   OLLAMA_BASE_URL=http://ollama:11434/v1/
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pam-ollama
+    profiles: ["local-llm"]
     restart: unless-stopped
-    environment:
-      - NEO4J_AUTH=${NEO4J_AUTH}
-      - NEO4J_PLUGINS=${NEO4J_PLUGINS}
-      - NEO4J_apoc_export_file_enabled=true
-      - NEO4J_apoc_import_file_enabled=true
-      - NEO4J_apoc_import_file_use__neo4j__config=true
-      - NEO4J_server_jvm_additional=--add-modules=jdk.incubator.vector
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "11434:11434"
     volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-      - neo4j_plugins:/plugins
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h          # giữ model trong VRAM 24h sau lần dùng cuối
+      - OLLAMA_MAX_LOADED_MODELS=2     # tối đa 2 model cùng lúc trong VRAM
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all               # dùng tất cả GPU (đổi thành count: 1 nếu muốn giới hạn)
+              capabilities: [gpu]
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p neo4j123456 -d neo4j -e 'RETURN 1;' || exit 1"]
+      test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s
-      timeout: 10s
+      timeout: 5s
       retries: 5
+      start_period: 20s               # chờ Ollama khởi động xong trước khi check
 
 volumes:
   postgres_data:
   es_data:
   redis_data:
-  neo4j_data:
-  neo4j_logs:
-  neo4j_plugins:
+  ollama_data:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -42,6 +42,26 @@ class AgentLLM:
         elif not isinstance(result, dict):
             result = {}
         return result
+
+    async def stream_text(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> AsyncIterator[str]:
+        """Stream raw text tokens từ LLM (không ép JSON)."""
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            stream=True,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
 
     def _resolve_backend(self) -> tuple[str, str | None, str]:
         provider = settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER

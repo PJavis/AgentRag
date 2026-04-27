@@ -28,13 +28,8 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434/v1/"
     OLLAMA_API_KEY: str = "ollama"
 
-    NEO4J_PASSWORD: str = "neo4j123456"   # default từ docker-compose
-    NEO4J_USER: str = "neo4j"
-    NEO4J_URI: str = "bolt://localhost:7687"
-
-    #: sync: Graphiti chạy ngay trong ingest. async: đưa vào hàng đợi (cần worker, xem main.py lifespan).
+    #: sync: StructMem chạy ngay trong ingest. async: đưa vào hàng đợi (cần worker, xem main.py lifespan).
     GRAPH_INGEST_MODE: Literal["sync", "async"] = "async"
-    ENABLE_DOCLING_PARSE: bool = False
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] = "hf_inference"
     EMBEDDING_MODEL: str = "intfloat/multilingual-e5-large-instruct"
@@ -52,10 +47,6 @@ class Settings(BaseSettings):
     AGENT_MODEL: str | None = None
     AGENT_BASE_URL: str | None = None
     AGENT_TEMPERATURE: float | None = None
-
-    GRAPH_EMBEDDING_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] = "ollama"
-    GRAPH_EMBEDDING_MODEL: str = "nomic-embed-text"
-    GRAPH_EMBEDDING_BASE_URL: str | None = None
 
     #: Chunk cho Postgres / Elasticsearch / embed
     SEARCH_CHUNK_MAX_TOKENS: int = 512
@@ -76,6 +67,15 @@ class Settings(BaseSettings):
     ELASTICSEARCH_INDEX_NAME: str = "pam_segments"
     ELASTICSEARCH_ENTITY_INDEX_NAME: str = "pam_entities"
     ELASTICSEARCH_RELATIONSHIP_INDEX_NAME: str = "pam_relationships"
+
+    # StructMem — thay thế Graphiti graph extraction
+    STRUCTMEM_ENABLED: bool = True
+    STRUCTMEM_ENTRIES_INDEX_NAME: str = "pam_entries"
+    STRUCTMEM_SYNTHESIS_INDEX_NAME: str = "pam_synthesis"
+    # Số chunks/group tích luỹ trước khi trigger cross-chunk consolidation
+    STRUCTMEM_CONSOLIDATION_THRESHOLD: int = 20
+    # Top-K historical entries làm seed trong consolidation
+    STRUCTMEM_CONSOLIDATION_HISTORY_TOP_K: int = 15
     REDIS_URL: str | None = "redis://127.0.0.1:6379/0"
     RETRIEVAL_TOP_K: int = 10
     RETRIEVAL_NUM_CANDIDATES: int = 50
@@ -106,13 +106,6 @@ class Settings(BaseSettings):
     LLM_ROUTING_ENABLED: bool = False
     LLM_TASK_MODEL_MAP: str = "{}"
     LLM_COST_TRACKING_ENABLED: bool = False
-
-    # Multimodal / Vision (image description at ingest)
-    VISION_ENABLED: bool = False
-    VISION_PROVIDER: Literal["openai", "gemini", "ollama"] = "gemini"
-    VISION_MODEL: str = "gemini-2.0-flash"
-    VISION_BASE_URL: str | None = None
-    VISION_MAX_IMAGES_PER_DOC: int = 20
 
     # Excel ingest strategy
     EXCEL_INGEST_MODE: Literal["markdown", "sql"] = "markdown"

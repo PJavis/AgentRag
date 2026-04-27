@@ -12,19 +12,18 @@ from src.pam.database import AsyncSessionLocal
 from src.pam.config import settings
 
 from .connectors.folder import FolderConnector
-from .parsers.docling_parser import DoclingParser
+from .parsers.markitdown_parser import MarkItDownParser
 from .parsers.excel_parser import ExcelParser
-from .parsers.image_describer import build_image_describer_from_settings
 from .chunkers.hybrid_chunker import HybridChunker
 from .embedders.factory import build_embedding_provider
 from .stores.postgres_store import PostgresStore
 from .stores.elasticsearch_store import ElasticsearchStore
-from src.pam.graph.graphiti_service import GraphitiService
-from src.pam.graph.entity_sync import index_graph_entity_views
+from src.pam.graph.structmem_service import StructMemService
+from src.pam.graph.structmem_sync import index_structmem_views
 from src.pam.graph.graph_jobs import GraphIngestJob, graph_ingest_queue
 
-# Định dạng cần qua Docling (PDF, Word)
-_DOCLING_SOURCE_TYPES = {"pdf", "word"}
+# Định dạng cần parse qua MarkItDown (PDF, Word, PowerPoint, HTML)
+_MARKITDOWN_SOURCE_TYPES = {"pdf", "word"}
 # Định dạng Excel/CSV
 _EXCEL_SOURCE_TYPES = {"excel", "csv"}
 
@@ -42,8 +41,7 @@ async def ingest_folder(
     connector = FolderConnector(folder_path)
     documents = connector.list_documents()
 
-    image_describer = build_image_describer_from_settings(settings)
-    docling_parser = DoclingParser(image_describer=image_describer)
+    markitdown_parser = MarkItDownParser()
     excel_parser = ExcelParser()
     search_chunker = HybridChunker(
         max_tokens=settings.SEARCH_CHUNK_MAX_TOKENS,
@@ -63,10 +61,9 @@ async def ingest_folder(
     pg_store = PostgresStore()
     es_store = ElasticsearchStore()
 
-    graph_service: GraphitiService | None = None
+    structmem_service: StructMemService | None = None
     if mode == "sync":
-        graph_service = GraphitiService()
-        await graph_service.build_indices()
+        structmem_service = StructMemService()
 
     ingested_count = 0
     doc_reports: list[dict[str, Any]] = []
@@ -85,10 +82,9 @@ async def ingest_folder(
             source_type = doc.get("source_type", "markdown")
             t0 = time.perf_counter()
 
-            if source_type in _DOCLING_SOURCE_TYPES:
-                parse_result = await docling_parser.parse(file_path)
+            if source_type in _MARKITDOWN_SOURCE_TYPES:
+                parse_result = markitdown_parser.parse(file_path)
                 content = parse_result["parsed_content"]
-                report["images_described"] = parse_result.get("images_described", 0)
                 report["pages"] = parse_result.get("pages", 1)
 
             elif source_type in _EXCEL_SOURCE_TYPES:
@@ -145,21 +141,22 @@ async def ingest_folder(
 
             try:
                 if mode == "sync":
-                    assert graph_service is not None
+                    assert structmem_service is not None
                     t0 = time.perf_counter()
-                    graph_results = await graph_service.sync_chunks(
+                    structmem_results = await structmem_service.sync_chunks(
                         chunks=chunks_graph,
                         group_id=doc["source_id"],
                         document_ref=str(doc_id),
                     )
-                    kg_stats = await index_graph_entity_views(
+                    group_id = StructMemService.normalize_group_id(doc["source_id"])
+                    sm_stats = await index_structmem_views(
                         es_store=es_store,
                         embedder=embedder,
-                        graph_results=graph_results,
+                        structmem_results=structmem_results,
                         document_title=doc["title"],
-                        group_id=GraphitiService.normalize_group_id(doc["source_id"]),
+                        group_id=group_id,
                     )
-                    timings["graphiti_ms"] = (time.perf_counter() - t0) * 1000
+                    timings["structmem_ms"] = (time.perf_counter() - t0) * 1000
                     await session.execute(
                         update(Document)
                         .where(Document.id == doc_id)
@@ -174,11 +171,7 @@ async def ingest_folder(
                     )
                     report["graph_status"] = "done"
                     report["graph_chunks"] = len(chunks_graph)
-                    report["graph_episodes"] = len(graph_results)
-                    report["graph_entities_indexed"] = kg_stats["entities_indexed"]
-                    report["graph_relationships_indexed"] = kg_stats[
-                        "relationships_indexed"
-                    ]
+                    report["entries_indexed"] = sm_stats["entries_indexed"]
                 else:
                     await session.execute(
                         update(Document)
@@ -194,7 +187,7 @@ async def ingest_folder(
                     )
                     report["graph_status"] = "queued"
                     report["graph_chunks"] = len(chunks_graph)
-                    timings["graphiti_ms"] = 0.0
+                    timings["structmem_ms"] = 0.0
 
                 await session.commit()
 

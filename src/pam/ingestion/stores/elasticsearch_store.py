@@ -15,6 +15,8 @@ class ElasticsearchStore:
         self.index_name = settings.ELASTICSEARCH_INDEX_NAME
         self.entity_index_name = settings.ELASTICSEARCH_ENTITY_INDEX_NAME
         self.relationship_index_name = settings.ELASTICSEARCH_RELATIONSHIP_INDEX_NAME
+        self.entries_index_name = settings.STRUCTMEM_ENTRIES_INDEX_NAME
+        self.synthesis_index_name = settings.STRUCTMEM_SYNTHESIS_INDEX_NAME
 
     async def _get_index_embedding_dims(self, index_name: str) -> int | None:
         """Trả về số dims hiện tại của field embedding trong index, hoặc None nếu không có."""
@@ -424,6 +426,358 @@ class ElasticsearchStore:
         for rank, item in enumerate(ranked, start=1):
             item["rank"] = rank
         return ranked[:top_k]
+
+    # ------------------------------------------------------------------
+    # StructMem — pam_entries index
+    # ------------------------------------------------------------------
+
+    async def ensure_entries_index(self, embedding_dims: int) -> None:
+        await self._recreate_index_if_dims_changed(self.entries_index_name, embedding_dims)
+        exists = await self.client.indices.exists(index=self.entries_index_name)
+        if exists:
+            return
+        mapping = {
+            "settings": {"analysis": {"analyzer": {"default": {"type": "standard"}}}},
+            "mappings": {
+                "properties": {
+                    "content": {"type": "text"},
+                    "entry_type": {"type": "keyword"},
+                    "fact_type": {"type": "keyword"},
+                    "subject": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "relation_type": {"type": "keyword"},
+                    "source_entity": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "target_entity": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "confidence": {"type": "keyword"},
+                    "document_title": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "group_id": {"type": "keyword"},
+                    "chunk_position": {"type": "integer"},
+                    "content_hash": {"type": "keyword"},
+                    "consolidated": {"type": "boolean"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": embedding_dims,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    "created_at": {"type": "date"},
+                }
+            },
+        }
+        await self.client.indices.create(index=self.entries_index_name, body=mapping)
+
+    async def index_entries(self, entries: list[dict[str, Any]]) -> None:
+        if not entries:
+            return
+        first_embedding = entries[0].get("embedding")
+        if not isinstance(first_embedding, list) or not first_embedding:
+            raise ValueError("Entries must contain non-empty embeddings before indexing")
+        await self.ensure_entries_index(len(first_embedding))
+
+        actions: list[dict[str, Any]] = []
+        for entry in entries:
+            doc_id = entry.pop("_id", None) or sha256(
+                entry.get("content", "").encode("utf-8")
+            ).hexdigest()
+            actions.append({"index": {"_index": self.entries_index_name, "_id": doc_id}})
+            actions.append(entry)
+
+        response = await self.client.bulk(body=actions, refresh=True)
+        if response.get("errors"):
+            raise RuntimeError(f"Elasticsearch entries indexing had errors: {response}")
+
+    async def search_entries(
+        self,
+        query_embedding: list[float],
+        query_text: str,
+        group_ids: list[str] | None = None,
+        top_k: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Hybrid kNN + BM25 search trên pam_entries."""
+        size = top_k or settings.RETRIEVAL_TOP_K
+        knn_filter: dict[str, Any] | None = None
+        bm25_filter: dict[str, Any] | None = None
+        if group_ids:
+            knn_filter = {"terms": {"group_id": group_ids}}
+            bm25_filter = {"terms": {"group_id": group_ids}}
+
+        sparse_query: dict[str, Any] = {"match": {"content": {"query": query_text}}}
+        if bm25_filter:
+            sparse_query = {"bool": {"must": [sparse_query], "filter": [bm25_filter]}}
+
+        sparse_resp = await self.client.search(
+            index=self.entries_index_name,
+            size=size,
+            query=sparse_query,
+        )
+        sparse_hits = self._normalize_entry_hits(
+            sparse_resp.get("hits", {}).get("hits", []), "structmem"
+        )
+
+        knn_body: dict[str, Any] = {
+            "knn": {
+                "field": "embedding",
+                "query_vector": query_embedding,
+                "k": size,
+                "num_candidates": max(settings.RETRIEVAL_NUM_CANDIDATES, size),
+            },
+            "size": size,
+        }
+        if knn_filter:
+            knn_body["knn"]["filter"] = knn_filter
+        dense_resp = await self.client.search(index=self.entries_index_name, **knn_body)
+        dense_hits = self._normalize_entry_hits(
+            dense_resp.get("hits", {}).get("hits", []), "structmem"
+        )
+
+        return self._rrf_fuse_entries(sparse_hits, dense_hits, size, settings.RETRIEVAL_RRF_K)
+
+    async def get_entries_by_chunk_position(
+        self,
+        group_id: str,
+        chunk_positions: list[int],
+    ) -> list[dict[str, Any]]:
+        """Lấy tất cả entries tại các chunk positions cho trước (dùng trong consolidation)."""
+        if not chunk_positions:
+            return []
+        response = await self.client.search(
+            index=self.entries_index_name,
+            size=1000,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"group_id": group_id}},
+                        {"terms": {"chunk_position": chunk_positions}},
+                    ]
+                }
+            },
+        )
+        hits = response.get("hits", {}).get("hits", [])
+        return [hit.get("_source", {}) for hit in hits]
+
+    async def get_unconsolidated_entries(
+        self,
+        group_id: str,
+        max_size: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Trả về entries chưa consolidate của một group."""
+        response = await self.client.search(
+            index=self.entries_index_name,
+            size=max_size,
+            sort=[{"chunk_position": "asc"}],
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"group_id": group_id}},
+                        {"term": {"consolidated": False}},
+                    ]
+                }
+            },
+        )
+        hits = response.get("hits", {}).get("hits", [])
+        return [{"_id": h["_id"], **h.get("_source", {})} for h in hits]
+
+    async def mark_entries_consolidated(self, entry_ids: list[str]) -> None:
+        """Bulk update consolidated=True cho danh sách entry ids."""
+        if not entry_ids:
+            return
+        actions: list[dict[str, Any]] = []
+        for eid in entry_ids:
+            actions.append({"update": {"_index": self.entries_index_name, "_id": eid}})
+            actions.append({"doc": {"consolidated": True}})
+        await self.client.bulk(body=actions, refresh=False)
+
+    def _normalize_entry_hits(
+        self, hits: list[dict[str, Any]], source: str
+    ) -> list[dict[str, Any]]:
+        normalized = []
+        for rank, hit in enumerate(hits, start=1):
+            payload = hit.get("_source", {})
+            normalized.append(
+                {
+                    "id": hit.get("_id"),
+                    "score": hit.get("_score", 0.0),
+                    "rank": rank,
+                    "source": source,
+                    "content": payload.get("content"),
+                    "document_title": payload.get("document_title"),
+                    "section_path": "structmem_entries",
+                    "position": payload.get("chunk_position"),
+                    "content_hash": payload.get("content_hash"),
+                    "metadata": {
+                        "entry_type": payload.get("entry_type"),
+                        "group_id": payload.get("group_id"),
+                        "chunk_position": payload.get("chunk_position"),
+                        "relation_type": payload.get("relation_type"),
+                        "source_entity": payload.get("source_entity"),
+                        "target_entity": payload.get("target_entity"),
+                    },
+                }
+            )
+        return normalized
+
+    def _rrf_fuse_entries(
+        self,
+        sparse_hits: list[dict[str, Any]],
+        dense_hits: list[dict[str, Any]],
+        top_k: int,
+        rrf_k: int,
+    ) -> list[dict[str, Any]]:
+        fused: dict[str, dict[str, Any]] = {}
+        for hits in (sparse_hits, dense_hits):
+            for hit in hits:
+                doc_id = hit["id"]
+                if doc_id not in fused:
+                    fused[doc_id] = {**hit, "rrf_score": 0.0}
+                fused[doc_id]["rrf_score"] += 1.0 / (rrf_k + hit["rank"])
+        ranked = sorted(fused.values(), key=lambda x: x["rrf_score"], reverse=True)
+        for rank, item in enumerate(ranked, start=1):
+            item["rank"] = rank
+        return ranked[:top_k]
+
+    # ------------------------------------------------------------------
+    # StructMem — pam_synthesis index
+    # ------------------------------------------------------------------
+
+    async def ensure_synthesis_index(self, embedding_dims: int) -> None:
+        await self._recreate_index_if_dims_changed(self.synthesis_index_name, embedding_dims)
+        exists = await self.client.indices.exists(index=self.synthesis_index_name)
+        if exists:
+            return
+        mapping = {
+            "settings": {"analysis": {"analyzer": {"default": {"type": "standard"}}}},
+            "mappings": {
+                "properties": {
+                    "content": {"type": "text"},
+                    "hypothesis_type": {"type": "keyword"},
+                    "supporting_entry_ids": {"type": "keyword"},
+                    "entities_involved": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "confidence": {"type": "keyword"},
+                    "reasoning": {"type": "text"},
+                    "document_title": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "group_id": {"type": "keyword"},
+                    "consolidation_run_id": {"type": "keyword"},
+                    "source_entry_count": {"type": "integer"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": embedding_dims,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    "created_at": {"type": "date"},
+                }
+            },
+        }
+        await self.client.indices.create(index=self.synthesis_index_name, body=mapping)
+
+    async def index_synthesis(self, synthesis_docs: list[dict[str, Any]]) -> None:
+        if not synthesis_docs:
+            return
+        first_embedding = synthesis_docs[0].get("embedding")
+        if not isinstance(first_embedding, list) or not first_embedding:
+            raise ValueError("Synthesis docs must contain non-empty embeddings before indexing")
+        await self.ensure_synthesis_index(len(first_embedding))
+
+        actions: list[dict[str, Any]] = []
+        for doc in synthesis_docs:
+            doc_id = doc.pop("_id", None) or sha256(
+                doc.get("content", "").encode("utf-8")
+            ).hexdigest()
+            actions.append({"index": {"_index": self.synthesis_index_name, "_id": doc_id}})
+            actions.append(doc)
+
+        response = await self.client.bulk(body=actions, refresh=True)
+        if response.get("errors"):
+            raise RuntimeError(f"Elasticsearch synthesis indexing had errors: {response}")
+
+    async def search_synthesis(
+        self,
+        query_embedding: list[float],
+        query_text: str,
+        group_ids: list[str] | None = None,
+        top_k: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Hybrid search trên pam_synthesis."""
+        size = top_k or max(settings.RETRIEVAL_TOP_K // 2, 3)
+        knn_filter: dict[str, Any] | None = None
+        if group_ids:
+            knn_filter = {"terms": {"group_id": group_ids}}
+
+        sparse_query: dict[str, Any] = {"match": {"content": {"query": query_text}}}
+        if group_ids:
+            sparse_query = {
+                "bool": {
+                    "must": [sparse_query],
+                    "filter": [{"terms": {"group_id": group_ids}}],
+                }
+            }
+
+        sparse_resp = await self.client.search(
+            index=self.synthesis_index_name,
+            size=size,
+            query=sparse_query,
+        )
+        sparse_hits = self._normalize_synthesis_hits(
+            sparse_resp.get("hits", {}).get("hits", [])
+        )
+
+        knn_body: dict[str, Any] = {
+            "knn": {
+                "field": "embedding",
+                "query_vector": query_embedding,
+                "k": size,
+                "num_candidates": max(settings.RETRIEVAL_NUM_CANDIDATES, size),
+            },
+            "size": size,
+        }
+        if knn_filter:
+            knn_body["knn"]["filter"] = knn_filter
+        dense_resp = await self.client.search(index=self.synthesis_index_name, **knn_body)
+        dense_hits = self._normalize_synthesis_hits(dense_resp.get("hits", {}).get("hits", []))
+
+        return self._rrf_fuse_entries(sparse_hits, dense_hits, size, settings.RETRIEVAL_RRF_K)
+
+    def _normalize_synthesis_hits(self, hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized = []
+        for rank, hit in enumerate(hits, start=1):
+            payload = hit.get("_source", {})
+            normalized.append(
+                {
+                    "id": hit.get("_id"),
+                    "score": hit.get("_score", 0.0),
+                    "rank": rank,
+                    "source": "synthesis",
+                    "content": payload.get("content"),
+                    "document_title": payload.get("document_title"),
+                    "section_path": "structmem_synthesis",
+                    "position": None,
+                    "content_hash": hit.get("_id"),
+                    "metadata": {
+                        "hypothesis_type": payload.get("hypothesis_type"),
+                        "group_id": payload.get("group_id"),
+                        "entities_involved": payload.get("entities_involved"),
+                        "confidence": payload.get("confidence"),
+                    },
+                }
+            )
+        return normalized
 
     def _stable_entity_id(self, entity: dict[str, Any]) -> str:
         material = "|".join(

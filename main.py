@@ -1,31 +1,39 @@
 # main.py
 import asyncio
+import os
+import shutil
+import tempfile
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Body, HTTPException
+from fastapi import FastAPI, Body, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from openai import RateLimitError
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from src.pam.chat.history import ConversationStore
 from src.pam.config import settings
 from src.pam.config_validation import validate_settings
 from src.pam.database import AsyncSessionLocal
-from src.pam.database.models import Document
+from src.pam.database.models import Document, Segment
 from src.pam.health.providers import collect_provider_health
 from src.pam.ingestion.pipeline import ingest_folder
 from src.pam.graph.graph_jobs import run_graph_worker
+from src.pam.graph.consolidation_jobs import run_consolidation_worker
 from src.pam.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 from src.pam.agent.service import AgentService
+from src.pam.services.llm_gateway import LLMGateway
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_settings(settings)
     stop = asyncio.Event()
-    worker = asyncio.create_task(run_graph_worker(stop))
+    graph_worker = asyncio.create_task(run_graph_worker(stop))
+    consolidation_worker = asyncio.create_task(run_consolidation_worker(stop))
     yield
     stop.set()
-    await worker
+    await graph_worker
+    await consolidation_worker
 
 
 app = FastAPI(lifespan=lifespan)
@@ -42,7 +50,7 @@ async def config_validate():
         "providers": {
             "embedding": settings.EMBEDDING_PROVIDER,
             "extraction": settings.EXTRACTION_PROVIDER,
-            "graph_embedding": settings.GRAPH_EMBEDDING_PROVIDER,
+            "agent": settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER,
         },
     }
 
@@ -65,6 +73,57 @@ async def ingest(payload: dict = Body(...)):
         return {"error": "graph_ingest_mode must be 'sync' or 'async'"}
     result = await ingest_folder(folder_path, graph_ingest_mode=mode)
     return result
+
+
+@app.post("/ingest/upload")
+async def ingest_upload(file: UploadFile = File(...)):
+    """Upload a single file (PDF, DOCX, PPTX, HTML, MD, XLSX, CSV, TXT) and ingest it."""
+    tmp_dir = tempfile.mkdtemp(prefix="pam_upload_")
+    try:
+        dest = os.path.join(tmp_dir, file.filename or "upload")
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        result = await ingest_folder(tmp_dir)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return result
+
+
+@app.get("/documents")
+async def list_documents(limit: int = 50):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Document).order_by(Document.created_at.desc()).limit(limit)
+        )
+        docs = result.scalars().all()
+    return {
+        "documents": [
+            {
+                "document_id": str(d.id),
+                "title": d.title,
+                "source_type": d.source_type,
+                "graph_status": d.graph_status,
+                "graph_synced": d.graph_synced,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in docs
+        ]
+    }
+
+
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Document).where(Document.id == document_id)
+        )
+        doc = result.scalar_one_or_none()
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        await session.execute(delete(Segment).where(Segment.document_id == doc.id))
+        await session.delete(doc)
+        await session.commit()
+    return {"ok": True, "document_id": document_id}
 
 
 @app.post("/search")
@@ -166,6 +225,13 @@ async def chat(payload: dict = Body(...)):
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
 
+@app.get("/metrics")
+async def metrics():
+    """LLM cost + token usage summary (chỉ có data khi LLM_COST_TRACKING_ENABLED=true)."""
+    gateway = LLMGateway()
+    return gateway.cost_summary()
+
+
 @app.post("/conversations")
 async def create_conversation(payload: dict = Body(default={})):
     store = ConversationStore()
@@ -193,3 +259,77 @@ async def list_conversation_messages(conversation_id: str, limit: int = 20):
         "conversation_id": conversation_id,
         "messages": messages,
     }
+
+
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    store = ConversationStore()
+    deleted = await store.delete_conversation(conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {"ok": True, "conversation_id": conversation_id}
+
+
+@app.post("/chat/stream")
+async def chat_stream(payload: dict = Body(...)):
+    """SSE streaming chat. Returns Server-Sent Events with event types: status, token, done, error."""
+    question = payload.get("question")
+    if not question:
+        return {"error": "question is required"}
+    document_title = payload.get("document_title")
+    conversation_id = payload.get("conversation_id")
+    conversation_title = payload.get("conversation_title")
+
+    store = ConversationStore()
+    conversation = await store.get_or_create_conversation(
+        conversation_id=conversation_id,
+        title=conversation_title,
+    )
+    history = await store.list_messages(
+        conversation_id=conversation["conversation_id"],
+        limit=settings.CHAT_HISTORY_WINDOW,
+    )
+    await store.append_message(
+        conversation_id=conversation["conversation_id"],
+        role="user",
+        content=question,
+        extra_metadata={"document_title": document_title},
+    )
+
+    agent = AgentService()
+
+    async def event_generator():
+        collected_tokens: list[str] = []
+        async for chunk in agent.chat_stream(
+            question=question,
+            document_title=document_title,
+            chat_history=history,
+        ):
+            if chunk.startswith("event: token"):
+                import json as _json
+                data_line = chunk.split("data: ", 1)[-1].strip()
+                try:
+                    token = _json.loads(data_line).get("text", "")
+                    collected_tokens.append(token)
+                except Exception:
+                    pass
+            yield chunk
+
+        full_answer = "".join(collected_tokens)
+        if full_answer:
+            await store.append_message(
+                conversation_id=conversation["conversation_id"],
+                role="assistant",
+                content=full_answer,
+                extra_metadata={"document_title": document_title},
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Conversation-Id": conversation["conversation_id"],
+        },
+    )

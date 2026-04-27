@@ -7,7 +7,6 @@ from sqlalchemy import select
 from src.pam.config import settings
 from src.pam.database import AsyncSessionLocal
 from src.pam.database.models import Document, Segment
-from src.pam.graph.graphiti_service import GraphitiService
 from src.pam.ingestion.stores.elasticsearch_store import ElasticsearchStore
 from src.pam.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 
@@ -19,13 +18,11 @@ class AgentTools:
     def __init__(self):
         self.retriever = ElasticsearchRetriever()
         self.es_store = ElasticsearchStore()
-        self.graph_service: GraphitiService | None = None
         self.planner_tools = (
             "search_sparse",
             "search_dense",
             "search_hybrid",
             "search_hybrid_kg",
-            "graph_lookup",
             "get_document_segments",
             "get_chunk_by_hash",
         )
@@ -34,7 +31,6 @@ class AgentTools:
             "search_dense": self.search_dense,
             "search_hybrid": self.search_hybrid,
             "search_hybrid_kg": self.search_hybrid_kg,
-            "graph_lookup": self.graph_lookup,
             "compare_retrieval_modes": self.compare_retrieval_modes,
             "list_documents": self.list_documents,
             "get_document_graph_status": self.get_document_graph_status,
@@ -64,17 +60,12 @@ class AgentTools:
             },
             {
                 "name": "search_hybrid_kg",
-                "description": "Hybrid retrieval using chunk retrieval + graph retrieval with RRF",
-                "input_schema": {"query": "str", "document_title": "str|null", "top_k": "int|null"},
-            },
-            {
-                "name": "graph_lookup",
-                "description": "Search temporal knowledge graph edges/facts",
+                "description": "Hybrid retrieval over chunks + StructMem knowledge entries with RRF",
                 "input_schema": {"query": "str", "document_title": "str|null", "top_k": "int|null"},
             },
             {
                 "name": "compare_retrieval_modes",
-                "description": "Compare sparse, dense, and hybrid top results for one query",
+                "description": "Compare sparse, dense, hybrid, and hybrid_kg results for one query",
                 "input_schema": {"query": "str", "document_title": "str|null", "top_k": "int|null"},
             },
             {
@@ -84,7 +75,7 @@ class AgentTools:
             },
             {
                 "name": "get_document_graph_status",
-                "description": "Get async graph ingest status by document title",
+                "description": "Get async StructMem ingest status by document title",
                 "input_schema": {"document_title": "str"},
             },
             {
@@ -136,71 +127,6 @@ class AgentTools:
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
         )
-
-    async def _get_graph_service(self) -> GraphitiService:
-        if self.graph_service is None:
-            self.graph_service = GraphitiService()
-            await self.graph_service.build_indices()
-        return self.graph_service
-
-    async def graph_lookup(self, tool_input: dict[str, Any]) -> dict[str, Any]:
-        query = tool_input["query"]
-        top_k = tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K
-        document_title = tool_input.get("document_title")
-        group_ids: list[str] | None = None
-
-        if document_title:
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(Document.source_id).where(Document.title == document_title)
-                )
-                source_ids = [row[0] for row in result.all() if row[0]]
-            if source_ids:
-                group_ids = [
-                    GraphitiService.normalize_group_id(source_id)
-                    for source_id in source_ids
-                ]
-
-        graph = await self._get_graph_service()
-        edges = await graph.graph.search(
-            query=query,
-            group_ids=group_ids,
-            num_results=top_k,
-        )
-
-        normalized_results = []
-        for rank, edge in enumerate(edges, start=1):
-            fact = getattr(edge, "fact", None)
-            name = getattr(edge, "name", None)
-            summary = fact or name or "graph fact"
-            edge_uuid = str(getattr(edge, "uuid", f"graph-{rank}"))
-            normalized_results.append(
-                {
-                    "id": edge_uuid,
-                    "score": 1.0 / rank,
-                    "rank": rank,
-                    "source": "graph",
-                    "content": summary,
-                    "document_title": document_title,
-                    "section_path": "graph_lookup",
-                    "position": rank,
-                    "content_hash": edge_uuid,
-                    "metadata": {
-                        "group_id": getattr(edge, "group_id", None),
-                        "source_node_uuid": str(getattr(edge, "source_node_uuid", "")),
-                        "target_node_uuid": str(getattr(edge, "target_node_uuid", "")),
-                        "episodes": [str(item) for item in (getattr(edge, "episodes", None) or [])],
-                    },
-                }
-            )
-        return {
-            "mode": "graph",
-            "query": query,
-            "top_k": top_k,
-            "document_title": document_title,
-            "group_ids": group_ids,
-            "results": normalized_results,
-        }
 
     async def compare_retrieval_modes(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         query = tool_input["query"]

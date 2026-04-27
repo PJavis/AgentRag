@@ -6,7 +6,7 @@ from typing import Any
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.pam.config import settings
 from src.pam.database import AsyncSessionLocal
@@ -181,6 +181,26 @@ class ConversationStore:
         ]
         await self._write_messages_cache(conversation_id, payload)
         return payload[-limit:]
+
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        try:
+            conversation_uuid = uuid.UUID(conversation_id)
+        except ValueError:
+            return False
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Conversation).where(Conversation.id == conversation_uuid)
+            )
+            conversation = result.scalar_one_or_none()
+            if conversation is None:
+                return False
+            await session.execute(
+                delete(ChatMessage).where(ChatMessage.conversation_id == conversation_uuid)
+            )
+            await session.delete(conversation)
+            await session.commit()
+        await self._delete_messages_cache(conversation_id)
+        return True
 
     async def list_conversations(self, limit: int = 20) -> list[dict[str, Any]]:
         async with AsyncSessionLocal() as session:

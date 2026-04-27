@@ -1,5 +1,5 @@
 # src/pam/graph/graph_jobs.py
-"""Hàng đợi ingest Graphiti chạy nền (GRAPH_INGEST_MODE=async)."""
+"""Hàng đợi ingest StructMem chạy nền (GRAPH_INGEST_MODE=async)."""
 from __future__ import annotations
 
 import asyncio
@@ -13,18 +13,19 @@ from sqlalchemy import update
 from src.pam.config import settings
 from src.pam.database import AsyncSessionLocal
 from src.pam.database.models import Document
-from src.pam.graph.entity_sync import index_graph_entity_views
-from src.pam.graph.graphiti_service import GraphitiService
+from src.pam.graph.structmem_service import StructMemService
+from src.pam.graph.structmem_sync import index_structmem_views
 from src.pam.ingestion.chunkers.hybrid_chunker import HybridChunker
 from src.pam.ingestion.embedders.factory import build_embedding_provider
 from src.pam.ingestion.parsers.excel_parser import ExcelParser
+from src.pam.ingestion.parsers.markitdown_parser import MarkItDownParser
 from src.pam.ingestion.stores.elasticsearch_store import ElasticsearchStore
 
 logger = logging.getLogger(__name__)
 
 graph_ingest_queue: asyncio.Queue[GraphIngestJob] = asyncio.Queue()
 
-_graph_service: GraphitiService | None = None
+_structmem_service: StructMemService | None = None
 
 
 @dataclass(frozen=True)
@@ -35,16 +36,15 @@ class GraphIngestJob:
     title: str
 
 
-async def _get_graph_service() -> GraphitiService:
-    global _graph_service
-    if _graph_service is None:
-        _graph_service = GraphitiService()
-        await _graph_service.build_indices()
-    return _graph_service
+async def _get_structmem_service() -> StructMemService:
+    global _structmem_service
+    if _structmem_service is None:
+        _structmem_service = StructMemService()
+    return _structmem_service
 
 
 async def process_graph_job(job: GraphIngestJob) -> None:
-    graph_svc = await _get_graph_service()
+    svc = await _get_structmem_service()
     embedder = build_embedding_provider(settings)
     es_store = ElasticsearchStore()
     chunker = HybridChunker(
@@ -61,6 +61,9 @@ async def process_graph_job(job: GraphIngestJob) -> None:
         content = parse_result["parsed_content"]
     elif suffix == ".csv":
         parse_result = ExcelParser().parse(str(path), mode="markdown")
+        content = parse_result["parsed_content"]
+    elif suffix in (".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm"):
+        parse_result = MarkItDownParser().parse(str(path))
         content = parse_result["parsed_content"]
     else:
         content = path.read_text(encoding="utf-8")
@@ -96,19 +99,42 @@ async def process_graph_job(job: GraphIngestJob) -> None:
                 )
                 await session.commit()
 
-        graph_results = await graph_svc.sync_chunks(
+        structmem_results = await svc.sync_chunks(
             chunks=chunks,
             group_id=job.source_id,
             document_ref=str(job.document_id),
             progress_callback=on_progress,
         )
-        await index_graph_entity_views(
+        group_id = StructMemService.normalize_group_id(job.source_id)
+        index_stats = await index_structmem_views(
             es_store=es_store,
             embedder=embedder,
-            graph_results=graph_results,
+            structmem_results=structmem_results,
             document_title=job.title,
-            group_id=GraphitiService.normalize_group_id(job.source_id),
+            group_id=group_id,
         )
+        logger.info(
+            "StructMem indexed %s entries for document %s",
+            index_stats.get("entries_indexed", 0),
+            job.document_id,
+        )
+
+        # Trigger consolidation nếu số chunks vượt ngưỡng
+        if total_chunks >= settings.STRUCTMEM_CONSOLIDATION_THRESHOLD:
+            try:
+                from src.pam.graph.consolidation_jobs import (
+                    ConsolidationJob,
+                    consolidation_queue,
+                )
+                consolidation_queue.put_nowait(
+                    ConsolidationJob(
+                        group_id=group_id,
+                        document_id=job.document_id,
+                        trigger_chunk_count=total_chunks,
+                    )
+                )
+            except Exception as ce:
+                logger.warning("Failed to enqueue consolidation job: %s", ce)
     except Exception as e:
         logger.exception("Graph ingest failed for document %s", job.document_id)
         async with AsyncSessionLocal() as session:

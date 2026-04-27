@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 from src.pam.config import settings
 from src.pam.services import (
@@ -171,6 +171,144 @@ class AgentService:
                 "answer": round(answer_latency_ms, 2),
             },
         }
+
+    async def chat_stream(
+        self,
+        question: str,
+        document_title: str | None = None,
+        chat_history: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[str]:
+        """
+        SSE generator. Yields chuỗi "data: <json>\\n\\n" theo Server-Sent Events format.
+
+        Event types:
+          status   — bước đang chạy (retrieval, thinking, ...)
+          token    — một token của câu trả lời
+          done     — payload cuối gồm citations, tool_trace, timings_ms
+          error    — lỗi
+        """
+        def _sse(event: str, data: Any) -> str:
+            return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        try:
+            self.security.validate_chat_request(question=question, document_title=document_title)
+
+            # ── Classify + structured path ────────────────────────────────────
+            classifier_output = None
+            if settings.STRUCTURED_REASONING_ENABLED:
+                yield _sse("status", {"step": "classify"})
+                classifier_output = await self.classifier.classify(
+                    question=question,
+                    document_title=document_title,
+                    chat_history=chat_history,
+                )
+                if classifier_output.intent == "structured":
+                    yield _sse("status", {"step": "structured_reasoning"})
+                    result = await self.structured_pipeline.run(
+                        question=question,
+                        document_title=document_title,
+                        chat_history=chat_history,
+                        query_type=classifier_output.query_type or "comparison",
+                        classifier_confidence=classifier_output.confidence,
+                    )
+                    if not result.get("_structured_fallback"):
+                        answer = result.get("answer", "")
+                        for token in answer:
+                            yield _sse("token", {"text": token})
+                        yield _sse("done", {
+                            "citations": result.get("citations", []),
+                            "reasoning_path": "structured",
+                            "sql_query": result.get("sql_query"),
+                            "timings_ms": result.get("timings_ms", {}),
+                        })
+                        return
+
+            # ── Semantic retrieval ────────────────────────────────────────────
+            tool_trace: list[dict[str, Any]] = []
+            seen_calls: set[str] = set()
+
+            yield _sse("status", {"step": "retrieve"})
+            bootstrap_input, bootstrap_output = await self.knowledge.bootstrap_search(
+                query=question,
+                document_title=document_title,
+                intent=classifier_output,
+            )
+            bootstrap_output = self.security.filter_tool_results(
+                tool_output=bootstrap_output,
+                document_title=document_title,
+            )
+            tool_trace.append({
+                "tool_name": "search_hybrid_kg",
+                "tool_input": bootstrap_input,
+                "tool_output": bootstrap_output,
+            })
+            seen_calls.add(self.knowledge.fingerprint_call("search_hybrid_kg", bootstrap_input))
+
+            for _ in range(max(settings.AGENT_MAX_STEPS - 1, 0)):
+                yield _sse("status", {"step": "decide"})
+                decision = await self._decide(question, document_title, tool_trace, chat_history)
+                if decision.get("done"):
+                    break
+                tool_name = decision.get("tool_name") or "search_hybrid_kg"
+                tool_input = decision.get("tool_input") or {}
+                norm_name, norm_input = self.knowledge.normalize_tool_call(
+                    tool_name=tool_name, tool_input=tool_input,
+                    question=question, document_title=document_title,
+                )
+                fp = self.knowledge.fingerprint_call(norm_name, norm_input)
+                if fp in seen_calls:
+                    break
+                seen_calls.add(fp)
+                yield _sse("status", {"step": "tool", "tool": norm_name})
+                _, _, tool_output = await self.knowledge.execute_tool(
+                    tool_name=norm_name, tool_input=norm_input,
+                    question=question, document_title=document_title,
+                )
+                tool_output = self.security.filter_tool_results(
+                    tool_output=tool_output, document_title=document_title,
+                )
+                tool_trace.append({
+                    "tool_name": norm_name,
+                    "tool_input": norm_input,
+                    "tool_output": tool_output,
+                })
+
+            assembly = self.context.assemble(question, [e["tool_output"] for e in tool_trace])
+
+            # ── Stream answer tokens ──────────────────────────────────────────
+            yield _sse("status", {"step": "answer"})
+            system_prompt = (
+                "Answer only from the provided context. "
+                "Do NOT return JSON. Write a clear, natural answer in the same language as the question. "
+                "Only include information directly supported by the context."
+            )
+            user_prompt = json.dumps({
+                "question": question,
+                "chat_history": self.summarize_history(chat_history, limit=6),
+                "context": assembly["packed_context"],
+            }, ensure_ascii=True)
+
+            client = self.llm_gateway._resolve_client("answer")
+            async for token in client.stream_text(system_prompt, user_prompt):
+                yield _sse("token", {"text": token})
+
+            yield _sse("done", {
+                "citations": [
+                    {"document_title": c.get("document_title"),
+                     "section_path": c.get("section_path"),
+                     "content_hash": c.get("content_hash")}
+                    for c in assembly["packed_context"]
+                ],
+                "reasoning_path": "semantic",
+                "sql_query": None,
+                "tool_trace": [
+                    {"tool_name": s["tool_name"], "tool_input": s["tool_input"]}
+                    for s in tool_trace
+                ],
+            })
+
+        except Exception as exc:
+            yield _sse("error", {"message": str(exc)})
 
     @staticmethod
     def summarize_history(

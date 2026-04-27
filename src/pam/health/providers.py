@@ -37,29 +37,32 @@ def collect_provider_health(settings: Settings) -> dict:
             ),
             settings=settings,
         ),
-        "graph_embedding": _provider_status(
-            role="graph_embedding",
-            provider=settings.GRAPH_EMBEDDING_PROVIDER,
-            model=settings.GRAPH_EMBEDDING_MODEL,
+    }
+
+    if settings.AGENT_PROVIDER:
+        providers["agent"] = _provider_status(
+            role="agent",
+            provider=settings.AGENT_PROVIDER,
+            model=settings.AGENT_MODEL or settings.EXTRACTION_MODEL,
             base_url=_resolve_base_url(
-                provider=settings.GRAPH_EMBEDDING_PROVIDER,
-                explicit_base_url=settings.GRAPH_EMBEDDING_BASE_URL,
+                provider=settings.AGENT_PROVIDER,
+                explicit_base_url=settings.AGENT_BASE_URL,
                 settings=settings,
             ),
             settings=settings,
-        ),
-    }
+        )
 
-    neo4j = _socket_status(settings.NEO4J_URI)
+    infra: dict[str, dict] = {
+        "elasticsearch": _socket_status(settings.ELASTICSEARCH_URL),
+    }
+    if settings.REDIS_URL:
+        infra["redis"] = _socket_status(settings.REDIS_URL)
 
     return {
         "ok": validation_error is None,
         "validation_error": validation_error,
         "providers": providers,
-        "neo4j": {
-            "uri": settings.NEO4J_URI,
-            **neo4j,
-        },
+        "infra": infra,
     }
 
 

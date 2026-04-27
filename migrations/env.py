@@ -25,9 +25,9 @@ if config.config_file_name is not None:
 
 # ==================== PHẦN QUAN TRỌNG ====================
 # Import settings và Base (sẽ tạo Base ở bước sau)
-from src.pam.config import settings
-from src.pam.database import Base
-from src.pam.database.models import *
+from src.agentrag.config import settings
+from src.agentrag.database import Base
+from src.agentrag.database.models import *
 
 # Tạm thời để target_metadata = None vì chưa có model
 # Sau khi tạo models sẽ thay bằng Base.metadata

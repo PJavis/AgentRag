@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: pam-postgres
+    container_name: agentrag-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -19,7 +19,7 @@ services:
 
   elasticsearch:
     image: elasticsearch:8.15.0
-    container_name: pam-elasticsearch
+    container_name: agentrag-elasticsearch
     restart: unless-stopped
     environment:
       - discovery.type=single-node
@@ -41,7 +41,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: pam-redis
+    container_name: agentrag-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -61,14 +61,14 @@ services:
   #   docker compose --profile local-llm up -d
   #
   # Pull model sau khi container chạy:
-  #   docker exec pam-ollama ollama pull qwen2.5:7b-instruct
-  #   docker exec pam-ollama ollama pull nomic-embed-text
+  #   docker exec agentrag-ollama ollama pull qwen2.5:7b-instruct
+  #   docker exec agentrag-ollama ollama pull nomic-embed-text
   #
   # .env khi dùng container Ollama:
   #   OLLAMA_BASE_URL=http://ollama:11434/v1/
   ollama:
     image: ollama/ollama:latest
-    container_name: pam-ollama
+    container_name: agentrag-ollama
     profiles: ["local-llm"]
     restart: unless-stopped
     ports:

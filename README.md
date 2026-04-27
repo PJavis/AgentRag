@@ -141,8 +141,10 @@ docker compose up -d
 docker compose --profile local-llm up -d
 
 # Pull models sau khi Ollama container chạy
-docker exec pam-ollama ollama pull qwen2.5:7b-instruct
+docker exec pam-ollama ollama pull qwen2.5:14b-instruct
 docker exec pam-ollama ollama pull nomic-embed-text
+docker exec pam-ollama ollama pull llama3.2:3b
+docker exec pam-ollama ollama pull dengcao/bge-reranker-v2-m3
 
 # 3. Cài dependencies
 uv sync
@@ -152,6 +154,9 @@ uv run alembic upgrade head
 
 # 5. Khởi động server
 uv run uvicorn main:app --reload --port 8000
+
+# 6. Kết thú, gỡ bỏ
+docker compose --profile local-llm down -v --remove-orphans
 ```
 
 Kiểm tra config hợp lệ:

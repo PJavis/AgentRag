@@ -10,18 +10,18 @@ from fastapi.responses import StreamingResponse
 from openai import RateLimitError
 from sqlalchemy import select, delete
 
-from src.pam.chat.history import ConversationStore
-from src.pam.config import settings
-from src.pam.config_validation import validate_settings
-from src.pam.database import AsyncSessionLocal
-from src.pam.database.models import Document, Segment
-from src.pam.health.providers import collect_provider_health
-from src.pam.ingestion.pipeline import ingest_folder
-from src.pam.graph.graph_jobs import run_graph_worker
-from src.pam.graph.consolidation_jobs import run_consolidation_worker
-from src.pam.retrieval.elasticsearch_retriever import ElasticsearchRetriever
-from src.pam.agent.service import AgentService
-from src.pam.services.llm_gateway import LLMGateway
+from src.agentrag.chat.history import ConversationStore
+from src.agentrag.config import settings
+from src.agentrag.config_validation import validate_settings
+from src.agentrag.database import AsyncSessionLocal
+from src.agentrag.database.models import Document, Segment
+from src.agentrag.health.providers import collect_provider_health
+from src.agentrag.ingestion.pipeline import ingest_folder
+from src.agentrag.graph.graph_jobs import run_graph_worker
+from src.agentrag.graph.consolidation_jobs import run_consolidation_worker
+from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
+from src.agentrag.agent.service import AgentService
+from src.agentrag.services.llm_gateway import LLMGateway
 
 
 @asynccontextmanager
@@ -78,7 +78,7 @@ async def ingest(payload: dict = Body(...)):
 @app.post("/ingest/upload")
 async def ingest_upload(file: UploadFile = File(...)):
     """Upload a single file (PDF, DOCX, PPTX, HTML, MD, XLSX, CSV, TXT) and ingest it."""
-    tmp_dir = tempfile.mkdtemp(prefix="pam_upload_")
+    tmp_dir = tempfile.mkdtemp(prefix="agentrag_upload_")
     try:
         dest = os.path.join(tmp_dir, file.filename or "upload")
         with open(dest, "wb") as f:

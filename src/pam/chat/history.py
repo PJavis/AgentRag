@@ -182,6 +182,19 @@ class ConversationStore:
         await self._write_messages_cache(conversation_id, payload)
         return payload[-limit:]
 
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Conversation).where(Conversation.id == conversation_id)
+            )
+            conv = result.scalar_one_or_none()
+            if conv is None:
+                return False
+            await session.delete(conv)
+            await session.commit()
+        await self._delete_messages_cache(conversation_id)
+        return True
+
     async def list_conversations(self, limit: int = 20) -> list[dict[str, Any]]:
         async with AsyncSessionLocal() as session:
             result = await session.execute(

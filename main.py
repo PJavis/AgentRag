@@ -182,6 +182,15 @@ async def list_conversations(limit: int = 20):
     return {"conversations": await store.list_conversations(limit=limit)}
 
 
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    store = ConversationStore()
+    deleted = await store.delete_conversation(conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {"deleted": True, "conversation_id": conversation_id}
+
+
 @app.get("/conversations/{conversation_id}/messages")
 async def list_conversation_messages(conversation_id: str, limit: int = 20):
     store = ConversationStore()

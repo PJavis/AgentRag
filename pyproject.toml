@@ -13,6 +13,7 @@ dependencies = [
     "fastapi[standard]>=0.135.1",
     "graphiti-core",
     "huggingface-hub>=0.36.2",
+    "mcp>=1.27.0",
     "openai>=2.28.0",
     "openpyxl>=3.1.5",
     "psycopg[binary]>=3.3.3",

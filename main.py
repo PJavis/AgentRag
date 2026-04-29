@@ -16,6 +16,7 @@ from src.pam.ingestion.pipeline import ingest_folder
 from src.pam.graph.graph_jobs import run_graph_worker
 from src.pam.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 from src.pam.agent.service import AgentService
+from src.pam.mcp.fastmcp_app import get_sse_app
 
 
 @asynccontextmanager
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/mcp", get_sse_app())
 
 
 @app.get("/config/validate")

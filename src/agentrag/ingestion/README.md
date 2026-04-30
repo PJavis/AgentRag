@@ -1,6 +1,6 @@
 # Module: `ingestion` — Ingestion Pipeline
 
-**Vị trí:** `src/pam/ingestion/`
+**Vị trí:** `src/agentrag/ingestion/`
 
 Entry point duy nhất để đưa dữ liệu vào hệ thống. Đọc tài liệu từ disk, parse, chunk, embed rồi lưu vào PostgreSQL + Elasticsearch. Sau đó trigger StructMem extraction (sync hoặc async).
 
@@ -74,7 +74,7 @@ ingest_folder(folder_path)
           │
           └──▶ [STRUCTMEM_ENABLED]
                  mode=sync  → StructMemService.sync_chunks() trực tiếp
-                 mode=async → graph_jobs_queue.put(GraphJob(...))
+                 mode=async → arq_pool.enqueue_job("graph_ingest", ...)
 ```
 
 ---

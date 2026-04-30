@@ -1,6 +1,6 @@
 # Module: `structured` — SQL Reasoning Pipeline
 
-**Vị trí:** `src/pam/structured/`
+**Vị trí:** `src/agentrag/structured/`
 
 Pipeline suy luận có cấu trúc cho các câu hỏi so sánh, tổng hợp, xếp hạng. Thay vì semantic search, pipeline tự khám phá schema từ chunks, extract dữ liệu dạng bảng, rồi chạy SQL trên SQLite in-memory để trả lời.
 

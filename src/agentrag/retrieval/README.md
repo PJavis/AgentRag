@@ -1,6 +1,6 @@
 # Module: `retrieval` — Hybrid Search Engine
 
-**Vị trí:** `src/pam/retrieval/`
+**Vị trí:** `src/agentrag/retrieval/`
 
 Hybrid search engine kết hợp BM25 (sparse), vector KNN (dense), và StructMem knowledge entries. Hỗ trợ reranking bằng LLM hoặc local cross-encoder.
 
@@ -19,7 +19,7 @@ Hybrid search engine kết hợp BM25 (sparse), vector KNN (dense), và StructMe
 
 | Mode | Mô tả |
 |---|---|
-| `sparse` | BM25 full-text search trên `pam_segments` |
+| `sparse` | BM25 full-text search trên `agentrag_segments` |
 | `dense` | KNN vector search trên embedding field |
 | `hybrid` | RRF fusion sparse + dense |
 | `hybrid_kg` | RRF fusion sparse + dense + StructMem entries + synthesis |
@@ -52,9 +52,9 @@ Agent mặc định dùng `hybrid_kg`.
 
 | Method | Mô tả |
 |---|---|
-| `_sparse_search()` | BM25 trên `pam_segments` |
+| `_sparse_search()` | BM25 trên `agentrag_segments` |
 | `_dense_search()` | KNN trên embedding field |
-| `_entries_search()` | Parallel search `pam_entries` + `pam_synthesis` |
+| `_entries_search()` | Parallel search `agentrag_entries` + `agentrag_synthesis` |
 | `_rrf_fuse()` | Reciprocal Rank Fusion, k=`RETRIEVAL_RRF_K` |
 
 ---
@@ -93,6 +93,6 @@ Rerank top candidates, giảm từ `RETRIEVAL_NUM_CANDIDATES` xuống `RETRIEVAL
 | `RETRIEVAL_RERANK_BACKEND` | `llm_chat` | `llm_chat` hoặc `local_cross_encoder` |
 | `RETRIEVAL_RERANK_MODEL` | (fallback AGENT_MODEL) | Model dùng cho reranker |
 | `ELASTICSEARCH_URL` | `http://localhost:9200` | ES endpoint |
-| `ELASTICSEARCH_INDEX_NAME` | `pam_segments` | Index cho chunks |
-| `STRUCTMEM_ENTRIES_INDEX_NAME` | `pam_entries` | Index cho StructMem entries |
-| `STRUCTMEM_SYNTHESIS_INDEX_NAME` | `pam_synthesis` | Index cho synthesis |
+| `ELASTICSEARCH_INDEX_NAME` | `agentrag_segments` | Index cho chunks |
+| `STRUCTMEM_ENTRIES_INDEX_NAME` | `agentrag_entries` | Index cho StructMem entries |
+| `STRUCTMEM_SYNTHESIS_INDEX_NAME` | `agentrag_synthesis` | Index cho synthesis |

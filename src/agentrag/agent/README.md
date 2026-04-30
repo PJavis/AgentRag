@@ -1,6 +1,6 @@
 # Module: `agent` — Semantic Reasoning Loop
 
-**Vị trí:** `src/pam/agent/`
+**Vị trí:** `src/agentrag/agent/`
 
 Vòng lặp suy luận ngữ nghĩa chính. Nhận câu hỏi, tự chọn tool retrieval cần gọi, tích lũy context qua nhiều bước, rồi sinh câu trả lời cuối. Hỗ trợ cả blocking (`chat`) và streaming SSE (`chat_stream`).
 

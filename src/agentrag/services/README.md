@@ -1,6 +1,6 @@
 # Module: `services` — Service Layer
 
-**Vị trí:** `src/pam/services/`
+**Vị trí:** `src/agentrag/services/`
 
 Lớp trung gian kết nối agent/structured pipeline với retrieval và LLM. Bao gồm unified LLM gateway với task routing, knowledge retrieval facade, và access control.
 

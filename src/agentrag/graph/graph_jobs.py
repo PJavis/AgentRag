@@ -1,12 +1,11 @@
-# src/pam/graph/graph_jobs.py
-"""Hàng đợi ingest StructMem chạy nền (STRUCTMEM_INGEST_MODE=async)."""
+"""StructMem document ingest processing — called by the ARQ worker."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy import update
 
@@ -21,9 +20,10 @@ from src.agentrag.ingestion.parsers.excel_parser import ExcelParser
 from src.agentrag.ingestion.parsers.markitdown_parser import MarkItDownParser
 from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from arq import ArqRedis
 
-graph_ingest_queue: asyncio.Queue[GraphIngestJob] = asyncio.Queue()
+logger = logging.getLogger(__name__)
 
 _structmem_service: StructMemService | None = None
 
@@ -43,7 +43,7 @@ async def _get_structmem_service() -> StructMemService:
     return _structmem_service
 
 
-async def process_graph_job(job: GraphIngestJob) -> None:
+async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = None) -> None:
     svc = await _get_structmem_service()
     embedder = build_embedding_provider(settings)
     es_store = ElasticsearchStore()
@@ -119,22 +119,17 @@ async def process_graph_job(job: GraphIngestJob) -> None:
             job.document_id,
         )
 
-        # Trigger consolidation nếu số chunks vượt ngưỡng
-        if total_chunks >= settings.STRUCTMEM_CONSOLIDATION_THRESHOLD:
+        if total_chunks >= settings.STRUCTMEM_CONSOLIDATION_THRESHOLD and arq_pool is not None:
             try:
-                from src.agentrag.graph.consolidation_jobs import (
-                    ConsolidationJob,
-                    consolidation_queue,
-                )
-                consolidation_queue.put_nowait(
-                    ConsolidationJob(
-                        group_id=group_id,
-                        document_id=job.document_id,
-                        trigger_chunk_count=total_chunks,
-                    )
+                await arq_pool.enqueue_job(
+                    "consolidate",
+                    group_id=group_id,
+                    document_id=str(job.document_id),
+                    trigger_chunk_count=total_chunks,
                 )
             except Exception as ce:
                 logger.warning("Failed to enqueue consolidation job: %s", ce)
+
     except Exception as e:
         logger.exception("Graph ingest failed for document %s", job.document_id)
         async with AsyncSessionLocal() as session:
@@ -166,42 +161,3 @@ async def process_graph_job(job: GraphIngestJob) -> None:
             )
         )
         await session.commit()
-
-
-async def run_graph_worker(stop_event: asyncio.Event) -> None:
-    logger.info("Graph ingest worker started")
-    while True:
-        if stop_event.is_set() and graph_ingest_queue.empty():
-            break
-        try:
-            job = await asyncio.wait_for(graph_ingest_queue.get(), timeout=0.5)
-        except asyncio.TimeoutError:
-            continue
-        try:
-            await process_graph_job(job)
-        except Exception:
-            # Catch any unhandled exception so the worker loop stays alive.
-            # process_graph_job already updates the DB to "failed" for known errors;
-            # this outer catch covers edge cases (e.g. DB unavailable, parse crash).
-            logger.exception(
-                "Unhandled error in graph worker for job %s — worker continues",
-                job.document_id,
-            )
-            # Best-effort: mark document as failed if still reachable
-            try:
-                async with AsyncSessionLocal() as session:
-                    await session.execute(
-                        update(Document)
-                        .where(Document.id == job.document_id)
-                        .values(
-                            graph_status="failed",
-                            graph_synced=False,
-                            graph_last_error="Unhandled worker error — see server logs",
-                        )
-                    )
-                    await session.commit()
-            except Exception:
-                pass
-        finally:
-            graph_ingest_queue.task_done()
-    logger.info("Graph ingest worker stopped")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-MCP Server — expose PAM service layer như MCP tool provider.
+MCP Server — expose AgentRag service layer như MCP tool provider.
 
 Tools:
   - "search":            wraps KnowledgeService.bootstrap_search
@@ -9,9 +9,9 @@ Tools:
 
 SecurityService.filter_tool_results áp dụng cho tất cả tool responses.
 
-Usage (future):
-    from src.agentrag.mcp.server import PAMMCPServer
-    server = PAMMCPServer()
+Usage:
+    from src.agentrag.mcp.server import MCPServer
+    server = MCPServer()
     await server.handle_tool_call("search", {"query": "...", "document_title": "..."})
 """
 
@@ -61,11 +61,8 @@ TOOL_DEFINITIONS = [
 ]
 
 
-class PAMMCPServer:
-    """
-    Thin MCP adapter layer over PAM service layer.
-    Designed to be wrapped by FastMCP or raw MCP SDK in future.
-    """
+class MCPServer:
+    """Thin MCP adapter layer over AgentRag service layer."""
 
     def __init__(self) -> None:
         self._llm_gateway = LLMGateway()

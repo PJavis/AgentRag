@@ -1,5 +1,4 @@
 # main.py
-import asyncio
 import os
 import shutil
 import tempfile
@@ -12,13 +11,13 @@ from sqlalchemy import select, delete
 
 from src.agentrag.chat.history import ConversationStore
 from src.agentrag.config import settings
+from src.agentrag.mcp.app import mcp
 from src.agentrag.config_validation import validate_settings
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Document, Segment
 from src.agentrag.health.providers import collect_provider_health
 from src.agentrag.ingestion.pipeline import ingest_folder
-from src.agentrag.graph.graph_jobs import run_graph_worker, graph_ingest_queue
-from src.agentrag.graph.consolidation_jobs import run_consolidation_worker, consolidation_queue
+from src.agentrag.worker.pool import init_pool, close_pool, get_pool
 from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 from src.agentrag.agent.service import AgentService
 from src.agentrag.services.llm_gateway import LLMGateway
@@ -27,16 +26,13 @@ from src.agentrag.services.llm_gateway import LLMGateway
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_settings(settings)
-    stop = asyncio.Event()
-    graph_worker = asyncio.create_task(run_graph_worker(stop))
-    consolidation_worker = asyncio.create_task(run_consolidation_worker(stop))
+    await init_pool(settings.REDIS_URL or "redis://127.0.0.1:6379/0")
     yield
-    stop.set()
-    await graph_worker
-    await consolidation_worker
+    await close_pool()
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/mcp", mcp.streamable_http_app())
 
 
 @app.get("/config/validate")
@@ -91,7 +87,7 @@ async def ingest_upload(file: UploadFile = File(...)):
 
 @app.get("/ingest/queue")
 async def ingest_queue_status():
-    """Trạng thái hàng đợi ingest: pending jobs + thống kê theo graph_status."""
+    """Trạng thái hàng đợi ingest: pending ARQ jobs + thống kê theo graph_status."""
     from sqlalchemy import func
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
@@ -100,10 +96,15 @@ async def ingest_queue_status():
         )
         counts = {status or "unknown": cnt for status, cnt in rows.all()}
 
+    try:
+        queued_jobs = await get_pool().queued_jobs()
+        pending = len(queued_jobs)
+    except Exception:
+        pending = -1
+
     return {
         "queue": {
-            "pending_jobs": graph_ingest_queue.qsize(),
-            "pending_consolidation": consolidation_queue.qsize(),
+            "pending_jobs": pending,
         },
         "documents": {
             "pending":    counts.get("pending", 0),
@@ -246,21 +247,34 @@ async def chat(payload: dict = Body(...)):
             content=question,
             extra_metadata={"document_title": document_title},
         )
+        cid = conversation["conversation_id"]
         result = await agent.chat(
             question=question,
             document_title=document_title,
             chat_history=history,
+            conversation_id=cid,
         )
+        assistant_content = result.get("answer", "")
         await store.append_message(
-            conversation_id=conversation["conversation_id"],
+            conversation_id=cid,
             role="assistant",
-            content=result.get("answer", ""),
+            content=assistant_content,
             citations=result.get("citations", []),
             tool_trace=result.get("tool_trace", []),
             timings_ms=result.get("timings_ms", {}),
             extra_metadata={"document_title": document_title},
         )
-        result["conversation_id"] = conversation["conversation_id"]
+        if settings.CHAT_STRUCTMEM_ENABLED and assistant_content:
+            from datetime import datetime, timezone
+            await get_pool().enqueue_job(
+                "chat_memory",
+                conversation_id=cid,
+                user_message=question,
+                assistant_message=assistant_content,
+                turn_id=str(id(result)),
+                turn_timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+        result["conversation_id"] = cid
         return result
     except RateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -339,12 +353,15 @@ async def chat_stream(payload: dict = Body(...)):
 
     agent = AgentService()
 
+    stream_cid = conversation["conversation_id"]
+
     async def event_generator():
         collected_tokens: list[str] = []
         async for chunk in agent.chat_stream(
             question=question,
             document_title=document_title,
             chat_history=history,
+            conversation_id=stream_cid,
         ):
             if chunk.startswith("event: token"):
                 import json as _json
@@ -359,11 +376,21 @@ async def chat_stream(payload: dict = Body(...)):
         full_answer = "".join(collected_tokens)
         if full_answer:
             await store.append_message(
-                conversation_id=conversation["conversation_id"],
+                conversation_id=stream_cid,
                 role="assistant",
                 content=full_answer,
                 extra_metadata={"document_title": document_title},
             )
+            if settings.CHAT_STRUCTMEM_ENABLED:
+                from datetime import datetime, timezone
+                await get_pool().enqueue_job(
+                    "chat_memory",
+                    conversation_id=stream_cid,
+                    user_message=question,
+                    assistant_message=full_answer,
+                    turn_id=str(id(full_answer)),
+                    turn_timestamp=datetime.now(timezone.utc).isoformat(),
+                )
 
     return StreamingResponse(
         event_generator(),
@@ -371,6 +398,6 @@ async def chat_stream(payload: dict = Body(...)):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            "X-Conversation-Id": conversation["conversation_id"],
+            "X-Conversation-Id": stream_cid,
         },
     )

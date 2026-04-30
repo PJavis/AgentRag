@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     STRUCTURED_SQL_MAX_RETRIES: int = 2
     STRUCTURED_CONFIDENCE_THRESHOLD: float = 0.7
 
+    # Chat StructMem — áp dụng dual-perspective memory cho lịch sử hội thoại
+    CHAT_STRUCTMEM_ENABLED: bool = False
+    CHAT_MEMORY_INDEX: str = "agentrag_chat_entries"
+    CHAT_MEMORY_SYNTHESIS_INDEX: str = "agentrag_chat_synthesis"
+    CHAT_MEMORY_CONSOLIDATION_THRESHOLD: int = 10  # số turns tích luỹ trước khi consolidate
+    CHAT_MEMORY_TOP_K: int = 8  # số entries retrieve mỗi lượt
+
     # LLM Routing (ADR 0001 Phase C)
     LLM_ROUTING_ENABLED: bool = False
     LLM_TASK_MODEL_MAP: str = "{}"

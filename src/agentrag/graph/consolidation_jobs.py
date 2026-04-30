@@ -11,7 +11,6 @@ một ConsolidationJob được enqueue. Worker này:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -27,8 +26,6 @@ from src.agentrag.ingestion.embedders.factory import build_embedding_provider
 from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
 
 logger = logging.getLogger(__name__)
-
-consolidation_queue: asyncio.Queue[ConsolidationJob] = asyncio.Queue()
 
 _SYNTHESIS_SYSTEM_PROMPT = """\
 You are a knowledge synthesis specialist. You will receive memory entries extracted from different passages of a document.
@@ -227,22 +224,3 @@ async def _run_synthesis(
     return docs
 
 
-async def run_consolidation_worker(stop_event: asyncio.Event) -> None:
-    logger.info("Consolidation worker started")
-    while True:
-        if stop_event.is_set() and consolidation_queue.empty():
-            break
-        try:
-            job = await asyncio.wait_for(consolidation_queue.get(), timeout=0.5)
-        except asyncio.TimeoutError:
-            continue
-        try:
-            await process_consolidation_job(job)
-        except Exception:
-            logger.exception(
-                "Unhandled error in consolidation worker for group %s — worker continues",
-                job.group_id,
-            )
-        finally:
-            consolidation_queue.task_done()
-    logger.info("Consolidation worker stopped")

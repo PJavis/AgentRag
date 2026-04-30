@@ -20,7 +20,8 @@ from .stores.postgres_store import PostgresStore
 from .stores.elasticsearch_store import ElasticsearchStore
 from src.agentrag.graph.structmem_service import StructMemService
 from src.agentrag.graph.structmem_sync import index_structmem_views
-from src.agentrag.graph.graph_jobs import GraphIngestJob, graph_ingest_queue
+from src.agentrag.graph.graph_jobs import GraphIngestJob
+from src.agentrag.worker.pool import get_pool
 
 # Định dạng cần parse qua MarkItDown (PDF, Word, PowerPoint, HTML)
 _MARKITDOWN_SOURCE_TYPES = {"pdf", "word"}
@@ -192,13 +193,12 @@ async def ingest_folder(
                 await session.commit()
 
                 if mode == "async":
-                    await graph_ingest_queue.put(
-                        GraphIngestJob(
-                            document_id=doc_id,
-                            folder_path=str(Path(folder_path).resolve()),
-                            source_id=doc["source_id"],
-                            title=doc["title"],
-                        )
+                    await get_pool().enqueue_job(
+                        "graph_ingest",
+                        document_id=str(doc_id),
+                        folder_path=str(Path(folder_path).resolve()),
+                        source_id=doc["source_id"],
+                        title=doc["title"],
                     )
             except Exception as e:
                 await session.execute(

@@ -28,14 +28,26 @@ class AgentService:
             security_service=self.security,
         )
 
+    async def _retrieve_memory(self, conversation_id: str, question: str) -> list[dict[str, Any]]:
+        if not settings.CHAT_STRUCTMEM_ENABLED or not conversation_id:
+            return []
+        try:
+            from src.agentrag.chat.structmem import ChatMemoryService
+            svc = ChatMemoryService()
+            return await svc.retrieve(conversation_id, question)
+        except Exception:
+            return []
+
     async def chat(
         self,
         question: str,
         document_title: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
         total_started = time.perf_counter()
         self.security.validate_chat_request(question=question, document_title=document_title)
+        memory_context = await self._retrieve_memory(conversation_id, question)
 
         # ── Classify intent (shared by structured gate + semantic path) ─────────
         classifier_output = None
@@ -95,7 +107,7 @@ class AgentService:
         additional_steps = max(settings.AGENT_MAX_STEPS - 1, 0)
         for _ in range(additional_steps):
             started = time.perf_counter()
-            decision = await self._decide(question, document_title, tool_trace, chat_history)
+            decision = await self._decide(question, document_title, tool_trace, chat_history, memory_context)
             decide_elapsed = (time.perf_counter() - started) * 1000
             decide_latency_ms += decide_elapsed
             if decision.get("done"):
@@ -150,6 +162,7 @@ class AgentService:
             tool_trace,
             final_answer,
             chat_history,
+            memory_context,
         )
         answer_latency_ms += (time.perf_counter() - started) * 1000
         grounded_citations = self._ground_citations(answer.get("citations", []), assembly["packed_context"])
@@ -177,6 +190,7 @@ class AgentService:
         question: str,
         document_title: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
+        conversation_id: str | None = None,
     ) -> AsyncIterator[str]:
         """
         SSE generator. Yields chuỗi "data: <json>\\n\\n" theo Server-Sent Events format.
@@ -192,6 +206,7 @@ class AgentService:
 
         try:
             self.security.validate_chat_request(question=question, document_title=document_title)
+            memory_context = await self._retrieve_memory(conversation_id, question)
 
             # ── Classify + structured path ────────────────────────────────────
             classifier_output = None
@@ -246,7 +261,7 @@ class AgentService:
 
             for _ in range(max(settings.AGENT_MAX_STEPS - 1, 0)):
                 yield _sse("status", {"step": "decide"})
-                decision = await self._decide(question, document_title, tool_trace, chat_history)
+                decision = await self._decide(question, document_title, tool_trace, chat_history, memory_context)
                 if decision.get("done"):
                     break
                 tool_name = decision.get("tool_name") or "search_hybrid_kg"
@@ -282,11 +297,14 @@ class AgentService:
                 "Do NOT return JSON. Write a clear, natural answer in the same language as the question. "
                 "Only include information directly supported by the context."
             )
-            user_prompt = json.dumps({
+            user_payload: dict[str, Any] = {
                 "question": question,
                 "chat_history": self.summarize_history(chat_history, limit=6),
                 "context": assembly["packed_context"],
-            }, ensure_ascii=True)
+            }
+            if memory_context:
+                user_payload["conversation_memory"] = memory_context
+            user_prompt = json.dumps(user_payload, ensure_ascii=True)
 
             client = self.llm_gateway._resolve_client("answer")
             async for token in client.stream_text(system_prompt, user_prompt):
@@ -334,19 +352,19 @@ class AgentService:
         document_title: str | None,
         tool_trace: list[dict[str, Any]],
         chat_history: list[dict[str, Any]] | None,
+        memory_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         system_prompt = (
             "You are a retrieval agent. Decide one next tool call at a time. "
             "Always return JSON with keys: done, tool_name, tool_input, reason. "
             "If enough evidence exists, set done=true and do not request another tool."
         )
-        user_prompt = json.dumps(
-            {
-                "question": question,
-                "document_title": document_title,
-                "chat_history": self.summarize_history(chat_history, limit=6),
-                "available_tools": self.knowledge.describe_tools(),
-                "tool_trace_summary": [
+        decide_payload: dict[str, Any] = {
+            "question": question,
+            "document_title": document_title,
+            "chat_history": self.summarize_history(chat_history, limit=6),
+            "available_tools": self.knowledge.describe_tools(),
+            "tool_trace_summary": [
                     {
                         "tool_name": step.get("tool_name"),
                         "tool_input": step.get("tool_input"),
@@ -361,9 +379,10 @@ class AgentService:
                     }
                     for step in tool_trace
                 ],
-            },
-            ensure_ascii=True,
-        )
+        }
+        if memory_context:
+            decide_payload["conversation_memory"] = memory_context
+        user_prompt = json.dumps(decide_payload, ensure_ascii=True)
         decision, _latency_ms = await self.llm_gateway.json_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -420,6 +439,7 @@ class AgentService:
         tool_trace: list[dict[str, Any]],
         final_answer: dict[str, Any] | None,
         chat_history: list[dict[str, Any]] | None,
+        memory_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if final_answer and final_answer.get("answer"):
             return {
@@ -440,18 +460,18 @@ class AgentService:
             "You MAY perform simple arithmetic (×, ÷, +, −) on numeric values that are explicitly stated in the context; "
             "show the calculation briefly (e.g. '10 × $1.25 = $12.50')."
         )
-        user_prompt = json.dumps(
-            {
-                "question": question,
-                "chat_history": self.summarize_history(chat_history, limit=10),
-                "context": packed_context,
-                "tool_trace_summary": [
-                    {"tool_name": step["tool_name"], "tool_input": step["tool_input"]}
-                    for step in tool_trace
-                ],
-            },
-            ensure_ascii=True,
-        )
+        answer_payload: dict[str, Any] = {
+            "question": question,
+            "chat_history": self.summarize_history(chat_history, limit=10),
+            "context": packed_context,
+            "tool_trace_summary": [
+                {"tool_name": step["tool_name"], "tool_input": step["tool_input"]}
+                for step in tool_trace
+            ],
+        }
+        if memory_context:
+            answer_payload["conversation_memory"] = memory_context
+        user_prompt = json.dumps(answer_payload, ensure_ascii=True)
         answer, _latency_ms = await self.llm_gateway.json_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,

@@ -57,9 +57,15 @@ class Settings(BaseSettings):
     STRUCTMEM_CHUNK_OVERLAP_TOKENS: int = 128
     CHUNK_TOKENIZER_MODEL: str = "text-embedding-3-large"
 
+    # Number of chunks extracted in parallel within a single document job
     STRUCTMEM_MAX_CONCURRENCY: int = 1
+    # Number of documents a single ARQ worker processes simultaneously.
+    # Keep at 1 for local Ollama to avoid GPU thrashing; raise for cloud APIs.
+    STRUCTMEM_WORKER_MAX_JOBS: int = 1
     STRUCTMEM_CHUNK_TIMEOUT_SECONDS: int = 300
     STRUCTMEM_CHUNK_RETRIES: int = 3
+    # Total timeout per ARQ job (seconds) — must be >> CHUNK_TIMEOUT * MAX_CONCURRENCY
+    STRUCTMEM_JOB_TIMEOUT_SECONDS: int = 3600
     STRUCTMEM_ENABLE_CACHE: bool = True
     STRUCTMEM_CACHE_DIR: str = ".cache/agentrag/extract"
 

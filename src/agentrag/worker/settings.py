@@ -20,10 +20,10 @@ class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(
         app_settings.REDIS_URL or "redis://127.0.0.1:6379/0"
     )
-    # Max concurrent jobs per worker process
-    max_jobs = app_settings.STRUCTMEM_MAX_CONCURRENCY or 4
-    # Timeout per job (seconds) — long for heavy ingest jobs
-    job_timeout = app_settings.STRUCTMEM_CHUNK_TIMEOUT_SECONDS or 600
+    # Max concurrent document jobs per worker process (keep 1 for local Ollama)
+    max_jobs = app_settings.STRUCTMEM_WORKER_MAX_JOBS
+    # Timeout per job (seconds) — covers the full document, not a single chunk
+    job_timeout = app_settings.STRUCTMEM_JOB_TIMEOUT_SECONDS
     # Keep job result in Redis for 1 hour (for status inspection)
     keep_result = 3600
     # Retry failed jobs once

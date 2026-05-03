@@ -1,6 +1,7 @@
 # src/pam/ingestion/pipeline.py
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import time
 from typing import Any, Literal
@@ -136,9 +137,12 @@ async def ingest_folder(
                 doc_reports.append(report)
                 continue
 
-            t0 = time.perf_counter()
-            await es_store.index_segments(chunks_search, doc["title"])
-            timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
+            if status != "retry":
+                t0 = time.perf_counter()
+                await es_store.index_segments(chunks_search, doc["title"])
+                timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
+            else:
+                timings["elasticsearch_ms"] = 0.0
 
             try:
                 if mode == "sync":
@@ -193,12 +197,27 @@ async def ingest_folder(
                 await session.commit()
 
                 if mode == "async":
+                    # Cache parsed content so the ARQ worker can read it without
+                    # re-parsing (also fixes upload endpoint where temp dir is
+                    # deleted before the worker runs).
+                    parsed_cache_path: str | None = None
+                    try:
+                        _cache_dir = Path(settings.STRUCTMEM_CACHE_DIR) / "parsed"
+                        _cache_dir.mkdir(parents=True, exist_ok=True)
+                        _cache_key = hashlib.sha256(content.encode()).hexdigest()
+                        _cache_file = _cache_dir / f"{_cache_key}.txt"
+                        if not _cache_file.exists():
+                            _cache_file.write_text(content, encoding="utf-8")
+                        parsed_cache_path = str(_cache_file)
+                    except Exception:
+                        pass  # fall back to re-parse in worker
                     await get_pool().enqueue_job(
                         "graph_ingest",
                         document_id=str(doc_id),
                         folder_path=str(Path(folder_path).resolve()),
                         source_id=doc["source_id"],
                         title=doc["title"],
+                        parsed_cache_path=parsed_cache_path,
                     )
             except Exception as e:
                 await session.execute(

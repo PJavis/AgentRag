@@ -46,12 +46,20 @@ class HybridChunker:
 
         for section_name, section_text in sections:
             section_chunks = self._chunk_section(section_text)
-            for chunk_text in section_chunks:
+            for i, chunk_text in enumerate(section_chunks):
+                # For chunks after the first in a section, prepend the section
+                # heading so every chunk is self-contained (critical for Excel
+                # sheets where only the first chunk would otherwise carry the
+                # sheet name, making later row chunks context-free).
+                if i > 0 and section_name not in ("intro", "section", "chunk_0"):
+                    contextualized = f"{section_name}\n\n{chunk_text}"
+                else:
+                    contextualized = chunk_text
                 chunks.append(
                     {
-                        "content": chunk_text,
+                        "content": contextualized,
                         "content_hash": hashlib.sha256(
-                            chunk_text.encode("utf-8")
+                            contextualized.encode("utf-8")
                         ).hexdigest(),
                         "segment_type": "text",
                         "section_path": section_name,
@@ -151,8 +159,9 @@ class HybridChunker:
         return sections or [("chunk_0", content)]
 
     def _normalize_section_name(self, heading: str) -> str:
-        normalized = re.sub(r"[^a-zA-Z0-9]+", "_", heading).strip("_").lower()
-        return normalized or "section"
+        # Strip only control characters and null bytes; preserve Unicode (Vietnamese, CJK, etc.)
+        normalized = re.sub(r"[\x00-\x1f\x7f\|]+", " ", heading).strip()
+        return normalized[:200] or "section"
 
     def _next_position(self, current: int, end: int) -> int:
         if self.overlap_tokens <= 0:

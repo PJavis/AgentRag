@@ -114,6 +114,7 @@ docker compose up -d
 docker compose --profile local-llm up -d
 docker exec agentrag-ollama ollama pull qwen2.5:14b-instruct
 docker exec agentrag-ollama ollama pull nomic-embed-text
+docker exec agentrag-ollama ollama pull dengcao/bge-reranker-v2-m3
 
 # 3. Cài dependencies
 uv sync

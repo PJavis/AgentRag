@@ -311,11 +311,13 @@ class StructMemService:
             except Exception as exc:
                 last_error = exc
                 logger.warning(
-                    "StructMem extraction failed for chunk %s attempt %s/%s: %s",
-                    chunk_id, attempt + 1, settings.STRUCTMEM_CHUNK_RETRIES + 1, exc,
+                    "StructMem extraction failed for chunk %s attempt %s/%s: %s: %s",
+                    chunk_id, attempt + 1, settings.STRUCTMEM_CHUNK_RETRIES + 1,
+                    type(exc).__name__, exc,
                 )
                 if attempt < settings.STRUCTMEM_CHUNK_RETRIES:
-                    await asyncio.sleep(min(2 ** attempt, 5))
+                    # Exponential backoff — gives Ollama time to finish other requests
+                    await asyncio.sleep(min(2 ** (attempt + 2), 30))
 
         assert last_error is not None
         raise last_error

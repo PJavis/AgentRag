@@ -34,6 +34,7 @@ class GraphIngestJob:
     folder_path: str
     source_id: str
     title: str
+    parsed_cache_path: str | None = None
 
 
 async def _get_structmem_service() -> StructMemService:
@@ -54,19 +55,25 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
         split_on_headings=True,
         split_on_paragraphs=False,
     )
-    path = Path(job.folder_path) / job.source_id
-    suffix = path.suffix.lower()
-    if suffix in (".xlsx", ".xls"):
-        parse_result = ExcelParser().parse(str(path), mode=settings.EXCEL_INGEST_MODE)
-        content = parse_result["parsed_content"]
-    elif suffix == ".csv":
-        parse_result = ExcelParser().parse(str(path), mode="markdown")
-        content = parse_result["parsed_content"]
-    elif suffix in (".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm"):
-        parse_result = MarkItDownParser().parse(str(path))
-        content = parse_result["parsed_content"]
+    # Use cached parsed content if available (set by pipeline.py to avoid re-parsing
+    # and to survive temp-dir cleanup in the upload endpoint).
+    cache_path = Path(job.parsed_cache_path) if job.parsed_cache_path else None
+    if cache_path and cache_path.exists():
+        content = cache_path.read_text(encoding="utf-8")
     else:
-        content = path.read_text(encoding="utf-8")
+        path = Path(job.folder_path) / job.source_id
+        suffix = path.suffix.lower()
+        if suffix in (".xlsx", ".xls"):
+            parse_result = ExcelParser().parse(str(path), mode=settings.EXCEL_INGEST_MODE)
+            content = parse_result["parsed_content"]
+        elif suffix == ".csv":
+            parse_result = ExcelParser().parse(str(path), mode="markdown")
+            content = parse_result["parsed_content"]
+        elif suffix in (".pdf", ".docx", ".doc", ".pptx", ".ppt", ".html", ".htm"):
+            parse_result = MarkItDownParser().parse(str(path))
+            content = parse_result["parsed_content"]
+        else:
+            content = path.read_text(encoding="utf-8")
     chunks = chunker.chunk(content, metadata={"document_title": job.title})
     total_chunks = len(chunks)
 
@@ -161,3 +168,9 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
             )
         )
         await session.commit()
+
+    if cache_path and cache_path.exists():
+        try:
+            cache_path.unlink()
+        except Exception:
+            pass

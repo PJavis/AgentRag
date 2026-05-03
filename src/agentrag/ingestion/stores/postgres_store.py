@@ -33,7 +33,15 @@ class PostgresStore:
                 # 2. Kiểm tra xem có bản ghi nào trùng khớp content_hash không
                 for doc in existing_docs:
                     if doc.content_hash == doc_data["content_hash"]:
-                        # Hash giống nhau -> Không có thay đổi -> Bỏ qua
+                        if doc.graph_status == "failed":
+                            # Same content but extraction failed — reset and retry
+                            doc.graph_status = "pending"
+                            doc.graph_synced = False
+                            doc.graph_last_error = None
+                            doc.graph_failed_chunks = 0
+                            await session.commit()
+                            return doc.id, "retry"
+                        # Hash same, extraction already done or in-progress — skip
                         return doc.id, "skipped"
                 
                 # 3. Hash khác nhau (hoặc toàn là rác) -> Xóa TẤT CẢ các bản ghi cũ để re-ingest

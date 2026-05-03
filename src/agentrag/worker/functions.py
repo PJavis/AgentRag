@@ -21,6 +21,7 @@ async def graph_ingest(
     folder_path: str,
     source_id: str,
     title: str,
+    parsed_cache_path: str | None = None,
 ) -> None:
     """Parse, chunk, extract StructMem entries, and index a document."""
     from src.agentrag.graph.graph_jobs import GraphIngestJob, process_graph_job
@@ -30,6 +31,7 @@ async def graph_ingest(
         folder_path=folder_path,
         source_id=source_id,
         title=title,
+        parsed_cache_path=parsed_cache_path,
     )
     await process_graph_job(job, arq_pool=ctx["redis"])
 

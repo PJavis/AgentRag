@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -9,26 +10,30 @@ if TYPE_CHECKING:
 
 from src.agentrag.structured.sql_engine import ProvenanceRecord, SQLEngineOutput
 
+_VI_RE = re.compile(
+    r"[àáảãạăắặằẳẵâấầẩẫậèéẻẽẹêếềệểễìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]",
+    re.IGNORECASE,
+)
 
-@dataclass
-class SynthesizerOutput:
-    answer: str
-    citations: list[dict[str, Any]]
-    sql_result_summary: str
-
-
-_SYNTH_SYSTEM = """\
+_SYNTH_SYSTEM_TEMPLATE = """\
+{lang_instruction}
 You are an answer synthesis assistant. Given a question and structured query results with their sources, \
 generate a clear, concise natural language answer.
 
 Rules:
 - Base your answer ONLY on the provided query results.
 - Be direct and specific — include actual numbers, names, and comparisons from the results.
-- Use the same language as the question (Vietnamese or English).
-- Return JSON: {"answer": str, "citations": list}
-- Each citation must include: {"document_title": str, "section_path": str, "content_hash": str}
+- Return JSON: {{"answer": str, "citations": list}}
+- Each citation must include: {{"document_title": str, "section_path": str, "content_hash": str}}
 - Only cite sources that actually appear in the provenance list.
 """
+
+
+@dataclass
+class SynthesizerOutput:
+    answer: str
+    citations: list[dict[str, Any]]
+    sql_result_summary: str
 
 
 class AnswerSynthesizer:
@@ -48,6 +53,13 @@ class AnswerSynthesizer:
         query_type: str,
         chat_history: list[dict[str, Any]] | None = None,
     ) -> SynthesizerOutput:
+        lang_instruction = (
+            "Ngôn ngữ phản hồi: Tiếng Việt. Toàn bộ câu trả lời PHẢI bằng tiếng Việt."
+            if _VI_RE.search(question)
+            else "Response language: English."
+        )
+        system_prompt = _SYNTH_SYSTEM_TEMPLATE.format(lang_instruction=lang_instruction)
+
         formatted = self._format_result(sql_result.result_rows, query_type)
         provenance_context = self._build_provenance_context(
             sql_result.provenance, candidate_chunks
@@ -65,7 +77,7 @@ class AnswerSynthesizer:
 
         try:
             raw, _latency = await self._llm.json_response(
-                system_prompt=_SYNTH_SYSTEM,
+                system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 task="synthesize",
             )

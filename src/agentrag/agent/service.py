@@ -1,8 +1,21 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any, AsyncIterator
+
+_VI_RE = re.compile(
+    r"[àáảãạăắặằẳẵâấầẩẫậèéẻẽẹêếềệểễìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]",
+    re.IGNORECASE,
+)
+
+
+def _lang_instruction(question: str) -> str:
+    """Return an explicit language instruction based on the question."""
+    if _VI_RE.search(question):
+        return "Ngôn ngữ phản hồi: Tiếng Việt. Toàn bộ câu trả lời PHẢI bằng tiếng Việt."
+    return "Response language: English."
 
 from src.agentrag.config import settings
 from src.agentrag.services import (
@@ -293,9 +306,13 @@ class AgentService:
             # ── Stream answer tokens ──────────────────────────────────────────
             yield _sse("status", {"step": "answer"})
             system_prompt = (
-                "Answer only from the provided context. "
-                "Do NOT return JSON. Write a clear, natural answer in the same language as the question. "
-                "Only include information directly supported by the context."
+                f"{_lang_instruction(question)} "
+                "Answer ONLY from the provided context. Do NOT return JSON. "
+                "Be concise and direct — answer the specific question asked, do not give a general summary. "
+                "When the context contains multiple documents, focus only on the document(s) directly relevant to the question; ignore unrelated documents. "
+                "Only include information explicitly present in the context. "
+                "If the question is too vague to give a useful answer (e.g., which item, which document, or which aspect is missing), "
+                "ask ONE focused clarifying question instead of guessing. Do not answer and ask at the same time."
             )
             user_payload: dict[str, Any] = {
                 "question": question,
@@ -448,17 +465,21 @@ class AgentService:
             }
 
         system_prompt = (
-            "Answer only from the provided context. "
+            f"{_lang_instruction(question)} "
+            "Answer ONLY from the provided context. "
             "Return JSON with keys: answer, citations. "
             "Each citation must include document_title, section_path, position, content_hash. "
-            "If context is insufficient, say so explicitly. "
-            "Use the same language as the question. "
+            "Be concise and direct — answer the specific question, do not add background or general overviews. "
+            "When context contains multiple documents, focus on the document(s) directly relevant to the question; ignore unrelated documents. "
+            "If the question is too vague to give a useful answer (e.g., which item, which document, or which aspect is missing), "
+            "set answer to ONE focused clarifying question and citations to []. "
+            "Do not answer and ask at the same time. "
+            "If context is insufficient for a specific question, say so explicitly. "
             "Answer in clear, natural sentences and avoid broken wording. "
-            "Only cite claims that are directly supported by the provided context. "
-            "Do NOT add examples, field names, or details that are not explicitly present in the context. "
-            "When listing items (fields, flags, values), only include items you can directly quote from the context. "
-            "You MAY perform simple arithmetic (×, ÷, +, −) on numeric values that are explicitly stated in the context; "
-            "show the calculation briefly (e.g. '10 × $1.25 = $12.50')."
+            "Only cite claims directly supported by the provided context. "
+            "Do NOT add examples, field names, or details not explicitly present in the context. "
+            "You MAY perform simple arithmetic (×, ÷, +, −) on numeric values explicitly stated in the context; "
+            "show the calculation briefly (e.g. '10 × 3000 = 30,000 gold')."
         )
         answer_payload: dict[str, Any] = {
             "question": question,

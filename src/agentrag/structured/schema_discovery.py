@@ -45,7 +45,9 @@ Rules:
 - query_focus lists column names most relevant to answering the question.
 - join_keys links foreign keys between tables when multiple tables are needed.
 - If one table suffices, set join_keys to [].
-- Column names should be simple snake_case strings.
+- Column names must exactly match the column headers visible in the text samples (no renaming or inventing new ones).
+- Table names must come from the sheet/section names visible in the text samples (look for "Sheet:", "##", or similar prefixes), converted to snake_case.
+- Do NOT invent column or table names that are not present in the text samples.
 
 Return JSON in this exact structure:
 {
@@ -143,10 +145,10 @@ class SchemaDiscoveryModule:
 
     @staticmethod
     def _format_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, str]]:
-        """Truncate mỗi chunk xuống 300 chars để tiết kiệm tokens."""
+        """Truncate mỗi chunk xuống 600 chars để LLM thấy đủ header + vài dòng dữ liệu."""
         result = []
         for chunk in chunks:
-            content = (chunk.get("content") or "")[:300]
+            content = (chunk.get("content") or "")[:600]
             result.append({
                 "section": chunk.get("section_path", ""),
                 "content": content,

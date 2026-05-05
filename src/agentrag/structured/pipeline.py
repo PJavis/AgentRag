@@ -121,6 +121,12 @@ class StructuredReasoningPipeline:
                     question, document_title,
                     sql_result.fallback_reason or "sql_failed", tracer,
                 )
+            # Empty result set likely means schema/column names were hallucinated —
+            # fall back to semantic search which may still find the answer.
+            if not sql_result.result_rows:
+                return self._fallback_result(
+                    question, document_title, "sql_empty_results", tracer,
+                )
         except Exception as exc:
             tracer.fail("sql", exc)
             return self._fallback_result(question, document_title, f"sql_exception:{exc}", tracer)

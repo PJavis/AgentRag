@@ -40,7 +40,7 @@ You are a schema inference expert. Given a natural language question and text sa
 infer the minimal relational schema needed to answer the question.
 
 Rules:
-- Infer only what is needed to answer the question — minimal schema.
+- Infer the schema needed to answer the question — include all columns that could help.
 - Each table must have a primary_key (the field that uniquely identifies a row).
 - query_focus lists column names most relevant to answering the question.
 - join_keys links foreign keys between tables when multiple tables are needed.
@@ -48,6 +48,9 @@ Rules:
 - Column names must exactly match the column headers visible in the text samples (no renaming or inventing new ones).
 - Table names must come from the sheet/section names visible in the text samples (look for "Sheet:", "##", or similar prefixes), converted to snake_case.
 - Do NOT invent column or table names that are not present in the text samples.
+- ALWAYS include ALL price-related columns present in the data (any column whose name contains \
+  "price", "cost", "iap", "usd", "vnd", "fee", "rate", "gem", "coin", "gold", "diamond"). \
+  Never omit a price column, even if it is not the primary focus of the question — the user may want all price types.
 
 Return JSON in this exact structure:
 {

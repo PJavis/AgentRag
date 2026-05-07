@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     # markdown: sheet → markdown table → chunk như text thường
     # sql:      sheet → SQLite, query trực tiếp qua structured pipeline
 
+    # Query Rewriting — HyDE + decomposition (requires one extra LLM call per query)
+    QUERY_REWRITE_ENABLED: bool = False
+    # HyDE: generate hypothetical answer and augment query for better kNN match
+    QUERY_REWRITE_HYDE: bool = True
+    # Decompose: split complex questions into sub-queries for multi-hop retrieval
+    QUERY_REWRITE_DECOMPOSE: bool = False
+
     # Observability (ADR 0001 Phase B)
     OBSERVABILITY_TRACE_ENABLED: bool = True
 

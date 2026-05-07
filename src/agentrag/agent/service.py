@@ -31,7 +31,7 @@ from src.agentrag.structured.query_classifier import QueryIntentClassifier
 class AgentService:
     def __init__(self):
         self.llm_gateway = LLMGateway()
-        self.knowledge = KnowledgeService()
+        self.knowledge = KnowledgeService(llm_gateway=self.llm_gateway)
         self.context = ContextAssemblyService()
         self.security = SecurityService()
         self.classifier = QueryIntentClassifier(llm_gateway=self.llm_gateway)
@@ -372,9 +372,16 @@ class AgentService:
         memory_context: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         system_prompt = (
-            "You are a retrieval agent. Decide one next tool call at a time. "
-            "Always return JSON with keys: done, tool_name, tool_input, reason. "
-            "If enough evidence exists, set done=true and do not request another tool."
+            "You are a retrieval agent with self-reflection. "
+            "Before deciding, reflect on the evidence collected so far:\n"
+            "  (1) Does it DIRECTLY answer the specific question? (not just related info)\n"
+            "  (2) What specific fact is still missing?\n"
+            "  (3) Would a more targeted query (different keywords, entity name, or sub-question) find it?\n"
+            "Return JSON: {done, reflection, tool_name, tool_input, reason}.\n"
+            "Set done=true only when the evidence directly answers the question.\n"
+            "If missing info: set tool_name to a search tool, tool_input.query to a specific refined query "
+            "that targets EXACTLY what is missing — avoid repeating the same query already used.\n"
+            "For multi-hop questions, retrieve intermediate facts first, then use those to form the next query."
         )
         decide_payload: dict[str, Any] = {
             "question": question,
@@ -414,6 +421,7 @@ class AgentService:
             "tool_name": tool_name,
             "tool_input": tool_input,
             "reason": decision.get("reason"),
+            "reflection": decision.get("reflection"),  # self-reflection reasoning
         }
 
     def _ground_citations(

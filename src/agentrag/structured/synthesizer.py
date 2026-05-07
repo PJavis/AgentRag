@@ -23,6 +23,10 @@ generate a clear, concise natural language answer.
 Rules:
 - Base your answer ONLY on the provided query results.
 - Be direct and specific — include actual numbers, names, and comparisons from the results.
+- If the question specifies a quantity (e.g. "10 shards", "5 packs"), calculate and state the total \
+  (unit_price × quantity) clearly alongside the unit price. Do not answer with just the unit price.
+- Include ALL price types present in the results (gem price, IAP/USD price, VND price, etc.). \
+  Never omit a price column — always report every price type found in the data.
 - Return JSON: {{"answer": str, "citations": list}}
 - Each citation must include: {{"document_title": str, "section_path": str, "content_hash": str}}
 - Only cite sources that actually appear in the provenance list.

@@ -97,13 +97,20 @@ class ContextAssembler:
     def _stage_citation_pack(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         packed = []
         for item in candidates:
-            packed.append(
-                {
-                    "document_title": item.get("document_title"),
-                    "section_path": item.get("section_path"),
-                    "position": item.get("position"),
-                    "content_hash": item.get("content_hash"),
-                    "excerpt": (item.get("content") or "")[:1500],
-                }
-            )
+            page_start = item.get("page_start")
+            page_end = item.get("page_end")
+            entry: dict[str, Any] = {
+                "document_title": item.get("document_title"),
+                "section_path": item.get("section_path"),
+                "position": item.get("position"),
+                "content_hash": item.get("content_hash"),
+                "segment_type": item.get("segment_type", "text"),
+                "page_start": page_start,
+                "page_end": page_end,
+                "excerpt": (item.get("content") or "")[:1500],
+            }
+            # Convenience field: human-readable page reference
+            if page_start is not None:
+                entry["page"] = page_start if page_start == page_end else f"{page_start}-{page_end}"
+            packed.append(entry)
         return packed

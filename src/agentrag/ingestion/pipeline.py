@@ -15,6 +15,8 @@ from src.agentrag.config import settings
 from .connectors.folder import FolderConnector
 from .parsers.markitdown_parser import MarkItDownParser
 from .parsers.excel_parser import ExcelParser
+from .parsers.pdf_parser import PDFParser
+from .parsers.image_parser import ImageParser
 from .chunkers.hybrid_chunker import HybridChunker
 from .embedders.factory import build_embedding_provider
 from .stores.postgres_store import PostgresStore
@@ -24,10 +26,14 @@ from src.agentrag.graph.structmem_sync import index_structmem_views
 from src.agentrag.graph.graph_jobs import GraphIngestJob
 from src.agentrag.worker.pool import get_pool
 
-# Định dạng cần parse qua MarkItDown (PDF, Word, PowerPoint, HTML)
-_MARKITDOWN_SOURCE_TYPES = {"pdf", "word"}
+# Định dạng parse qua PyMuPDF (page-aware, trả về page_data cho image extraction)
+_PYMUPDF_SOURCE_TYPES = {"pdf"}
+# Định dạng parse qua MarkItDown (Word, PPTX, HTML)
+_MARKITDOWN_SOURCE_TYPES = {"word"}
 # Định dạng Excel/CSV
 _EXCEL_SOURCE_TYPES = {"excel", "csv"}
+# Standalone image files — described via Vision LLM
+_IMAGE_SOURCE_TYPES = {"image"}
 
 
 async def ingest_folder(
@@ -43,8 +49,15 @@ async def ingest_folder(
     connector = FolderConnector(folder_path)
     documents = connector.list_documents()
 
+    pdf_parser = PDFParser()
     markitdown_parser = MarkItDownParser()
     excel_parser = ExcelParser()
+
+    # Image parser — only instantiated when VISION_PROVIDER is configured
+    image_parser: ImageParser | None = None
+    if settings.VISION_PROVIDER is not None:
+        from src.agentrag.services.llm_gateway import LLMGateway
+        image_parser = ImageParser(LLMGateway())
     search_chunker = HybridChunker(
         max_tokens=settings.SEARCH_CHUNK_MAX_TOKENS,
         overlap_tokens=settings.SEARCH_CHUNK_OVERLAP_TOKENS,
@@ -79,12 +92,33 @@ async def ingest_folder(
                 "title": doc["title"],
             }
             timings: dict[str, float] = {}
+            _pdf_images: list[dict] = []
 
             # ── Parse theo source_type ─────────────────────────────────────
             source_type = doc.get("source_type", "markdown")
             t0 = time.perf_counter()
 
-            if source_type in _MARKITDOWN_SOURCE_TYPES:
+            if source_type in _IMAGE_SOURCE_TYPES:
+                if image_parser is None:
+                    report["status"] = "skipped"
+                    report["skip_reason"] = "VISION_PROVIDER not configured"
+                    doc_reports.append(report)
+                    continue
+                parse_result = await image_parser.parse(file_path, doc["title"])
+                content = parse_result["parsed_content"]
+                report["pages"] = 1
+                # Inject image URL into metadata so it survives chunking → ES
+                doc["_image_url"] = parse_result.get("image_url", "")
+                doc["_image_path"] = parse_result.get("image_path", "")
+
+            elif source_type in _PYMUPDF_SOURCE_TYPES:
+                parse_result = pdf_parser.parse(file_path)
+                content = parse_result["parsed_content"]
+                report["pages"] = parse_result.get("pages", 1)
+                if image_parser is not None:
+                    _pdf_images = pdf_parser.extract_images(file_path, doc["title"])
+
+            elif source_type in _MARKITDOWN_SOURCE_TYPES:
                 parse_result = markitdown_parser.parse(file_path)
                 content = parse_result["parsed_content"]
                 report["pages"] = parse_result.get("pages", 1)
@@ -110,6 +144,46 @@ async def ingest_folder(
             # Threshold 80 chars loại bỏ "## API", "## Overview" nhưng giữ lại nội dung thực.
             chunks_search = [c for c in chunks_search if len(c["content"].strip()) >= 80]
             timings["chunk_search_ms"] = (time.perf_counter() - t0) * 1000
+
+            # Enrich standalone image chunks with segment_type + image metadata
+            if source_type in _IMAGE_SOURCE_TYPES:
+                img_url = doc.get("_image_url", "")
+                img_path = doc.get("_image_path", "")
+                for c in chunks_search:
+                    c["segment_type"] = "image"
+                    c.setdefault("metadata", {})
+                    c["metadata"]["image_url"] = img_url
+                    c["metadata"]["image_path"] = img_path
+                    if c.get("page_start") is None:
+                        c["page_start"] = 1
+                        c["page_end"] = 1
+
+            # Add image chunks extracted from PDF pages
+            if _pdf_images:
+                next_pos = len(chunks_search)
+                for img in _pdf_images:
+                    description = await image_parser.describe(  # type: ignore[union-attr]
+                        img["bytes"], img["mime"], context=doc["title"]
+                    )
+                    if not description or description.startswith("[image"):
+                        continue
+                    img_chunk: dict = {
+                        "content": description,
+                        "content_hash": hashlib.sha256(description.encode("utf-8")).hexdigest(),
+                        "segment_type": "image",
+                        "section_path": f"page_{img['page']}_image",
+                        "position": next_pos,
+                        "page_start": img["page"],
+                        "page_end": img["page"],
+                        "metadata": {
+                            "document_title": doc["title"],
+                            "image_url": img["url"],
+                            "image_path": img["path"],
+                        },
+                    }
+                    chunks_search.append(img_chunk)
+                    next_pos += 1
+                report["pdf_images"] = len(_pdf_images)
 
             t0 = time.perf_counter()
             chunks_graph = graph_chunker.chunk(

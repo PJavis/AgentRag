@@ -4,6 +4,11 @@ import hashlib
 import re
 from typing import Dict, List
 
+# Page markers injected by PDFParser: \x00P{page_num}\x00
+# Resolved here so page_start/page_end is set on each chunk without any
+# structural changes to the heading/token chunking logic.
+_PAGE_MARKER_RE = re.compile(r"\x00P(\d+)\x00")
+
 try:
     import tiktoken
 except ModuleNotFoundError:
@@ -69,7 +74,39 @@ class HybridChunker:
                 )
                 chunk_id += 1
 
+        self._resolve_page_numbers(chunks)
         return chunks
+
+    @staticmethod
+    def _resolve_page_numbers(chunks: list[Dict]) -> None:
+        """Strip embedded page markers and assign page_start / page_end per chunk.
+
+        Markers (\x00P{N}\x00) are injected by PDFParser. For non-PDF content
+        (no markers) this is a no-op — page_start and page_end stay None.
+        """
+        last_page: int | None = None
+        for chunk in chunks:
+            content = chunk["content"]
+            page_nums = [int(m) for m in _PAGE_MARKER_RE.findall(content)]
+            if page_nums:
+                chunk["page_start"] = page_nums[0]
+                chunk["page_end"] = page_nums[-1]
+                last_page = page_nums[-1]
+            elif last_page is not None:
+                # Chunk is entirely within the page containing the last marker
+                chunk["page_start"] = last_page
+                chunk["page_end"] = last_page
+            else:
+                chunk["page_start"] = None
+                chunk["page_end"] = None
+
+            # Strip markers from content and recompute hash
+            if page_nums:
+                clean = _PAGE_MARKER_RE.sub("", content).strip()
+                chunk["content"] = clean
+                chunk["content_hash"] = hashlib.sha256(
+                    clean.encode("utf-8")
+                ).hexdigest()
 
     def _chunk_section(self, section_text: str) -> list[str]:
         if self.split_on_paragraphs:

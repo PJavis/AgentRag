@@ -51,8 +51,21 @@ Blocking. Trả về:
 {
   "question": "...",
   "document_title": "...",
-  "answer": "...",
-  "citations": [{"document_title": "...", "section_path": "...", "content_hash": "..."}],
+  "answer": "Van **hai lá** nằm giữa tâm nhĩ trái và tâm thất trái...",
+  "highlights": [
+    "Van hai lá gồm 2 lá van và bộ máy dưới van",
+    "Hở van hai lá độ 3-4 cần phẫu thuật"
+  ],
+  "citations": [
+    {
+      "document_title": "...",
+      "section_path": "Chương 3 / Hệ tim mạch",
+      "content_hash": "...",
+      "page_start": 47,
+      "page_end": 48,
+      "excerpt": "Van hai lá nằm giữa..."
+    }
+  ],
   "reasoning_path": "semantic | structured",
   "sql_query": null,
   "tool_trace": [...],
@@ -60,6 +73,10 @@ Blocking. Trả về:
   "timings_ms": {"total": 0, "decide": 0, "tool": 0, "assemble": 0, "answer": 0}
 }
 ```
+
+**Page-aware citations**: nếu document được parse bằng `PDFParser` (PyMuPDF), `page_start`/`page_end` sẽ có giá trị → frontend hiện trang chính xác như NotebookLM. Markdown/DOCX không có page info → các trường này = `null`.
+
+**Highlights**: 3-5 điểm quan trọng nhất sinh trực tiếp trong answer prompt (term + bullet). Câu trả lời cũng dùng `**bold**` cho thuật ngữ quan trọng.
 
 ### `AgentService.chat_stream(question, document_title, chat_history) → AsyncIterator[str]`
 

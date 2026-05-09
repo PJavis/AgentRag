@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
+from cachetools import TTLCache
 from sqlalchemy import select
 
 from src.agentrag.config import settings
@@ -11,6 +14,18 @@ from src.agentrag.graph.structmem_service import StructMemService
 from src.agentrag.ingestion.embedders.factory import build_embedding_provider
 from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
 from src.agentrag.retrieval.reranker import LLMReranker
+
+
+# Module-level result cache shared across retriever instances. 60-second TTL
+# is short enough to not stall content updates but big enough to make repeated
+# user clicks (which often re-issue the same query) feel instant.
+_RESULT_CACHE: TTLCache[str, dict] = TTLCache(maxsize=512, ttl=60)
+
+
+def _cache_key(query: str, mode: str, top_k: int | None, document_title: str | None, rerank: bool | None) -> str:
+    h = hashlib.sha256()
+    h.update(json.dumps([query, mode, top_k, document_title, rerank], ensure_ascii=False, sort_keys=True).encode())
+    return h.hexdigest()
 
 
 class ElasticsearchRetriever:
@@ -30,6 +45,11 @@ class ElasticsearchRetriever:
     ) -> dict:
         if mode not in {"sparse", "dense", "hybrid", "hybrid_kg"}:
             raise ValueError("mode must be one of: sparse, dense, hybrid, hybrid_kg")
+
+        ck = _cache_key(query, mode, top_k, document_title, rerank)
+        cached = _RESULT_CACHE.get(ck)
+        if cached is not None:
+            return cached
 
         size = top_k or settings.RETRIEVAL_TOP_K
         lexical_query = self._rewrite_query(query)
@@ -52,7 +72,7 @@ class ElasticsearchRetriever:
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
-            return {
+            payload = {
                 "mode": mode,
                 "top_k": size,
                 "document_title": document_title,
@@ -61,6 +81,8 @@ class ElasticsearchRetriever:
                 "rerank_requested": should_rerank,
                 "rerank_reason": rerank_reason,
             }
+            _RESULT_CACHE[ck] = payload
+            return payload
 
         query_embedding = (await self.embedder.embed([query]))[0]
 
@@ -80,7 +102,7 @@ class ElasticsearchRetriever:
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
-            return {
+            payload = {
                 "mode": mode,
                 "top_k": size,
                 "document_title": document_title,
@@ -89,6 +111,8 @@ class ElasticsearchRetriever:
                 "rerank_requested": should_rerank,
                 "rerank_reason": rerank_reason,
             }
+            _RESULT_CACHE[ck] = payload
+            return payload
 
         hits = await self.store.hybrid_search(
             query=lexical_query,
@@ -126,7 +150,7 @@ class ElasticsearchRetriever:
         hits = self._apply_query_intent_ranking(query=query, hits=hits)
         hits = self._finalize_ranks(hits)
         rerank_reason = self._last_rerank_reason
-        return {
+        payload = {
             "mode": mode,
             "top_k": size,
             "document_title": document_title,
@@ -136,6 +160,8 @@ class ElasticsearchRetriever:
             "rerank_reason": rerank_reason,
             "graph_reason": graph_reason,
         }
+        _RESULT_CACHE[ck] = payload
+        return payload
 
     async def _entries_search(
         self,

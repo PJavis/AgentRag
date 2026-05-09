@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Body, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from openai import RateLimitError
 from sqlalchemy import select, delete
 
@@ -21,18 +22,30 @@ from src.agentrag.worker.pool import init_pool, close_pool, get_pool
 from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 from src.agentrag.agent.service import AgentService
 from src.agentrag.services.llm_gateway import LLMGateway
+from src.agentrag.adapter.db import create_adapter_tables
+from src.agentrag.adapter.app import adapter
+from src.agentrag.adapter import admin as adapter_admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_settings(settings)
     await init_pool(settings.REDIS_URL or "redis://127.0.0.1:6379/0")
+    await create_adapter_tables()
     yield
     await close_pool()
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(adapter_admin.router)
 app.mount("/mcp", mcp.streamable_http_app())
+
+# Open-notebook compatible adapter (Next.js UI points NEXT_PUBLIC_API_URL here)
+app.mount("/on", adapter)
+
+# Serve stored images (extracted from PDFs + standalone uploads) at /images/...
+os.makedirs(settings.IMAGE_STORAGE_DIR, exist_ok=True)
+app.mount("/images", StaticFiles(directory=settings.IMAGE_STORAGE_DIR), name="images")
 
 
 @app.get("/config/validate")
@@ -278,6 +291,38 @@ async def chat(payload: dict = Body(...)):
         return result
     except RateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+@app.post("/generate/mindmap")
+async def generate_mindmap(payload: dict = Body(...)):
+    """Generate a Mermaid mindmap for a document."""
+    document_title = payload.get("document_title")
+    if not document_title:
+        raise HTTPException(status_code=400, detail="document_title is required")
+    from src.agentrag.generation.mindmap_service import MindmapService
+    service = MindmapService()
+    return await service.generate(
+        document_title=document_title,
+        focus_topic=payload.get("focus_topic"),
+        max_depth=int(payload.get("max_depth", 3)),
+    )
+
+
+@app.post("/generate/summary")
+async def generate_summary(payload: dict = Body(...)):
+    """Generate a structured medical summary for a document."""
+    document_title = payload.get("document_title")
+    if not document_title:
+        raise HTTPException(status_code=400, detail="document_title is required")
+    style = payload.get("style", "study_note")
+    if style not in ("study_note", "clinical", "quick_review"):
+        raise HTTPException(
+            status_code=400,
+            detail="style must be one of: study_note, clinical, quick_review",
+        )
+    from src.agentrag.generation.summary_service import SummaryService
+    service = SummaryService()
+    return await service.generate(document_title=document_title, style=style)
 
 
 @app.get("/metrics")

@@ -120,6 +120,17 @@ class Settings(BaseSettings):
     LLM_TASK_MODEL_MAP: str = "{}"
     LLM_COST_TRACKING_ENABLED: bool = False
 
+    # PDF parser backend: pymupdf (page-aware, recommended) or markitdown (legacy)
+    PDF_PARSER_BACKEND: Literal["pymupdf", "markitdown"] = "pymupdf"
+
+    # Vision LLM — for describing images extracted from PDFs and standalone image files.
+    # If VISION_PROVIDER is None, image extraction is skipped (text-only ingestion).
+    VISION_PROVIDER: Literal["openai", "gemini", "ollama"] | None = None
+    VISION_MODEL: str | None = None          # e.g. gpt-4o | gemini-1.5-flash | llava:13b
+    VISION_BASE_URL: str | None = None
+    IMAGE_STORAGE_DIR: str = "data/images"
+    IMAGE_MIN_SIZE_BYTES: int = 5000         # skip icons / decorative bullets
+
     # Excel ingest strategy
     EXCEL_INGEST_MODE: Literal["markdown", "sql"] = "markdown"
     # markdown: sheet → markdown table → chunk như text thường
@@ -134,6 +145,33 @@ class Settings(BaseSettings):
 
     # Observability (ADR 0001 Phase B)
     OBSERVABILITY_TRACE_ENABLED: bool = True
+
+    # ── Open-Notebook adapter ──────────────────────────────────────────────────
+    OPEN_NOTEBOOK_PASSWORD: str | None = None   # legacy shared password (still accepted as bearer)
+    ADAPTER_ADMIN_TOKEN: str | None = None      # admin token for reasoning view
+    ADAPTER_VERSION: str = "0.7.0"              # version reported to open-notebook frontend
+
+    # ── User auth (JWT) ────────────────────────────────────────────────────────
+    AUTH_ENABLED: bool = True                   # require login if true (else open access)
+    AUTH_ALLOW_SIGNUP: bool = True              # allow public signup
+    JWT_SECRET: str | None = None               # signing secret; auto-derived in dev
+    JWT_TTL_DAYS: int = 7
+
+    # Google OAuth — leave blank to disable Google sign-in
+    GOOGLE_CLIENT_ID: str | None = None
+    GOOGLE_CLIENT_SECRET: str | None = None
+    GOOGLE_REDIRECT_URI: str | None = None      # e.g. http://localhost:8000/on/api/auth/google/callback
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # ── Rate limit & dedupe ────────────────────────────────────────────────────
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_PER_MIN_DEFAULT: int = 120       # per-user per-min for chat/search
+    RATE_LIMIT_UPLOAD_PER_MIN: int = 20         # per-user per-min for uploads
+    UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024   # 100 MB
+    UPLOAD_DEDUPE_BY_HASH: bool = True
+
+    # Worker concurrency (for uvicorn / gunicorn)
+    UVICORN_WORKERS: int = 1
 
     @property
     def DATABASE_URL(self) -> str:

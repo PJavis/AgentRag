@@ -44,6 +44,7 @@ class ElasticsearchStore:
         await self._recreate_index_if_dims_changed(self.index_name, embedding_dims)
         exists = await self.client.indices.exists(index=self.index_name)
         if exists:
+            await self._ensure_segment_fields()
             return
 
         mapping = {
@@ -69,6 +70,9 @@ class ElasticsearchStore:
                     },
                     "position": {"type": "integer"},
                     "content_hash": {"type": "keyword"},
+                    "segment_type": {"type": "keyword"},
+                    "page_start": {"type": "integer"},
+                    "page_end": {"type": "integer"},
                     "metadata": {"type": "object", "enabled": True},
                     "embedding": {
                         "type": "dense_vector",
@@ -80,6 +84,22 @@ class ElasticsearchStore:
             },
         }
         await self.client.indices.create(index=self.index_name, body=mapping)
+
+    async def _ensure_segment_fields(self) -> None:
+        """Add page_start, page_end, segment_type to an existing index (non-destructive)."""
+        try:
+            await self.client.indices.put_mapping(
+                index=self.index_name,
+                body={
+                    "properties": {
+                        "segment_type": {"type": "keyword"},
+                        "page_start": {"type": "integer"},
+                        "page_end": {"type": "integer"},
+                    }
+                },
+            )
+        except Exception:
+            pass  # field already exists or index unavailable — safe to ignore
 
     async def ensure_entity_index(self, embedding_dims: int) -> None:
         await self._recreate_index_if_dims_changed(self.entity_index_name, embedding_dims)
@@ -207,6 +227,9 @@ class ElasticsearchStore:
                     "section_path": chunk.get("section_path"),
                     "position": chunk.get("position"),
                     "content_hash": chunk.get("content_hash"),
+                    "segment_type": chunk.get("segment_type", "text"),
+                    "page_start": chunk.get("page_start"),
+                    "page_end": chunk.get("page_end"),
                     "metadata": chunk.get("metadata", {}),
                 }
             )
@@ -383,6 +406,9 @@ class ElasticsearchStore:
                     "section_path": payload.get("section_path"),
                     "position": payload.get("position"),
                     "content_hash": payload.get("content_hash"),
+                    "segment_type": payload.get("segment_type", "text"),
+                    "page_start": payload.get("page_start"),
+                    "page_end": payload.get("page_end"),
                     "metadata": payload.get("metadata", {}),
                 }
             )

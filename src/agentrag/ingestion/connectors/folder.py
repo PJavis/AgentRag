@@ -17,6 +17,13 @@ _EXT_TO_SOURCE_TYPE: dict[str, str] = {
     ".xlsx": "excel",
     ".xls":  "excel",
     ".csv":  "csv",
+    # Standalone image files — described via Vision LLM and indexed as image chunks
+    ".jpg":  "image",
+    ".jpeg": "image",
+    ".png":  "image",
+    ".webp": "image",
+    ".bmp":  "image",
+    ".gif":  "image",
 }
 
 SUPPORTED_EXTENSIONS = set(_EXT_TO_SOURCE_TYPE.keys())

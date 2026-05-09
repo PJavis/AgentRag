@@ -1,10 +1,14 @@
 # AgentRag
 
-Nền tảng RAG (Retrieval-Augmented Generation) với hai luồng suy luận song song, hệ thống bộ nhớ phân cấp, và CLI tương tác.
+Nền tảng RAG (Retrieval-Augmented Generation) cho học liệu, đặc biệt phục vụ sinh viên y khoa. Hai luồng suy luận song song, bộ nhớ phân cấp, CLI tương tác, và UI tương thích open-notebook.
 
 - **Semantic path** — Hybrid retrieval (BM25 + vector + StructMem entries) + LLM synthesis
 - **Structured path** — SQL reasoning trên dữ liệu trích xuất từ văn bản
 - **Chat StructMem** — Bộ nhớ hội thoại semantic thay thế sliding-window history
+- **Page-aware citations** — Trích dẫn chỉ rõ số trang (NotebookLM-style) cho tài liệu PDF
+- **Vision LLM** — Mô tả ảnh y tế (giải phẫu, X-quang, ECG…) trong PDF + ảnh standalone
+- **Mindmap & Summary** — Sinh sơ đồ tư duy Mermaid + tóm tắt cấu trúc theo template y khoa
+- **Open-notebook adapter** — Mount UI Next.js qua `/on`; admin panel reasoning trace tại `/admin`
 
 ---
 
@@ -23,11 +27,14 @@ Nền tảng RAG (Retrieval-Augmented Generation) với hai luồng suy luận s
 11. [Structured SQL Reasoning](#11-structured-sql-reasoning)
 12. [LLM Routing](#12-llm-routing)
 13. [MCP Server](#13-mcp-server)
-14. [Security Policy](#14-security-policy)
-15. [Benchmark & Kiểm thử](#15-benchmark--kiểm-thử)
-16. [Reset môi trường](#16-reset-môi-trường)
-17. [Cấu trúc thư mục](#17-cấu-trúc-thư-mục)
-18. [Module READMEs](#18-module-readmes)
+14. [Page-Aware Citations & Vision](#14-page-aware-citations--vision)
+15. [Mindmap & Structured Summary](#15-mindmap--structured-summary)
+16. [Open-Notebook Adapter & Admin Panel](#16-open-notebook-adapter--admin-panel)
+17. [Security Policy](#17-security-policy)
+18. [Benchmark & Kiểm thử](#18-benchmark--kiểm-thử)
+19. [Reset môi trường](#19-reset-môi-trường)
+20. [Cấu trúc thư mục](#20-cấu-trúc-thư-mục)
+21. [Module READMEs](#21-module-readmes)
 
 ---
 
@@ -60,14 +67,36 @@ POST /chat
 
 POST /ingest/folder
     │
-    ├── Parse (Markdown / PDF via MarkItDown / Excel)
+    ├── Parse:
+    │     .pdf  → PDFParser (PyMuPDF) — page-aware + extract images
+    │     .docx/.pptx/.html → MarkItDownParser
+    │     .jpg/.png/...     → ImageParser → vision_response()
+    │     .md/.txt          → MarkdownConnector
+    │     .xlsx/.csv        → ExcelParser (markdown | sql mode)
     ├── Chunk (search 512 tok + graph 1536 tok)
+    │     — strip page markers + assign page_start/page_end per chunk
     ├── Embed → PostgresStore + ElasticsearchStore (agentrag_segments)
+    │     — text segments + image segments (segment_type="image")
     └── ARQ: enqueue graph_ingest job
             ├── StructMemService.sync_chunks()
             │       └── Per chunk: asyncio.gather(factual_call, relational_call)
             ├── index_structmem_views() → agentrag_entries
             └── [if chunks ≥ threshold] ARQ: enqueue consolidate job → agentrag_synthesis
+
+POST /generate/mindmap | /generate/summary
+    │
+    ├── ES sparse_search (top_k=30 chunks per document_title)
+    └── LLMGateway.json_response (single-shot, no agent loop)
+
+GET /on/api/* (Next.js frontend)
+    │
+    └── adapter sub-app
+        ├── notebook/source CRUD
+        ├── /chat/execute (full agent) | source chat (direct RAG, isolated)
+        └── search
+
+GET /admin
+    └── admin reasoning panel (HTML) + /admin/api/* (JSON traces)
 ```
 
 ---
@@ -76,9 +105,10 @@ POST /ingest/folder
 
 | Store | Vai trò | Indices / Tables |
 |---|---|---|
-| **PostgreSQL** | Source of truth: documents, segments, conversations | `documents`, `segments`, `conversations`, `chat_messages` |
-| **Elasticsearch** | BM25 + kNN hybrid search + StructMem knowledge | `agentrag_segments`, `agentrag_entries`, `agentrag_synthesis`, `agentrag_chat_entries`, `agentrag_chat_synthesis` |
+| **PostgreSQL** | Source of truth: documents, segments, conversations + adapter notebooks/notes | `documents`, `segments`, `conversations`, `chat_messages`, `adapter_notebooks`, `adapter_notes`, `adapter_notebook_sources` |
+| **Elasticsearch** | BM25 + kNN hybrid search + StructMem knowledge | `agentrag_segments` (có `page_start`, `page_end`, `segment_type`), `agentrag_entries`, `agentrag_synthesis`, `agentrag_chat_entries`, `agentrag_chat_synthesis` |
 | **Redis** | Chat history cache (TTL) + ARQ job queue | key-value + sorted sets |
+| **Filesystem** | Ảnh extract từ PDF + ảnh standalone | `IMAGE_STORAGE_DIR` (mặc định `data/images/`), serve qua `/images/*` static mount |
 
 **ES Indices:**
 
@@ -293,6 +323,27 @@ SCALER_POLL_SECONDS=5
 SCALER_COOLDOWN_SECONDS=30
 ```
 
+### 5.8 PDF & Vision
+
+```env
+PDF_PARSER_BACKEND=pymupdf       # pymupdf (page-aware) | markitdown (legacy)
+
+# Vision LLM — bỏ qua image parsing nếu không set
+VISION_PROVIDER=openai           # openai | gemini | ollama
+VISION_MODEL=gpt-4o              # gpt-4o | gemini-1.5-flash | llava:13b
+VISION_BASE_URL=                 # override endpoint (cho Ollama)
+IMAGE_STORAGE_DIR=data/images
+IMAGE_MIN_SIZE_BYTES=5000        # bỏ qua icon nhỏ
+```
+
+### 5.9 Open-Notebook Adapter
+
+```env
+OPEN_NOTEBOOK_PASSWORD=demo123        # bỏ trống = no auth
+ADAPTER_ADMIN_TOKEN=admin_secret_123  # bỏ trống = admin disabled
+ADAPTER_VERSION=0.7.0
+```
+
 ---
 
 ## 6. API Reference
@@ -390,6 +441,45 @@ DELETE /documents/{id}                      # xóa tài liệu
 ```bash
 curl http://127.0.0.1:8000/metrics
 # Token usage + estimated cost (khi LLM_COST_TRACKING_ENABLED=true)
+```
+
+### `POST /generate/mindmap`
+
+```bash
+curl -X POST http://127.0.0.1:8000/generate/mindmap \
+  -H "Content-Type: application/json" \
+  -d '{"document_title": "giai_phau", "focus_topic": null, "max_depth": 3}'
+# {"mermaid": "mindmap\n  root((Title))\n    Branch...", "concepts": [...], "cached": false}
+```
+
+### `POST /generate/summary`
+
+```bash
+curl -X POST http://127.0.0.1:8000/generate/summary \
+  -d '{"document_title": "giai_phau", "style": "clinical"}'
+# style: study_note | clinical | quick_review
+# {"title", "overview", "sections": [{heading, summary, key_points, important_terms}]}
+```
+
+### Open-notebook adapter (`/on/api/*`)
+
+| Endpoint | Mô tả |
+|---|---|
+| `GET /on/api/config` | Version + DB status (public, dùng cho frontend bootstrap) |
+| `GET /on/api/notebooks` · `POST` · `PUT/{id}` · `DELETE/{id}` | Notebook CRUD |
+| `POST /on/api/sources` (multipart) | Upload file → `ingest_folder()` → trả `SourceResponse` |
+| `POST /on/api/chat/execute` | Notebook chat (full agent) |
+| `POST /on/api/sources/{id}/chat/sessions/{sid}/messages` | Source chat SSE (direct RAG, document-isolated) |
+| `POST /on/api/search` | Search sources/notes |
+
+Auth: `Authorization: Bearer ${OPEN_NOTEBOOK_PASSWORD}`. Xem [adapter README](src/agentrag/adapter/README.md).
+
+### Admin reasoning panel
+
+```
+GET /admin                                    # HTML inspector
+GET /admin/api/conversations                  # cần X-Admin-Token
+GET /admin/api/conversations/{id}/trace       # tool_trace per assistant message
 ```
 
 ---
@@ -585,7 +675,151 @@ Dùng với bất kỳ MCP-compatible client (Claude Desktop, Claude Code, custo
 
 ---
 
-## 14. Security Policy
+## 14. Page-Aware Citations & Vision
+
+### Citations với số trang (NotebookLM-style)
+
+Khi `PDF_PARSER_BACKEND=pymupdf` (mặc định), mỗi chunk được tag `page_start` / `page_end`:
+
+```json
+{
+  "document_title": "giai_phau_lam_sang",
+  "section_path": "Chương 3 / Hệ tim mạch / Tim",
+  "page_start": 47,
+  "page_end": 48,
+  "excerpt": "Van hai lá nằm giữa tâm nhĩ trái...",
+  "content_hash": "abc123"
+}
+```
+
+Cơ chế: `PDFParser` chèn marker `\x00P{N}\x00` vào full text (vô hình với LLM/chunker), `HybridChunker` strip marker và assign page range cho mỗi chunk.
+
+Markdown / DOCX không có page info → `page_start = page_end = null`.
+
+### Vision LLM cho ảnh y tế
+
+Khi `VISION_PROVIDER` được set:
+- **PDF**: `PDFParser.extract_images()` lưu ảnh vào `IMAGE_STORAGE_DIR/{slug(title)}/p{page}_{idx}.{ext}`, `ImageParser` mô tả qua vision LLM, tạo image segment có `segment_type="image"` + `image_url` + `page`
+- **Standalone**: upload `.jpg/.png/...` → `ImageParser` xử lý trực tiếp
+
+System prompt được tune cho ngữ cảnh y khoa: identify image type, anatomical structures, labels, pathological findings.
+
+```env
+VISION_PROVIDER=openai
+VISION_MODEL=gpt-4o
+# hoặc local:
+VISION_PROVIDER=ollama
+VISION_MODEL=llava:13b
+```
+
+Image chunks trong API response:
+```json
+{
+  "segment_type": "image",
+  "image_url": "/images/giai_phau/p47_0.jpg",
+  "content": "Hình 3.2: Van hai lá nhìn từ trên xuống. Mũi tên chỉ hai lá van...",
+  "page": 47
+}
+```
+
+Ảnh được serve qua FastAPI static mount `/images/*`.
+
+---
+
+## 15. Mindmap & Structured Summary
+
+Hai service trong `src/agentrag/generation/`. Đều retrieve top chunks từ ES rồi gọi LLM single-shot (không qua agent loop).
+
+### Mindmap (`POST /generate/mindmap`)
+
+Sinh Mermaid mindmap + concept hierarchy:
+
+```bash
+curl -X POST http://localhost:8000/generate/mindmap \
+  -d '{"document_title": "giai_phau", "max_depth": 3}'
+```
+
+```json
+{
+  "mermaid": "mindmap\n  root((Giải phẫu))\n    Hệ tuần hoàn\n      Tim\n      Mạch máu",
+  "concepts": [{"name": "Tim", "parent": "Hệ tuần hoàn", "level": 2}],
+  "cached": false
+}
+```
+
+In-process cache TTL 24h (key = `title|focus_topic|depth`).
+
+### Summary (`POST /generate/summary`)
+
+3 styles:
+
+| Style | Pipeline | Khi dùng |
+|---|---|---|
+| `study_note` | Iterate 9 sections y khoa song song | Ghi chú học tập đầy đủ |
+| `clinical` | Iterate 9 sections, prompt thiên về lâm sàng | Tóm tắt cho phòng khám |
+| `quick_review` | Single LLM call, output gọn | Cheat sheet ôn nhanh |
+
+**Medical template** (Vietnamese):
+```
+Định nghĩa & Phân loại  →  Dịch tễ học  →  Nguyên nhân & Yếu tố nguy cơ
+Sinh lý bệnh  →  Triệu chứng lâm sàng  →  Cận lâm sàng & Chẩn đoán
+Điều trị  →  Biến chứng  →  Tiên lượng & Theo dõi
+```
+
+Mỗi section trả `summary`, `key_points` (3-6 bullets), `important_terms` (term + definition).
+
+### Highlights trong chat
+
+`AgentService.chat()` và adapter `_direct_rag()` đều trả thêm `highlights: list[str]` — 3-5 điểm quan trọng nhất từ câu trả lời. Câu trả lời cũng dùng `**bold**` cho thuật ngữ.
+
+Xem [generation README](src/agentrag/generation/README.md).
+
+---
+
+## 16. Open-Notebook Adapter & Admin Panel
+
+AgentRag mount sub-app `/on` tương thích với [open-notebook](https://github.com/lfnovo/open-notebook) Next.js frontend — không cần sửa frontend.
+
+### Setup frontend
+
+```bash
+git clone https://github.com/lfnovo/open-notebook
+cd open-notebook/frontend
+
+cat > .env.local << 'EOF'
+API_URL=http://localhost:8000/on
+INTERNAL_API_URL=http://localhost:8000/on
+EOF
+
+npm install
+npm run dev    # http://localhost:3000
+```
+
+Login bằng password = `OPEN_NOTEBOOK_PASSWORD` trong `.env`.
+
+### Hai mode chat
+
+| Mode | Endpoint | Strategy |
+|---|---|---|
+| Notebook chat | `POST /on/api/chat/execute` | Full `AgentService.chat()` — có thể cross-document, dùng StructMem |
+| Source chat | `POST /on/api/sources/{id}/chat/sessions/{sid}/messages` (SSE) | `_direct_rag()` — strict isolation theo document |
+
+Source chat dùng client-side filter trên `document_title` để **tránh leak context từ document khác** qua graph memory.
+
+### Admin reasoning panel — `/admin`
+
+LangGraph-style HTML inspector. Sidebar list conversations, main hiển thị:
+- Messages (user + assistant)
+- Flow diagram (START → tool steps → ANSWER)
+- Step details: tool_name, tool_input, tool_output, duration_ms
+
+Bảo vệ bằng `ADAPTER_ADMIN_TOKEN` (nhập trong UI), độc lập với `OPEN_NOTEBOOK_PASSWORD`.
+
+Xem [adapter README](src/agentrag/adapter/README.md).
+
+---
+
+## 17. Security Policy
 
 ```python
 registry.load_from_list([{
@@ -600,7 +834,7 @@ registry.load_from_list([{
 
 ---
 
-## 15. Benchmark & Kiểm thử
+## 18. Benchmark & Kiểm thử
 
 ```bash
 python3 scripts/benchmark_ingest.py data/test_docs/SYSTEM_DESIGN.md
@@ -635,7 +869,7 @@ curl -X POST http://127.0.0.1:8000/search \
 
 ---
 
-## 16. Reset môi trường
+## 19. Reset môi trường
 
 ```bash
 docker compose down -v --remove-orphans
@@ -659,7 +893,7 @@ uv run uvicorn main:app --reload --port 8000
 
 ---
 
-## 17. Cấu trúc thư mục
+## 20. Cấu trúc thư mục
 
 ```
 AgentRag/
@@ -727,17 +961,33 @@ AgentRag/
     │
     ├── ingestion/
     │   ├── pipeline.py                  # ingest_folder() entry point
-    │   ├── chunkers/
+    │   ├── chunkers/                    # HybridChunker (page-aware)
     │   ├── connectors/
     │   ├── parsers/
+    │   │   ├── pdf_parser.py            # PyMuPDF — page-aware + extract_images()
+    │   │   ├── image_parser.py          # Vision LLM mô tả ảnh
+    │   │   ├── markitdown_parser.py     # DOCX/PPTX/HTML
+    │   │   └── excel_parser.py
     │   ├── embedders/
     │   └── stores/
     │
     ├── services/
-    │   ├── llm_gateway.py               # LLM routing + cost tracking
+    │   ├── llm_gateway.py               # json_response + vision_response, routing, cost tracking
     │   ├── knowledge_service.py
     │   ├── security_service.py
     │   └── context_assembly_service.py
+    │
+    ├── generation/                      # Học liệu artifacts
+    │   ├── mindmap_service.py           # Mermaid mindmap + concept hierarchy
+    │   └── summary_service.py           # Structured medical summary
+    │
+    ├── adapter/                         # Open-notebook compatible API + admin
+    │   ├── app.py                       # FastAPI sub-app mount tại /on
+    │   ├── auth.py                      # OpenNotebookAuthMiddleware
+    │   ├── db.py                        # AdapterNotebook, AdapterNote tables
+    │   ├── models.py                    # Pydantic schemas
+    │   ├── admin.py                     # /admin reasoning inspector
+    │   └── routers/                     # notebooks, sources, chat, notes, search, config
     │
     ├── database/                        # ORM models + AsyncSessionLocal
     ├── common/                          # StageTracer, SecurityPolicy
@@ -746,7 +996,7 @@ AgentRag/
 
 ---
 
-## 18. Module READMEs
+## 21. Module READMEs
 
 | Module | README |
 |---|---|
@@ -757,8 +1007,9 @@ AgentRag/
 | Agent (Semantic Loop) | [src/agentrag/agent/README.md](src/agentrag/agent/README.md) |
 | Structured SQL | [src/agentrag/structured/README.md](src/agentrag/structured/README.md) |
 | Services | [src/agentrag/services/README.md](src/agentrag/services/README.md) |
+| Generation (Mindmap/Summary) | [src/agentrag/generation/README.md](src/agentrag/generation/README.md) |
+| Open-Notebook Adapter & Admin | [src/agentrag/adapter/README.md](src/agentrag/adapter/README.md) |
 | Background Worker | [src/agentrag/worker/README.md](src/agentrag/worker/README.md) |
 | CLI | [src/agentrag/cli/README.md](src/agentrag/cli/README.md) |
 | MCP Server | [src/agentrag/mcp/README.md](src/agentrag/mcp/README.md) |
-| Multi-Agent Workers | [src/agentrag/agents/README.md](src/agentrag/agents/README.md) |
 | Common Utilities | [src/agentrag/common/README.md](src/agentrag/common/README.md) |

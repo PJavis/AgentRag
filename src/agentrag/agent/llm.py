@@ -43,6 +43,22 @@ class AgentLLM:
             result = {}
         return result
 
+    async def text_response(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        """Plain text response — no JSON enforcement. Used by transformations."""
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.choices[0].message.content or ""
+
     async def stream_text(
         self,
         system_prompt: str,

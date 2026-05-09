@@ -30,6 +30,7 @@ answer, latency_ms = await gateway.json_response(
 | Method | Mô tả |
 |---|---|
 | `json_response(system, user, task)` | Gọi LLM, parse JSON, đo latency |
+| `vision_response(system, text, image_bytes, mime_type, task)` | Multimodal call (text + image) — dùng cho ImageParser. Provider lấy từ `VISION_PROVIDER` / `VISION_MODEL`, fallback `EXTRACTION_*`. Hỗ trợ `openai`, `gemini`, `ollama` (llava qua OpenAI-compat). |
 | `_resolve_client(task)` | Trả về `AgentLLM` instance đúng model cho task |
 | `cost_summary()` | Tổng token + chi phí ước tính (khi `LLM_COST_TRACKING_ENABLED=true`) |
 
@@ -90,6 +91,9 @@ Source boost: `structmem +0.08`, `synthesis +0.07`, `hybrid +0.06`, `sparse +0.0
 | Key | Default | Mô tả |
 |---|---|---|
 | `LLM_ROUTING_ENABLED` | `false` | Bật task-based model routing |
-| `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model name |
+| `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model name. Tasks: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary` |
 | `LLM_COST_TRACKING_ENABLED` | `false` | Bật cost tracking |
 | `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Giới hạn chunks trong packed context |
+| `VISION_PROVIDER` | `None` | Provider cho `vision_response()`: `openai` / `gemini` / `ollama` |
+| `VISION_MODEL` | `None` | Model cho vision calls (gpt-4o / gemini-1.5-flash / llava:13b) |
+| `VISION_BASE_URL` | `None` | Override endpoint (chủ yếu cho Ollama) |

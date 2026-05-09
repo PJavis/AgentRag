@@ -23,14 +23,22 @@ Entry point duy nhất để đưa dữ liệu vào hệ thống. Đọc tài li
 
 | File | Class | Mô tả |
 |---|---|---|
-| `markitdown_parser.py` | `MarkItDownParser` | Parse PDF/DOCX/PPTX/HTML → Markdown text (dùng `microsoft/markitdown`) |
+| `pdf_parser.py` | `PDFParser` | **Page-aware** PDF parser dùng PyMuPDF (`fitz`) — trả `parsed_content` với page markers + `page_data` per-page + `extract_images()` |
+| `markitdown_parser.py` | `MarkItDownParser` | Parse DOCX/PPTX/HTML → Markdown (legacy fallback, không có page info) |
+| `image_parser.py` | `ImageParser` | Mô tả ảnh standalone (.jpg/.png/.webp/...) qua Vision LLM, sinh text description để embed |
 | `excel_parser.py` | `ExcelParser` | Parse XLSX/CSV — 2 mode: `markdown` (table → text) hoặc `sql` (→ SQLite) |
+
+**PDF routing**: `PDF_PARSER_BACKEND=pymupdf` (mặc định) → `PDFParser`; `markitdown` → `MarkItDownParser` (mất thông tin page).
+
+**Page markers** (`\x00P{N}\x00`) là ký tự không in được, embed vào full text. Chunker tự strip + assign `page_start`/`page_end` cho mỗi chunk → enable NotebookLM-style citations với page number cụ thể.
+
+**Image extraction từ PDF**: `PDFParser.extract_images()` lưu ảnh vào `IMAGE_STORAGE_DIR/{slug(title)}/p{page}_{idx}.{ext}` rồi pass cho `ImageParser` mô tả → tạo image segments có `segment_type="image"`, `image_url`, `page`.
 
 ### `chunkers/`
 
 | File | Class | Mô tả |
 |---|---|---|
-| `hybrid_chunker.py` | `HybridChunker` | Tạo 2 lớp chunks: search (512 tok) và graph (1536 tok) |
+| `hybrid_chunker.py` | `HybridChunker` | Tạo 2 lớp chunks: search (512 tok) và graph (1536 tok). Tự strip page markers từ PDFParser và assign `page_start`/`page_end` per-chunk |
 
 ### `embedders/`
 
@@ -59,18 +67,23 @@ ingest_folder(folder_path)
   ├──▶ FolderConnector.scan()                → danh sách files
   │
   └──▶ for each file:
-          ├── .md                → MarkdownConnector.read()
-          ├── .pdf/.docx/.pptx  → MarkItDownParser.parse()
+          ├── .md / .txt        → MarkdownConnector.read()
+          ├── .pdf              → PDFParser.parse()  ← page-aware (mặc định)
+          │                        → extract_images() nếu VISION_PROVIDER set
+          ├── .docx/.pptx/.html → MarkItDownParser.parse()
+          ├── .jpg/.png/...     → ImageParser.parse() (Vision LLM)
           ├── .xlsx/.csv        → ExcelParser.parse()
           │
           ├──▶ HybridChunker.chunk()
           │       search_chunks (512 tok, overlap 64)
           │       graph_chunks  (1536 tok, overlap 128)
+          │       — tự strip page markers + gán page_start/page_end
           │
           ├──▶ Embedder.embed_batch(search_chunks)
           │
           ├──▶ PostgresStore.upsert_document() + upsert_segments()
           ├──▶ ElasticsearchStore.index_chunks()
+          │       (text segments + image segments có segment_type="image")
           │
           └──▶ [STRUCTMEM_ENABLED]
                  mode=sync  → StructMemService.sync_chunks() trực tiếp
@@ -81,14 +94,13 @@ ingest_folder(folder_path)
 
 ## Định dạng hỗ trợ
 
-| Extension | Parser |
-|---|---|
-| `.md` | MarkdownConnector (raw text) |
-| `.pdf`, `.docx`, `.doc`, `.pptx`, `.ppt` | MarkItDownParser |
-| `.html`, `.htm` | MarkItDownParser |
-| `.xlsx`, `.xls` | ExcelParser |
-| `.csv` | ExcelParser |
-| `.txt` | MarkdownConnector (raw text) |
+| Extension | Parser | Notes |
+|---|---|---|
+| `.md`, `.txt` | MarkdownConnector | Raw text |
+| `.pdf` | PDFParser (PyMuPDF) | Page-aware. Tự extract ảnh nếu `VISION_PROVIDER` set |
+| `.docx`, `.doc`, `.pptx`, `.ppt`, `.html`, `.htm` | MarkItDownParser | Không có page info |
+| `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif` | ImageParser | Cần `VISION_PROVIDER` + `VISION_MODEL` |
+| `.xlsx`, `.xls`, `.csv` | ExcelParser | 2 mode: markdown / SQL |
 
 ---
 
@@ -98,8 +110,10 @@ ingest_folder(folder_path)
 |---|---|
 | `graph.graph_jobs` | Nhận `GraphJob` qua queue (async mode) |
 | `graph.StructMemService` | Chạy extraction trực tiếp (sync mode) |
+| `services.LLMGateway` | `vision_response()` cho ImageParser (PDF images + standalone) |
 | `database.AsyncSessionLocal` | Lưu document + segment metadata |
-| `main.py` | Expose `/ingest/folder` và `/ingest/upload` |
+| `main.py` | Expose `/ingest/folder` và `/ingest/upload`. `/images/*` static mount cho ảnh extract |
+| `adapter.routers.sources` | Wrapper REST khớp open-notebook contract |
 
 ---
 
@@ -118,3 +132,9 @@ ingest_folder(folder_path)
 | `EXCEL_INGEST_MODE` | `markdown` | `markdown` hoặc `sql` cho Excel files |
 | `GRAPH_INGEST_MODE` | `async` | `sync` hoặc `async` |
 | `STRUCTMEM_ENABLED` | `true` | Bật StructMem extraction sau ingest |
+| `PDF_PARSER_BACKEND` | `pymupdf` | `pymupdf` (page-aware) hoặc `markitdown` (legacy) |
+| `VISION_PROVIDER` | `None` | `openai` / `gemini` / `ollama`. `None` = bỏ qua image parsing |
+| `VISION_MODEL` | `None` | VD: `gpt-4o`, `gemini-1.5-flash`, `llava:13b` |
+| `VISION_BASE_URL` | `None` | Override endpoint nếu cần (Ollama / custom) |
+| `IMAGE_STORAGE_DIR` | `data/images` | Thư mục lưu ảnh extract từ PDF + standalone uploads |
+| `IMAGE_MIN_SIZE_BYTES` | `5000` | Skip ảnh nhỏ hơn ngưỡng (icons, decorative bullets) |

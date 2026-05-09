@@ -1,10 +1,30 @@
 # src/pam/database/models.py
-from sqlalchemy import Column, Integer, String, UUID, DateTime, func, ForeignKey, Enum, JSON, Boolean, Text
+from sqlalchemy import Column, Integer, String, UUID, DateTime, func, ForeignKey, Enum, JSON, Boolean, Text, Index
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from .base import Base
 import uuid
 from enum import Enum as PyEnum
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        Index("ix_users_email", "email", unique=True),
+        Index("ix_users_google_id", "google_id"),
+        {"extend_existing": True},
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(320), nullable=False)
+    password_hash = Column(String(255), nullable=True)
+    name = Column(String(255), nullable=True)
+    avatar_url = Column(String(1024), nullable=True)
+    google_id = Column(String(64), nullable=True)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 class Project(Base):
     __tablename__ = "projects"

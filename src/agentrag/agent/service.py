@@ -327,13 +327,31 @@ class AgentService:
             async for token in client.stream_text(system_prompt, user_prompt):
                 yield _sse("token", {"text": token})
 
+            packed = assembly["packed_context"]
+            # Dedupe by content_hash, keep first occurrence
+            seen: set[str] = set()
+            deduped_citations = []
+            for c in packed:
+                h = c.get("content_hash", "")
+                if h and h not in seen:
+                    seen.add(h)
+                    page_start = c.get("page_start")
+                    page_end = c.get("page_end")
+                    entry = {
+                        "document_title": c.get("document_title"),
+                        "section_path": c.get("section_path"),
+                        "content_hash": h,
+                        "excerpt": (c.get("excerpt") or c.get("content") or "")[:300],
+                        "segment_type": c.get("segment_type", "text"),
+                    }
+                    if page_start is not None:
+                        entry["page"] = page_start if page_start == page_end else f"{page_start}-{page_end}"
+                        entry["page_start"] = page_start
+                        entry["page_end"] = page_end
+                    deduped_citations.append(entry)
             yield _sse("done", {
-                "citations": [
-                    {"document_title": c.get("document_title"),
-                     "section_path": c.get("section_path"),
-                     "content_hash": c.get("content_hash")}
-                    for c in assembly["packed_context"]
-                ],
+                "citations": deduped_citations,
+                "highlights": [],
                 "reasoning_path": "semantic",
                 "sql_query": None,
                 "tool_trace": [
@@ -429,6 +447,12 @@ class AgentService:
         citations: list[dict[str, Any]],
         packed_context: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        # Build lookup: content_hash → full context item (for page + excerpt enrichment)
+        hash_to_ctx: dict[str, dict[str, Any]] = {
+            item["content_hash"]: item
+            for item in packed_context
+            if item.get("content_hash")
+        }
         allowed = {
             (
                 item.get("document_title"),
@@ -446,15 +470,24 @@ class AgentService:
                 citation.get("position"),
                 citation.get("content_hash"),
             )
-            if key in allowed:
-                grounded.append(
-                    {
-                        "document_title": citation.get("document_title"),
-                        "section_path": citation.get("section_path"),
-                        "position": citation.get("position"),
-                        "content_hash": citation.get("content_hash"),
-                    }
-                )
+            if key not in allowed:
+                continue
+            ctx = hash_to_ctx.get(citation.get("content_hash", ""), {})
+            entry: dict[str, Any] = {
+                "document_title": citation.get("document_title"),
+                "section_path": citation.get("section_path"),
+                "position": citation.get("position"),
+                "content_hash": citation.get("content_hash"),
+                "excerpt": ctx.get("excerpt", ""),
+            }
+            # Include page reference when available (PDF sources)
+            if ctx.get("page") is not None:
+                entry["page"] = ctx["page"]
+            if ctx.get("page_start") is not None:
+                entry["page_start"] = ctx["page_start"]
+            if ctx.get("page_end") is not None:
+                entry["page_end"] = ctx["page_end"]
+            grounded.append(entry)
         return grounded
 
     async def _answer(
@@ -470,17 +503,21 @@ class AgentService:
             return {
                 "answer": final_answer["answer"],
                 "citations": final_answer.get("citations", []),
+                "highlights": final_answer.get("highlights", []),
             }
 
         system_prompt = (
             f"{_lang_instruction(question)} "
             "Answer ONLY from the provided context. "
-            "Return JSON with keys: answer, citations. "
+            "Return JSON with keys: answer, citations, highlights. "
             "Each citation must include document_title, section_path, position, content_hash. "
+            "highlights: array of 3-5 strings — the most important facts or takeaways from the answer, "
+            "each a complete self-contained sentence. "
+            "In the answer text, wrap important medical/technical terms in **bold**. "
             "Be concise and direct — answer the specific question, do not add background or general overviews. "
             "When context contains multiple documents, focus on the document(s) directly relevant to the question; ignore unrelated documents. "
             "If the question is too vague to give a useful answer (e.g., which item, which document, or which aspect is missing), "
-            "set answer to ONE focused clarifying question and citations to []. "
+            "set answer to ONE focused clarifying question, citations to [], and highlights to []. "
             "Do not answer and ask at the same time. "
             "If context is insufficient for a specific question, say so explicitly. "
             "Answer in clear, natural sentences and avoid broken wording. "

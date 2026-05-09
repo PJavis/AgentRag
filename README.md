@@ -133,33 +133,44 @@ GET /admin
 
 ## 4. Cài đặt & Khởi động
 
+### Quick start (Makefile)
+
 ```bash
-# 1. Copy config
+make install        # docker up + uv sync + npm install + alembic upgrade
+make dev            # api + worker + frontend song song (Ctrl+C tắt tất cả)
+```
+
+UI mở tại http://localhost:3000, API tại http://localhost:8000.
+
+### Make targets
+
+| Target | Mô tả |
+|---|---|
+| `make install` | Setup đầy đủ (docker + python + node + migrate) |
+| `make dev` | Chạy api + worker + frontend foreground |
+| `make api` / `make api-prod` | Uvicorn dev / Gunicorn multi-worker |
+| `make frontend` | Next.js dev server |
+| `make worker` / `make scaler` | ARQ single worker / autoscaler |
+| `make up-bg` | Chạy nền (logs ở `.run/`) — `make logs`, `make stop` |
+| `make migrate` | Alembic upgrade |
+| `make health` | Probe `/config/validate` + `/on/api/auth/status` |
+| `make reset` | Nuke docker volumes + migrate lại |
+| `make clean` / `make deepclean` | Xoá cache / + node_modules + .venv |
+
+### Manual (nếu không dùng Makefile)
+
+```bash
 cp .env.example .env
-# Chỉnh .env theo provider (xem Section 5)
-
-# 2. Khởi động infra
 docker compose up -d
-# Tuỳ chọn Ollama với GPU:
-docker compose --profile local-llm up -d
-docker exec agentrag-ollama ollama pull qwen2.5:14b-instruct
-docker exec agentrag-ollama ollama pull nomic-embed-text
-docker exec agentrag-ollama ollama pull dengcao/bge-reranker-v2-m3
-
-# 3. Cài dependencies
+docker compose --profile local-llm up -d   # tuỳ chọn Ollama+GPU
 uv sync
-
-# 4. Migration database
 uv run alembic upgrade head
-
-# 5. API server
+cd frontend && npm install && cd ..
+# 4 process song song:
 uv run uvicorn main:app --reload --port 8000
-
-# 6. Background workers (terminal riêng)
-arq src.agentrag.worker.settings.WorkerSettings
-
-# 7. Auto-scaler (terminal riêng, thay thế cho bước 6 nếu muốn tự scale)
-python scaler.py
+uv run arq src.agentrag.worker.settings.WorkerSettings
+uv run python scaler.py                    # thay cho ARQ nếu muốn tự scale
+cd frontend && npm run dev
 ```
 
 Kiểm tra:
@@ -782,20 +793,25 @@ AgentRag mount sub-app `/on` tương thích với [open-notebook](https://github
 
 ### Setup frontend
 
+Frontend được vendor sẵn tại `frontend/` (fork từ [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook), tinh chỉnh `LoginForm` để hỗ trợ signup + Google).
+
 ```bash
-git clone https://github.com/lfnovo/open-notebook
-cd open-notebook/frontend
-
-cat > .env.local << 'EOF'
-API_URL=http://localhost:8000/on
-INTERNAL_API_URL=http://localhost:8000/on
-EOF
-
-npm install
-npm run dev    # http://localhost:3000
+make frontend         # auto-load frontend/.env.local, http://localhost:3000
 ```
 
-Login bằng password = `OPEN_NOTEBOOK_PASSWORD` trong `.env`.
+Hoặc thủ công:
+
+```bash
+cd frontend
+cp .env.local.example .env.local      # API_URL=http://localhost:8000/on
+npm install
+npm run dev
+```
+
+Đăng nhập:
+- **Email/password** — đăng ký trực tiếp ở trang `/login` (tab "Đăng ký").
+- **Google** — set `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` trong `.env`, redirect URI `http://localhost:8000/on/api/auth/google/callback`.
+- **Legacy bearer** — `OPEN_NOTEBOOK_PASSWORD` trong `.env` vẫn hoạt động (backward compat).
 
 ### Hai mode chat
 

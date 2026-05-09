@@ -8,6 +8,7 @@ dependencies = [
     # Web framework
     "fastapi[standard]>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+    "gunicorn>=23.0.0",
     "python-multipart>=0.0.9",
     # Database
     "sqlalchemy[asyncio]>=2.0.0",

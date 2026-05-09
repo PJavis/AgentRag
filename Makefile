@@ -81,12 +81,38 @@ docker-up:
 docker-down:
 	docker compose down
 
+# Bring up the full app stack (api + worker + frontend) inside docker
+.PHONY: docker-up-app
+docker-up-app:
+	docker compose --profile app up -d --build
+
+# Bring up the edge layer (nginx) — front of api+frontend, listens on :80
+.PHONY: docker-up-edge
+docker-up-edge:
+	docker compose --profile app --profile edge up -d --build
+
+.PHONY: docker-down-app
+docker-down-app:
+	docker compose --profile app --profile edge down
+
 .PHONY: docker-up-llm
 docker-up-llm:
 	docker compose --profile local-llm up -d
 	docker exec agentrag-ollama ollama pull qwen2.5:14b-instruct || true
 	docker exec agentrag-ollama ollama pull nomic-embed-text || true
 	docker exec agentrag-ollama ollama pull dengcao/bge-reranker-v2-m3 || true
+
+# Pull a vision model for image parsing (PDF images + standalone uploads).
+# Default is llava:13b; override with VISION_MODEL_TAG=llava:7b for less VRAM.
+VISION_MODEL_TAG ?= llava:13b
+.PHONY: vision-pull
+vision-pull:
+	docker exec agentrag-ollama ollama pull $(VISION_MODEL_TAG) || \
+	  (echo "❌ ollama container not running. Run \`make docker-up-llm\` first."; exit 1)
+	@echo "✅ Pulled $(VISION_MODEL_TAG). Set in .env:"
+	@echo "    VISION_PROVIDER=ollama"
+	@echo "    VISION_MODEL=$(VISION_MODEL_TAG)"
+	@echo "    VISION_BASE_URL=http://127.0.0.1:11434/v1/"
 
 .PHONY: migrate
 migrate:

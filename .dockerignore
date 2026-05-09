@@ -1,0 +1,17 @@
+.venv
+.run
+.cache
+__pycache__
+*.pyc
+.pytest_cache
+.git
+.gitignore
+.env
+.env.local
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+data/images/*
+!data/images/.gitkeep
+*.log
+README.md

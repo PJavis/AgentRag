@@ -30,11 +30,12 @@ Nền tảng RAG (Retrieval-Augmented Generation) cho học liệu, đặc biệ
 14. [Page-Aware Citations & Vision](#14-page-aware-citations--vision)
 15. [Mindmap & Structured Summary](#15-mindmap--structured-summary)
 16. [Open-Notebook Adapter & Admin Panel](#16-open-notebook-adapter--admin-panel)
-17. [Security Policy](#17-security-policy)
-18. [Benchmark & Kiểm thử](#18-benchmark--kiểm-thử)
-19. [Reset môi trường](#19-reset-môi-trường)
-20. [Cấu trúc thư mục](#20-cấu-trúc-thư-mục)
-21. [Module READMEs](#21-module-readmes)
+17. [Authentication (JWT + Google OAuth)](#17-authentication-jwt--google-oauth)
+18. [Security Policy](#18-security-policy)
+19. [Benchmark & Kiểm thử](#19-benchmark--kiểm-thử)
+20. [Reset môi trường](#20-reset-môi-trường)
+21. [Cấu trúc thư mục](#21-cấu-trúc-thư-mục)
+22. [Module READMEs](#22-module-readmes)
 
 ---
 
@@ -144,18 +145,108 @@ UI mở tại http://localhost:3000, API tại http://localhost:8000.
 
 ### Make targets
 
+`make help` để liệt kê tại runtime. Targets nhóm theo mục đích:
+
+#### Setup & install
+
 | Target | Mô tả |
 |---|---|
-| `make install` | Setup đầy đủ (docker + python + node + migrate) |
-| `make dev` | Chạy api + worker + frontend foreground |
-| `make api` / `make api-prod` | Uvicorn dev / Gunicorn multi-worker |
-| `make frontend` | Next.js dev server |
-| `make worker` / `make scaler` | ARQ single worker / autoscaler |
-| `make up-bg` | Chạy nền (logs ở `.run/`) — `make logs`, `make stop` |
-| `make migrate` | Alembic upgrade |
+| `make install` | One-shot setup: `docker-up` + tạo `.env` + `uv sync` + `npm install` + `migrate` |
+| `make env` | Tạo `.env` từ `.env.example` + `frontend/.env.local` nếu chưa có |
+| `make uv-sync` | Cài Python deps qua uv |
+| `make frontend-install` | `npm install` trong `frontend/` |
+| `make migrate` | `alembic upgrade head` |
+
+#### Docker infra
+
+| Target | Mô tả |
+|---|---|
+| `make docker-up` | Start postgres + elasticsearch + redis (default services) |
+| `make docker-down` | Stop infra services |
+| `make docker-up-llm` | + Ollama container (GPU profile) và pull `qwen2.5:14b`, `nomic-embed-text`, reranker |
+| `make docker-up-app` | Build + start full stack trong docker (api + worker + frontend) |
+| `make docker-up-edge` | + Nginx reverse proxy tại port 80 |
+| `make docker-down-app` | Stop tất cả app/edge services |
+
+#### Run (dev)
+
+| Target | Mô tả |
+|---|---|
+| `make dev` | Chạy api + worker + frontend song song foreground (Ctrl+C tắt tất cả) |
+| `make api` | Chỉ Uvicorn dev (`--reload`) |
+| `make api-prod` | Gunicorn multi-worker (đọc `UVICORN_WORKERS` từ env) |
+| `make frontend` | Chỉ Next.js dev server |
+| `make worker` | 1 ARQ worker |
+| `make scaler` | ARQ auto-scaling worker pool |
+| `make cli` | Interactive CLI chat |
+
+#### Run (background)
+
+Mỗi target ghi log vào `.run/<name>.log` + `.run/<name>.pid`.
+
+| Target | Mô tả |
+|---|---|
+| `make api-bg` / `make worker-bg` / `make frontend-bg` / `make scaler-bg` | Chạy nền từng service |
+| `make up-bg` | Chạy nền 3 services (api + worker + frontend) |
+| `make logs` | Tail 30 dòng cuối từ tất cả log files |
+| `make stop` | Kill tất cả background processes (đọc PID từ `.run/`) |
+
+#### Vision LLM (Ollama)
+
+```bash
+# default model llava:13b
+make vision-pull
+
+# hoặc model nhẹ hơn nếu VRAM hạn chế
+make vision-pull VISION_MODEL_TAG=llava:7b
+```
+
+Sau pull, set `.env`:
+```env
+VISION_PROVIDER=ollama
+VISION_MODEL=llava:13b
+VISION_BASE_URL=http://127.0.0.1:11434/v1/
+```
+
+#### Maintenance
+
+| Target | Mô tả |
+|---|---|
 | `make health` | Probe `/config/validate` + `/on/api/auth/status` |
-| `make reset` | Nuke docker volumes + migrate lại |
-| `make clean` / `make deepclean` | Xoá cache / + node_modules + .venv |
+| `make test` | `pytest -q` |
+| `make bench-ingest` | Benchmark ingest pipeline |
+| `make reset` | Nuke docker volumes + migrate lại (mất data) |
+| `make clean` | Xoá `.cache`, `__pycache__`, `.next` |
+| `make deepclean` | `clean` + `node_modules` + `.venv` |
+
+#### Cấu hình runtime (override)
+
+```bash
+make api API_PORT=9000                   # đổi port API
+make api UVICORN_RELOAD=                 # tắt --reload
+make api-prod UVICORN_WORKERS=4          # multi-worker production
+make vision-pull VISION_MODEL_TAG=...    # custom vision model
+```
+
+### Workflow điển hình
+
+```bash
+# Lần đầu setup
+make install
+# (review .env, set OPENAI_API_KEY hoặc bật docker-up-llm)
+make dev                                # Ctrl+C để tắt
+
+# Daily dev (background, free terminal)
+make up-bg                              # api + worker + frontend chạy nền
+make logs                               # xem logs
+make stop                               # dừng
+
+# Production-like local test
+make docker-up-app                      # tất cả trong docker
+curl localhost:8000/on/api/config
+
+# Reset khi schema/data hỏng
+make reset
 
 ### Manual (nếu không dùng Makefile)
 
@@ -178,6 +269,25 @@ Kiểm tra:
 curl http://127.0.0.1:8000/config/validate
 curl http://127.0.0.1:8000/health/providers
 ```
+
+### Production deployment (docker compose)
+
+Mọi service chạy trong docker, behind nginx:
+
+```bash
+# 1. Build + start (api, worker, frontend) — profile "app"
+docker compose --profile app up -d --build
+
+# 2. Optional: front bằng nginx tại port 80 — profile "edge"
+docker compose --profile app --profile edge up -d --build
+
+# 3. Pull vision model nếu dùng Ollama
+make vision-pull               # pulls llava:13b vào agentrag-ollama
+```
+
+Nginx config: `deploy/nginx.conf` (proxy `/on/*`, `/admin`, `/images/*`, `/chat`, `/ingest`, ... → API; còn lại → Next.js).
+
+Multi-worker: set `UVICORN_WORKERS=4` trong `.env` (dùng cho `make api-prod` hoặc Dockerfile CMD).
 
 ### Ingest tài liệu
 
@@ -835,7 +945,74 @@ Xem [adapter README](src/agentrag/adapter/README.md).
 
 ---
 
-## 17. Security Policy
+## 17. Authentication (JWT + Google OAuth)
+
+Khi `AUTH_ENABLED=true`, mọi `/on/api/*` (trừ public) yêu cầu Bearer token. Hai cách lấy token:
+
+### Email + password
+
+```bash
+# Signup
+curl -X POST http://localhost:8000/on/api/auth/signup \
+  -d '{"email": "user@example.com", "password": "...", "name": "..."}'
+# → {"token": "<jwt>", "user": {...}}
+
+# Login
+curl -X POST http://localhost:8000/on/api/auth/login \
+  -d '{"email": "user@example.com", "password": "..."}'
+```
+
+JWT TTL = `JWT_TTL_DAYS` (mặc định 7 ngày). Password hash bằng bcrypt.
+
+### Google OAuth
+
+```
+GET /on/api/auth/google/start          → redirect tới Google consent screen
+GET /on/api/auth/google/callback?code  → exchange code → JWT, set cookie, redirect FRONTEND_URL
+```
+
+Cấu hình:
+```env
+AUTH_ENABLED=true
+AUTH_ALLOW_SIGNUP=true                    # cho phép signup mở (false: chỉ admin tạo user)
+JWT_SECRET=<long-random-string>           # auto-derived ở dev nếu để trống
+JWT_TTL_DAYS=7
+
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=http://localhost:8000/on/api/auth/google/callback
+FRONTEND_URL=http://localhost:3000
+```
+
+### Endpoints
+
+| Endpoint | Mô tả |
+|---|---|
+| `POST /on/api/auth/signup` | Tạo user mới |
+| `POST /on/api/auth/login` | Đổi email+password lấy JWT |
+| `GET  /on/api/auth/me` | Profile user hiện tại (cần Bearer) |
+| `GET  /on/api/auth/status` | Public — báo `auth_enabled` + `signup_enabled` để frontend hiện form |
+| `GET  /on/api/auth/google/start` | Bắt đầu OAuth flow |
+| `GET  /on/api/auth/google/callback` | OAuth callback |
+| `POST /on/api/auth/logout` | Clear cookie |
+
+### Rate limit + upload hardening
+
+Khi `RATE_LIMIT_ENABLED=true`:
+- `RATE_LIMIT_PER_MIN_DEFAULT=120` per-user/min cho chat + search
+- `RATE_LIMIT_UPLOAD_PER_MIN=20` per-user/min cho upload
+- `UPLOAD_MAX_BYTES=104857600` (100 MB)
+- `UPLOAD_DEDUPE_BY_HASH=true` — skip re-ingest nếu đã thấy bytes
+
+Implementation: `src/agentrag/adapter/rate_limit.py` + `upload_dedupe.py` (Redis INCR + EXPIRE 60s).
+
+### Legacy shared password
+
+Nếu cả `AUTH_ENABLED=false` và `OPEN_NOTEBOOK_PASSWORD` được set, middleware vẫn check Bearer token = password (tương thích deployment cũ).
+
+---
+
+## 18. Security Policy
 
 ```python
 registry.load_from_list([{
@@ -850,7 +1027,7 @@ registry.load_from_list([{
 
 ---
 
-## 18. Benchmark & Kiểm thử
+## 19. Benchmark & Kiểm thử
 
 ```bash
 python3 scripts/benchmark_ingest.py data/test_docs/SYSTEM_DESIGN.md
@@ -885,7 +1062,7 @@ curl -X POST http://127.0.0.1:8000/search \
 
 ---
 
-## 19. Reset môi trường
+## 20. Reset môi trường
 
 ```bash
 docker compose down -v --remove-orphans
@@ -909,7 +1086,7 @@ uv run uvicorn main:app --reload --port 8000
 
 ---
 
-## 20. Cấu trúc thư mục
+## 21. Cấu trúc thư mục
 
 ```
 AgentRag/
@@ -1012,7 +1189,7 @@ AgentRag/
 
 ---
 
-## 21. Module READMEs
+## 22. Module READMEs
 
 | Module | README |
 |---|---|

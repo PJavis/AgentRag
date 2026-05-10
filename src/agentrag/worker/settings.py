@@ -12,11 +12,11 @@ from __future__ import annotations
 from arq.connections import RedisSettings
 
 from src.agentrag.config import settings as app_settings
-from src.agentrag.worker.functions import chat_memory, consolidate, graph_ingest
+from src.agentrag.worker.functions import chat_memory, consolidate, graph_ingest, vision_extract
 
 
 class WorkerSettings:
-    functions = [graph_ingest, consolidate, chat_memory]
+    functions = [graph_ingest, consolidate, chat_memory, vision_extract]
     redis_settings = RedisSettings.from_dsn(
         app_settings.REDIS_URL or "redis://127.0.0.1:6379/0"
     )

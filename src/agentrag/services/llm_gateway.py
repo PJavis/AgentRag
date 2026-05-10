@@ -147,22 +147,26 @@ class LLMGateway:
         provider = settings.VISION_PROVIDER or settings.EXTRACTION_PROVIDER
         model = settings.VISION_MODEL or settings.EXTRACTION_MODEL
         base_url = settings.VISION_BASE_URL
+        # Vision models (esp. local llava cold-start) cần timeout dài
+        timeout = float(settings.VISION_TIMEOUT_SECONDS)
 
         if provider == "openai":
             if not settings.OPENAI_API_KEY:
                 raise RuntimeError("OPENAI_API_KEY required for vision")
-            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=base_url)
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=base_url, timeout=timeout)
         elif provider == "gemini":
             if not settings.GEMINI_API_KEY:
                 raise RuntimeError("GEMINI_API_KEY required for vision")
             client = AsyncOpenAI(
                 api_key=settings.GEMINI_API_KEY,
                 base_url=base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
+                timeout=timeout,
             )
         elif provider == "ollama":
             client = AsyncOpenAI(
                 api_key=settings.OLLAMA_API_KEY,
                 base_url=base_url or settings.OLLAMA_BASE_URL,
+                timeout=timeout,
             )
         else:
             raise RuntimeError(f"Unsupported vision provider: {provider}")

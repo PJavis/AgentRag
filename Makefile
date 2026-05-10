@@ -75,7 +75,7 @@ frontend-install:
 
 .PHONY: docker-up
 docker-up:
-	docker compose up -d
+	docker compose up -d --wait
 
 .PHONY: docker-down
 docker-down:
@@ -98,9 +98,12 @@ docker-down-app:
 .PHONY: docker-up-llm
 docker-up-llm:
 	docker compose --profile local-llm up -d
-	docker exec agentrag-ollama ollama pull qwen2.5:14b-instruct || true
-	docker exec agentrag-ollama ollama pull nomic-embed-text || true
-	docker exec agentrag-ollama ollama pull dengcao/bge-reranker-v2-m3 || true
+	@echo "📦 Pulling models for 16GB VRAM tier (~12GB total)..."
+	docker exec agentrag-ollama ollama pull qwen2.5:7b-instruct || true   # main LLM (4.7GB)
+	docker exec agentrag-ollama ollama pull llama3.2:3b || true           # fast classify/decide (2.0GB)
+	docker exec agentrag-ollama ollama pull mxbai-embed-large || true     # embedding (0.7GB, top MTEB, stable)
+	docker exec agentrag-ollama ollama pull llava:7b || true              # vision LLM (4.5GB)
+	@echo "✅ Models ready. Reranker (BAAI/bge-reranker-v2-m3) auto-load via sentence-transformers."
 
 # Pull a vision model for image parsing (PDF images + standalone uploads).
 # Default is llava:13b; override with VISION_MODEL_TAG=llava:7b for less VRAM.
@@ -204,10 +207,38 @@ stop:
 
 .PHONY: reset
 reset:
-	docker compose down -v --remove-orphans
+	@echo "🧹 Resetting databases (postgres + ES + redis + ollama volumes)..."
+	$(MAKE) -s stop || true
+	docker compose --profile app --profile edge down -v --remove-orphans
 	rm -rf .cache/agentrag
-	docker compose up -d
+	docker compose up -d --wait
 	$(MAKE) -s migrate
+	@echo "✅ Reset complete. Run \`make dev\` to start."
+
+.PHONY: reset-data
+reset-data:
+	@echo "⚠️  Wiping ALL ingested data (DBs + extracted images + cache)..."
+	$(MAKE) -s stop || true
+	docker compose --profile app --profile edge down -v --remove-orphans
+	rm -rf .cache/agentrag
+	rm -rf data/images/*
+	rm -rf $(LOG_DIR)
+	docker compose up -d --wait
+	$(MAKE) -s migrate
+	@echo "✅ Data wiped. Infra back up. Run \`make dev\`."
+
+.PHONY: nuke
+nuke:
+	@echo "💣 Nuking EVERYTHING — containers, volumes, code caches, deps, builds..."
+	@echo "   (.env will be kept — re-edit if needed)"
+	$(MAKE) -s stop || true
+	docker compose --profile app --profile edge --profile local-llm down -v --remove-orphans
+	rm -rf .cache .cache/agentrag .pytest_cache .run
+	rm -rf data/images/*
+	find . -type d -name __pycache__ -prune -exec rm -rf {} \; 2>/dev/null || true
+	rm -rf $(FRONTEND_DIR)/.next $(FRONTEND_DIR)/.turbo $(FRONTEND_DIR)/node_modules
+	rm -rf .venv
+	@echo "✅ Nuked. Run \`make install\` to rebuild from scratch."
 
 .PHONY: clean
 clean:

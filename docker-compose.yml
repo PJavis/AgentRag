@@ -78,19 +78,29 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=24h          # giữ model trong VRAM 24h sau lần dùng cuối
       - OLLAMA_MAX_LOADED_MODELS=2     # tối đa 2 model cùng lúc trong VRAM
+    # GPU passthrough: dùng `deploy.resources` (legacy) HOẶC CDI (workaround
+    # segfault của nvidia-container-toolkit trên WSL2). Nếu legacy bị segfault:
+    #   1. sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+    #   2. comment block deploy.resources bên dưới
+    #   3. uncomment block runtime + devices bên dưới
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all               # dùng tất cả GPU (đổi thành count: 1 nếu muốn giới hạn)
+              count: all
               capabilities: [gpu]
+    # ── CDI workaround (uncomment khi legacy segfault) ─────────────────────
+    # runtime: nvidia
+    # devices:
+    #   - nvidia.com/gpu=all
+    # ───────────────────────────────────────────────────────────────────────
     healthcheck:
       test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 20s               # chờ Ollama khởi động xong trước khi check
+      start_period: 20s
 
   # ── App services (profile: app) ──────────────────────────────────────────
   # Bring up everything: docker compose --profile app up -d --build

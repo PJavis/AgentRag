@@ -36,6 +36,24 @@ async def graph_ingest(
     await process_graph_job(job, arq_pool=ctx["redis"])
 
 
+async def vision_extract(
+    ctx: dict,
+    *,
+    document_id: str,
+    title: str,
+    image_records: list[dict],
+) -> None:
+    """Describe PDF images via Vision LLM, then upsert image segments to PG + ES."""
+    from src.agentrag.graph.vision_jobs import VisionExtractJob, process_vision_job
+
+    job = VisionExtractJob(
+        document_id=uuid.UUID(document_id),
+        title=title,
+        image_records=image_records or [],
+    )
+    await process_vision_job(job)
+
+
 async def consolidate(
     ctx: dict,
     *,

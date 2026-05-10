@@ -109,10 +109,13 @@ class ChatSessionResponse(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    role: str
+    id: str | None = None              # cần cho React key prop ở frontend
+    type: str                          # 'human' | 'ai' (open-notebook contract)
+    role: str                          # 'user' | 'assistant' (giữ để tương thích cũ)
     content: str
     citations: list[Any] | None = None
     tool_trace: list[Any] | None = None
+    timestamp: str | None = None
 
 
 class ChatSessionWithMessagesResponse(ChatSessionResponse):

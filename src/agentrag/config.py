@@ -11,6 +11,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        env_ignore_empty=True,  # treat empty env vars as missing (use defaults)
     )
 
     POSTGRES_USER: str
@@ -130,6 +131,10 @@ class Settings(BaseSettings):
     VISION_BASE_URL: str | None = None
     IMAGE_STORAGE_DIR: str = "data/images"
     IMAGE_MIN_SIZE_BYTES: int = 5000         # skip icons / decorative bullets
+    VISION_TIMEOUT_SECONDS: int = 180        # bump cao cho llava cold-start
+    # sync: describe images inline during ingest (slow, blocks pipeline).
+    # async: skip describe; queue ARQ vision_extract job → text retrieval ready ngay.
+    VISION_INGEST_MODE: Literal["sync", "async"] = "async"
 
     # Excel ingest strategy
     EXCEL_INGEST_MODE: Literal["markdown", "sql"] = "markdown"

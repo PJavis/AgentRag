@@ -77,7 +77,9 @@ class ConversationStore:
             return {
                 "conversation_id": str(conversation.id),
                 "title": conversation.title,
+                "extra_metadata": conversation.extra_metadata or {},
                 "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
+                "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else "",
             }
 
     async def get_conversation(self, conversation_id: str) -> dict[str, Any] | None:
@@ -95,7 +97,9 @@ class ConversationStore:
             return {
                 "conversation_id": str(conversation.id),
                 "title": conversation.title,
+                "extra_metadata": conversation.extra_metadata or {},
                 "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
+                "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else "",
             }
 
     async def get_or_create_conversation(
@@ -214,7 +218,9 @@ class ConversationStore:
             {
                 "conversation_id": str(item.id),
                 "title": item.title,
+                "extra_metadata": item.extra_metadata or {},
                 "created_at": item.created_at.isoformat() if item.created_at else None,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else "",
             }
             for item in rows
         ]

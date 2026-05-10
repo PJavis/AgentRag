@@ -51,12 +51,25 @@ def _conv_to_session(conv: dict, message_count: int = 0) -> dict:
     ).model_dump()
 
 
+_ROLE_TO_TYPE = {"user": "human", "assistant": "ai", "human": "human", "ai": "ai"}
+
+
 def _msg_to_chat(msg: dict) -> dict:
+    # ID có thể từ store (message_id / id) hoặc fallback hash content+role+ts
+    mid = msg.get("message_id") or msg.get("id")
+    if not mid:
+        import hashlib
+        seed = f"{msg.get('role','')}|{msg.get('content','')[:120]}|{msg.get('created_at','')}"
+        mid = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+    role = msg["role"]
     return ChatMessage(
-        role=msg["role"],
+        id=mid,
+        type=_ROLE_TO_TYPE.get(role, "ai"),
+        role=role,
         content=msg["content"],
         citations=msg.get("citations"),
         tool_trace=msg.get("tool_trace"),
+        timestamp=msg.get("created_at"),
     ).model_dump()
 
 

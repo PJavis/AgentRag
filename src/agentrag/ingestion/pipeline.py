@@ -158,31 +158,42 @@ async def ingest_folder(
                         c["page_start"] = 1
                         c["page_end"] = 1
 
-            # Add image chunks extracted from PDF pages
+            # Add image chunks extracted from PDF pages.
+            # In async mode: skip vision LLM describe inline; queue ARQ job sau
+            # khi PG/ES text segments saved (search ready ngay).
+            _pending_vision_records: list[dict] = []
             if _pdf_images:
-                next_pos = len(chunks_search)
-                for img in _pdf_images:
-                    description = await image_parser.describe(  # type: ignore[union-attr]
-                        img["bytes"], img["mime"], context=doc["title"]
-                    )
-                    if not description or description.startswith("[image"):
-                        continue
-                    img_chunk: dict = {
-                        "content": description,
-                        "content_hash": hashlib.sha256(description.encode("utf-8")).hexdigest(),
-                        "segment_type": "image",
-                        "section_path": f"page_{img['page']}_image",
-                        "position": next_pos,
-                        "page_start": img["page"],
-                        "page_end": img["page"],
-                        "metadata": {
-                            "document_title": doc["title"],
-                            "image_url": img["url"],
-                            "image_path": img["path"],
-                        },
-                    }
-                    chunks_search.append(img_chunk)
-                    next_pos += 1
+                if settings.VISION_INGEST_MODE == "sync":
+                    next_pos = len(chunks_search)
+                    for img in _pdf_images:
+                        description = await image_parser.describe(  # type: ignore[union-attr]
+                            img["bytes"], img["mime"], context=doc["title"]
+                        )
+                        if not description or description.startswith("[image"):
+                            continue
+                        img_chunk: dict = {
+                            "content": description,
+                            "content_hash": hashlib.sha256(description.encode("utf-8")).hexdigest(),
+                            "segment_type": "image",
+                            "section_path": f"page_{img['page']}_image",
+                            "position": next_pos,
+                            "page_start": img["page"],
+                            "page_end": img["page"],
+                            "metadata": {
+                                "document_title": doc["title"],
+                                "image_url": img["url"],
+                                "image_path": img["path"],
+                            },
+                        }
+                        chunks_search.append(img_chunk)
+                        next_pos += 1
+                else:
+                    # async: persist refs only (no bytes — worker reads from disk)
+                    _pending_vision_records = [
+                        {"page": img["page"], "path": img["path"],
+                         "url": img["url"], "mime": img["mime"]}
+                        for img in _pdf_images
+                    ]
                 report["pdf_images"] = len(_pdf_images)
 
             t0 = time.perf_counter()
@@ -293,6 +304,17 @@ async def ingest_folder(
                         title=doc["title"],
                         parsed_cache_path=parsed_cache_path,
                     )
+
+                # Queue vision describe job nếu async + có pending images
+                if _pending_vision_records:
+                    await get_pool().enqueue_job(
+                        "vision_extract",
+                        document_id=str(doc_id),
+                        title=doc["title"],
+                        image_records=_pending_vision_records,
+                    )
+                    report["vision_status"] = "queued"
+                    report["pdf_images_pending"] = len(_pending_vision_records)
             except Exception as e:
                 await session.execute(
                     update(Document)

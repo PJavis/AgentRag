@@ -17,6 +17,17 @@ def _make_entry_id(group_id: str, chunk_position: int, entry_type: str, content:
     return sha256(key.encode("utf-8")).hexdigest()
 
 
+def _coerce_entity(value: Any) -> str | None:
+    """LLM may return entity as string OR list — normalize to a single string."""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        joined = ", ".join(str(v).strip() for v in value if v).strip()
+        return joined or None
+    s = str(value).strip()
+    return s or None
+
+
 def build_entry_docs(
     structmem_results: list[dict[str, Any]],
     document_title: str,
@@ -67,8 +78,8 @@ def build_entry_docs(
                     "subject": None,
                     "confidence": entry.get("confidence") or None,
                     "relation_type": entry.get("relation_type") or None,
-                    "source_entity": (entry.get("source_entity") or "").strip() or None,
-                    "target_entity": (entry.get("target_entity") or "").strip() or None,
+                    "source_entity": _coerce_entity(entry.get("source_entity")),
+                    "target_entity": _coerce_entity(entry.get("target_entity")),
                     "document_title": document_title,
                     "group_id": group_id,
                     "chunk_position": chunk_position,

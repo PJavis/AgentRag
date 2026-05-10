@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
@@ -16,7 +16,7 @@ from src.agentrag.adapter.models import SourceResponse, SourceStatusResponse
 from src.agentrag.adapter.upload_dedupe import find_existing_document, hash_bytes
 from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
-from src.agentrag.database.models import Document, Segment
+from src.agentrag.database.models import Document, Project, Segment
 from src.agentrag.ingestion.pipeline import ingest_folder
 
 router = APIRouter(prefix="/sources")
@@ -131,9 +131,45 @@ async def _link_to_notebooks(session, doc_id: uuid.UUID, notebook_ids: list[str]
         )
 
 
+async def _run_ingest_background(
+    file_path: str,
+    user_id: str,
+    notebook_ids: list[str],
+    content_hash: str | None,
+) -> None:
+    """Run ingest_folder in background, then link notebooks + cleanup tmp dir."""
+    import logging
+    logger = logging.getLogger(__name__)
+    sem = _user_upload_semaphore(user_id)
+    parent_dir = os.path.dirname(file_path)
+    try:
+        async with sem:
+            result = await ingest_folder(parent_dir)
+        docs = result.get("documents", [])
+        if not docs:
+            logger.error("Background ingest returned no documents for %s", file_path)
+            return
+        doc_id = docs[0].get("document_id")
+        if not doc_id:
+            return
+        async with AsyncSessionLocal() as session:
+            doc = await session.get(Document, uuid.UUID(doc_id))
+            if doc is None:
+                return
+            if not doc.content_hash and content_hash:
+                doc.content_hash = content_hash
+            await _link_to_notebooks(session, doc.id, notebook_ids)
+            await session.commit()
+    except Exception:
+        logger.exception("Background ingest failed for %s", file_path)
+    finally:
+        shutil.rmtree(parent_dir, ignore_errors=True)
+
+
 @router.post("")
 async def create_source(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(None),
     type: str = Form("upload"),
     notebooks: list[str] = Form(default=[]),
@@ -143,7 +179,7 @@ async def create_source(
     content: str = Form(None),
     async_processing: bool = Form(False),
 ):
-    """Upload a file and ingest it into AgentRag with dedupe + concurrency control."""
+    """Upload a file. Returns a placeholder ASAP; ingest runs in background."""
     if file is None and content is None and url is None:
         raise HTTPException(400, "file, content, or url is required")
 
@@ -151,7 +187,6 @@ async def create_source(
     user_id = identity.user_id if identity else "anonymous"
     all_notebooks = list({n for n in ([notebook_id] + (notebooks or [])) if n})
 
-    # Read source bytes once so we can hash + dedupe BEFORE invoking the pipeline.
     if file is not None:
         raw = await file.read()
         if len(raw) == 0:
@@ -169,7 +204,7 @@ async def create_source(
 
     content_hash = hash_bytes(raw)
 
-    # Dedupe: if we've already ingested identical bytes, link to notebooks and return.
+    # Dedupe: identical bytes already ingested → link + return real doc.
     if settings.UPLOAD_DEDUPE_BY_HASH:
         existing = await find_existing_document(content_hash)
         if existing is not None:
@@ -181,34 +216,48 @@ async def create_source(
                 payload["deduplicated"] = True
                 return payload
 
-    sem = _user_upload_semaphore(user_id)
-    async with sem:
-        tmp_dir = tempfile.mkdtemp(prefix="adapter_upload_")
-        try:
-            dest = os.path.join(tmp_dir, filename)
-            with open(dest, "wb") as f:
-                f.write(raw)
-            result = await ingest_folder(tmp_dir)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+    # Persist file outside request lifecycle.
+    persist_dir = tempfile.mkdtemp(prefix="adapter_upload_")
+    dest = os.path.join(persist_dir, filename)
+    with open(dest, "wb") as f:
+        f.write(raw)
 
-    docs = result.get("documents", [])
-    if not docs:
-        raise HTTPException(500, "Ingestion returned no documents")
-    doc_id = docs[0].get("document_id")
-    if not doc_id:
-        raise HTTPException(500, "Could not determine document_id after ingestion")
-
+    # Pre-create skeleton Document (status=pending, no segments). Pipeline's
+    # postgres_store will detect it by source_id+hash and POPULATE in place
+    # → frontend GET /sources sees this row immediately.
+    doc_title = os.path.splitext(filename)[0]
+    ext = os.path.splitext(filename)[1].lstrip(".") or "upload"
     async with AsyncSessionLocal() as session:
-        doc = await session.get(Document, uuid.UUID(doc_id))
-        if not doc:
-            raise HTTPException(500, "Document not found after ingestion")
-        # Stamp content hash so future uploads dedupe.
-        if not doc.content_hash and content_hash:
-            doc.content_hash = content_hash
-        await _link_to_notebooks(session, doc.id, all_notebooks)
+        # documents.project_id is NOT NULL — reuse / create default project
+        # (pipeline's postgres_store does the same).
+        proj = (await session.execute(
+            select(Project).where(Project.name == "Default Project").limit(1)
+        )).scalar_one_or_none()
+        if proj is None:
+            proj = Project(name="Default Project", description="Auto created")
+            session.add(proj)
+            await session.flush()
+        skeleton = Document(
+            project_id=proj.id,
+            title=doc_title,
+            source_type=ext,
+            source_id=filename,            # matches FolderConnector.source_id
+            content_hash=content_hash,
+            graph_synced=False,
+            graph_status="pending",
+        )
+        session.add(skeleton)
         await session.commit()
-        return await _doc_to_source(session, doc, all_notebooks)
+        await session.refresh(skeleton)
+        await _link_to_notebooks(session, skeleton.id, all_notebooks)
+        await session.commit()
+        payload = await _doc_to_source(session, skeleton, all_notebooks)
+
+    background_tasks.add_task(
+        _run_ingest_background, dest, user_id, all_notebooks, content_hash
+    )
+    payload["status"] = "processing"
+    return payload
 
 
 @router.post("/json")

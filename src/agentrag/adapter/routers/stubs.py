@@ -27,12 +27,42 @@ async def list_credentials(provider: str | None = None):
 
 @router.get("/credentials/status")
 async def credentials_status():
-    return {}
+    """Frontend SetupBanner expects {source: {provider: 'environment'|'database'}, ...}."""
+    from src.agentrag.config import settings as _s
+    source: dict[str, str] = {}
+    if _s.OPENAI_API_KEY:
+        source["openai"] = "environment"
+    if _s.GEMINI_API_KEY:
+        source["gemini"] = "environment"
+    if _s.HF_TOKEN:
+        source["huggingface"] = "environment"
+    if _s.OLLAMA_BASE_URL:
+        source["ollama"] = "environment"
+    return {
+        "source": source,
+        "configured_providers": list(source.keys()),
+        "has_credentials": bool(source),
+    }
 
 
 @router.get("/credentials/env-status")
 async def credentials_env_status():
-    return {"configured_providers": []}
+    """Flat dict {provider: bool} — frontend reads envStatus[provider]."""
+    from src.agentrag.config import settings as _s
+    return {
+        "openai": bool(_s.OPENAI_API_KEY),
+        "gemini": bool(_s.GEMINI_API_KEY),
+        "huggingface": bool(_s.HF_TOKEN),
+        "ollama": bool(_s.OLLAMA_BASE_URL),
+        "configured_providers": [
+            p for p, v in [
+                ("openai", _s.OPENAI_API_KEY),
+                ("gemini", _s.GEMINI_API_KEY),
+                ("huggingface", _s.HF_TOKEN),
+                ("ollama", _s.OLLAMA_BASE_URL),
+            ] if v
+        ],
+    }
 
 
 @router.get("/credentials/by-provider/{provider}")

@@ -215,9 +215,29 @@ VISION_BASE_URL=http://127.0.0.1:11434/v1/
 | `make health` | Probe `/config/validate` + `/on/api/auth/status` |
 | `make test` | `pytest -q` |
 | `make bench-ingest` | Benchmark ingest pipeline |
-| `make reset` | Nuke docker volumes + migrate lại (mất data) |
 | `make clean` | Xoá `.cache`, `__pycache__`, `.next` |
 | `make deepclean` | `clean` + `node_modules` + `.venv` |
+
+#### Reset (3 mức độ)
+
+| Mức | Target | Xoá những gì | Giữ lại |
+|---|---|---|---|
+| 🟡 **Soft** | `make reset` | DB volumes (postgres + ES + redis + ollama), `.cache/agentrag`. Restart infra + migrate. | Code, deps, `.venv`, `node_modules`, ảnh đã extract, logs |
+| 🟠 **Data** | `make reset-data` | Tất cả của Soft + `data/images/*` + `.run/` (logs) | Code, deps, `.venv`, `node_modules` |
+| 🔴 **Nuke** | `make nuke` | Tất cả của Data + `.venv` + `frontend/node_modules` + `.next` + tất cả docker containers (kể cả Ollama) | `.env` |
+
+Sau khi nuke chạy `make install` để dựng lại từ đầu.
+
+```bash
+# Database hỏng / muốn ingest lại từ đầu
+make reset
+
+# Reset hoàn toàn data + ảnh + logs (giữ deps)
+make reset-data
+
+# Lỗi nặng / muốn build sạch hoàn toàn
+make nuke && make install
+```
 
 #### Cấu hình runtime (override)
 
@@ -1064,14 +1084,29 @@ curl -X POST http://127.0.0.1:8000/search \
 
 ## 20. Reset môi trường
 
+3 mức độ reset, từ nhẹ đến mạnh:
+
 ```bash
-docker compose down -v --remove-orphans
-rm -rf .cache/agentrag
+# 🟡 Soft — xoá DB + cache, giữ deps & ảnh & logs
+make reset
+
+# 🟠 Data — soft + ảnh + logs (giữ deps)
+make reset-data
+
+# 🔴 Nuke — xoá sạch luôn cả .venv, node_modules, ollama, .next
+make nuke && make install
+```
+
+Manual (không Makefile):
+
+```bash
+docker compose --profile app --profile edge down -v --remove-orphans
+rm -rf .cache/agentrag data/images/* .run
 
 docker compose up -d
 uv sync
 uv run alembic upgrade head
-uv run uvicorn main:app --reload --port 8000
+make dev
 ```
 
 **Lỗi thường gặp:**

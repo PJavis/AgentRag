@@ -33,14 +33,39 @@ class PostgresStore:
                 # 2. Kiểm tra xem có bản ghi nào trùng khớp content_hash không
                 for doc in existing_docs:
                     if doc.content_hash == doc_data["content_hash"]:
-                        if doc.graph_status == "failed":
-                            # Same content but extraction failed — reset and retry
+                        # Skeleton (pre-created via /sources upload, no segments yet)
+                        # → populate it instead of creating new doc.
+                        seg_count = (await session.execute(
+                            select(Segment).where(Segment.document_id == doc.id).limit(1)
+                        )).scalar_one_or_none()
+                        is_skeleton = (
+                            doc.graph_status == "pending" and seg_count is None
+                        )
+                        if doc.graph_status == "failed" or is_skeleton:
+                            # Reset + (re)populate. Clear any stale segments first.
+                            await session.execute(
+                                delete(Segment).where(Segment.document_id == doc.id)
+                            )
+                            doc.title = doc_data.get("title") or doc.title
+                            doc.source_type = doc_data.get("source_type") or doc.source_type
                             doc.graph_status = "pending"
                             doc.graph_synced = False
                             doc.graph_last_error = None
                             doc.graph_failed_chunks = 0
+                            await session.flush()
+                            for chunk in chunks:
+                                session.add(Segment(
+                                    document_id=doc.id,
+                                    content=chunk["content"],
+                                    content_hash=chunk["content_hash"],
+                                    segment_type=chunk["segment_type"],
+                                    section_path=chunk["section_path"],
+                                    position=chunk["position"],
+                                    extra_metadata=chunk["metadata"],
+                                    version=1,
+                                ))
                             await session.commit()
-                            return doc.id, "retry"
+                            return doc.id, "ingested"
                         # Hash same, extraction already done or in-progress — skip
                         return doc.id, "skipped"
                 

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from src.agentrag.config import settings
 from src.agentrag.adapter.auth import OpenNotebookAuthMiddleware
 from src.agentrag.adapter.rate_limit import RateLimitMiddleware
 from src.agentrag.adapter.routers.auth import router as auth_router
@@ -47,6 +49,15 @@ adapter.include_router(transformations_router, prefix="/api")
 adapter.include_router(insights_router, prefix="/api")
 adapter.include_router(models_router, prefix="/api")
 adapter.include_router(stubs_router, prefix="/api")
+
+# Stored image bytes (extracted from PDFs + standalone uploads) served under
+# /on/api/images/* so the frontend can resolve them via the same origin as the
+# rest of the API (markdown <img src> rewrites point here).
+adapter.mount(
+    "/api/images",
+    StaticFiles(directory=settings.IMAGE_STORAGE_DIR),
+    name="adapter-images",
+)
 
 
 @adapter.get("/")

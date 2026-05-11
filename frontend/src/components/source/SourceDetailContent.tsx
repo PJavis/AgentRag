@@ -5,6 +5,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import { sourcesApi } from '@/lib/api/sources'
 import { insightsApi, SourceInsightResponse } from '@/lib/api/insights'
 import { transformationsApi } from '@/lib/api/transformations'
@@ -522,7 +525,8 @@ export function SourceDetailContent({
                 )}
                 <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none prose-headings:font-semibold prose-a:text-blue-600 prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: false }]]}
                     components={{
                       p: ({ children }) => <p className="mb-4">{children}</p>,
                       h1: ({ children }) => <h1 className="text-2xl font-bold mt-6 mb-4">{children}</h1>,
@@ -541,6 +545,43 @@ export function SourceDetailContent({
                       tr: ({ children }) => <tr className="border-b border-border">{children}</tr>,
                       th: ({ children }) => <th className="border border-border px-3 py-2 text-left font-semibold">{children}</th>,
                       td: ({ children }) => <td className="border border-border px-3 py-2">{children}</td>,
+                      // Skip `![](empty)` markdown placeholders that PDF parsers
+                      // emit for un-described images. Show a tiny pill instead
+                      // of a broken <img> that warns about empty src.
+                      img: ({ src, alt }) => {
+                        if (!src || (typeof src === 'string' && !src.trim())) {
+                          return (
+                            <span className="inline-block rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground align-middle">
+                              [image{alt ? `: ${alt}` : ''}]
+                            </span>
+                          )
+                        }
+                        const url = typeof src === 'string' ? src : ''
+                        // Route stored images through the same /api/* rewrite
+                        // the rest of the app uses. PDF parser emits either
+                        // `/images/foo.jpg`, `images/foo.jpg`, or `data/images/foo.jpg`.
+                        let finalSrc = url
+                        if (url.startsWith('/images/')) finalSrc = `/api${url}`
+                        else if (url.startsWith('data/images/')) finalSrc = `/api/${url.slice('data/'.length)}`
+                        else if (url.startsWith('images/')) finalSrc = `/api/${url}`
+                        // eslint-disable-next-line @next/next/no-img-element
+                        return (
+                          <img
+                            src={finalSrc}
+                            alt={alt || ''}
+                            loading="lazy"
+                            className="my-3 max-h-96 max-w-full rounded border border-border"
+                          />
+                        )
+                      },
+                      // Math blocks come through as <span class="math math-display"> via rehype-katex.
+                      // Wrap them so they scroll horizontally on small viewports.
+                      code: ({ className, children, ...rest }) => {
+                        if (className?.startsWith('language-math')) {
+                          return <code className={className} {...rest}>{children}</code>
+                        }
+                        return <code className={className} {...rest}>{children}</code>
+                      },
                     }}
                   >
                     {source.full_text || t('sources.noContent')}
@@ -775,27 +816,37 @@ export function SourceDetailContent({
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">{t('common.created_label')}</p>
-                      <p className="text-sm">
-                        {formatDistanceToNow(new Date(source.created), {
-                          addSuffix: true,
-                          locale: getDateLocale(language)
-                        })}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(source.created).toLocaleString()}
-                      </p>
+                      {(() => {
+                        const d = source.created ? new Date(source.created) : null
+                        const valid = d && !isNaN(d.getTime())
+                        return valid ? (
+                          <>
+                            <p className="text-sm">
+                              {formatDistanceToNow(d, { addSuffix: true, locale: getDateLocale(language) })}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{d.toLocaleString()}</p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">—</p>
+                        )
+                      })()}
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">{t('common.updated_label')}</p>
-                      <p className="text-sm">
-                        {formatDistanceToNow(new Date(source.updated), {
-                          addSuffix: true,
-                          locale: getDateLocale(language)
-                        })}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(source.updated).toLocaleString()}
-                      </p>
+                      {(() => {
+                        const d = source.updated ? new Date(source.updated) : null
+                        const valid = d && !isNaN(d.getTime())
+                        return valid ? (
+                          <>
+                            <p className="text-sm">
+                              {formatDistanceToNow(d, { addSuffix: true, locale: getDateLocale(language) })}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{d.toLocaleString()}</p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">—</p>
+                        )
+                      })()}
                     </div>
                   </div>
                 </div>

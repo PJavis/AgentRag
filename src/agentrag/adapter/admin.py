@@ -64,13 +64,22 @@ _ADMIN_HTML = """<!DOCTYPE html>
   .badge.green { background: #16a34a; }
   .conv-title { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #f1f5f9; }
   .messages { margin-bottom: 1.5rem; }
-  .msg { padding: .6rem .8rem; border-radius: .4rem; margin-bottom: .4rem; font-size: .85rem; }
+  .msg { padding: .6rem .8rem; border-radius: .4rem; margin-bottom: .4rem; font-size: .85rem;
+         white-space: pre-wrap; word-break: break-word; }
   .msg.user { background: #1e3a5f; }
   .msg.assistant { background: #1e293b; border: 1px solid #334155; }
-  .msg-role { font-size: .7rem; color: #64748b; margin-bottom: .2rem; }
+  .msg-role { font-size: .7rem; color: #64748b; margin-bottom: .2rem; text-transform: uppercase; letter-spacing: .05em; }
   .section-title { font-size: .8rem; font-weight: 600; color: #64748b;
                    text-transform: uppercase; letter-spacing: .05em;
                    margin: 1.5rem 0 .6rem; }
+  /* Per-turn grouping: question → trace → answer stacked, divider between turns */
+  .turn { margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 2px dashed #334155; }
+  .turn:last-child { border-bottom: none; }
+  .turn-header { font-size: .7rem; font-weight: 700; color: #64748b;
+                 text-transform: uppercase; letter-spacing: .08em;
+                 margin-bottom: .6rem; padding-bottom: .3rem; border-bottom: 1px solid #1e293b; }
+  .trace-block { background: #0b1220; border: 1px solid #1e293b; border-radius: .5rem;
+                 padding: 1rem; margin: .6rem 0; }
   #token-input { background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
                  padding: .4rem .6rem; border-radius: .3rem; font-size: .8rem;
                  width: 200px; }
@@ -139,29 +148,33 @@ async function loadTrace(convId, el) {
 }
 
 function renderTrace(el, data) {
-  const msgs = data.messages || [];
-  const traces = data.tool_traces || [];
+  // Backward compat: fall back to messages + tool_traces when `turns` absent.
+  const turns = data.turns || deriveTurns(data.messages || [], data.tool_traces || []);
 
   let html = `<div class="conv-title">${esc(data.title || 'Untitled conversation')}</div>`;
 
-  // Messages
-  html += `<div class="section-title">Conversation</div><div class="messages">`;
-  for (const m of msgs) {
-    html += `<div class="msg ${m.role}"><div class="msg-role">${m.role}</div>${esc(m.content)}</div>`;
+  if (!turns.length) {
+    html += `<div class="empty" style="padding:1rem">No turns to display.</div>`;
+    el.innerHTML = html;
+    return;
   }
-  html += `</div>`;
 
-  // Reasoning trace per assistant message
-  if (traces.length) {
-    html += `<div class="section-title">Agent Reasoning Trace</div>`;
-    traces.forEach((trace, ti) => {
-      html += `<div style="margin-bottom:1.5rem">
-        <div style="font-size:.75rem;color:#64748b;margin-bottom:.5rem">Turn ${ti+1}</div>`;
+  turns.forEach((turn, ti) => {
+    html += `<div class="turn">`;
+    html += `<div class="turn-header">Turn ${ti+1}</div>`;
 
-      // Flow diagram
+    // 1. Question
+    if (turn.question) {
+      html += `<div class="msg user"><div class="msg-role">user</div>${esc(turn.question)}</div>`;
+    }
+
+    // 2. Trace (flow + step details)
+    const trace = turn.trace || [];
+    if (trace.length) {
+      html += `<div class="trace-block">`;
       html += `<div class="flow">`;
       html += `<div class="flow-node"><span class="badge">START</span> User question received</div>`;
-      (trace || []).forEach(step => {
+      trace.forEach(step => {
         html += `<div class="flow-node tool">
           <span class="badge">${esc(step.tool_name || 'step')}</span>${esc(step.tool_input?.query || step.tool_name || '')}
         </div>`;
@@ -169,8 +182,7 @@ function renderTrace(el, data) {
       html += `<div class="flow-node answer"><span class="badge green">ANSWER</span> Response synthesized</div>`;
       html += `</div>`;
 
-      // Step details
-      (trace || []).forEach((step, si) => {
+      trace.forEach((step, si) => {
         const dur = step.duration_ms ? ` · ${Math.round(step.duration_ms)}ms` : '';
         html += `<div class="step">
           <div class="step-header">
@@ -187,12 +199,41 @@ function renderTrace(el, data) {
         </div>`;
       });
       html += `</div>`;
-    });
-  } else {
-    html += `<div class="empty" style="padding:1rem">No reasoning trace available for this conversation.</div>`;
-  }
+    }
+
+    // 3. Answer
+    if (turn.answer != null) {
+      html += `<div class="msg assistant"><div class="msg-role">assistant</div>${esc(turn.answer)}</div>`;
+    } else if (turn.question) {
+      html += `<div class="empty" style="padding:.6rem">(no assistant response yet)</div>`;
+    }
+
+    html += `</div>`;
+  });
 
   el.innerHTML = html;
+}
+
+function deriveTurns(msgs, traces) {
+  // Legacy backend → reconstruct turns client-side.
+  const turns = [];
+  let pendingUser = null;
+  let traceIdx = 0;
+  for (const m of msgs) {
+    if (m.role === 'user') {
+      if (pendingUser) turns.push({question: pendingUser.content, trace: [], answer: null});
+      pendingUser = m;
+    } else if (m.role === 'assistant') {
+      turns.push({
+        question: pendingUser ? pendingUser.content : null,
+        trace: traces[traceIdx++] || [],
+        answer: m.content,
+      });
+      pendingUser = null;
+    }
+  }
+  if (pendingUser) turns.push({question: pendingUser.content, trace: [], answer: null});
+  return turns;
 }
 
 function esc(s) {
@@ -239,11 +280,31 @@ async def get_conversation_trace(conversation_id: str, request: Request):
         raise HTTPException(404, "Conversation not found")
 
     msgs = await store.list_messages(conversation_id, limit=1000)
-    tool_traces = [
-        m["tool_trace"]
-        for m in msgs
-        if m.get("role") == "assistant" and m.get("tool_trace")
-    ]
+
+    # Group msgs into turns: each assistant msg closes a turn, paired with the
+    # most recent user msg + its own tool_trace. System / tool msgs absorbed
+    # into the next turn as preamble. Orphans (leading assistant or trailing
+    # user) still rendered.
+    turns: list[dict] = []
+    pending_user: dict | None = None
+    for m in msgs:
+        role = m.get("role")
+        if role == "user":
+            # If two user msgs in a row, flush previous as orphan turn.
+            if pending_user is not None:
+                turns.append({"question": pending_user["content"], "trace": [], "answer": None})
+            pending_user = m
+        elif role == "assistant":
+            turns.append({
+                "question": pending_user["content"] if pending_user else None,
+                "trace": m.get("tool_trace") or [],
+                "answer": m.get("content"),
+                "citations": m.get("citations") or [],
+            })
+            pending_user = None
+        # other roles (system/tool) ignored for grouping
+    if pending_user is not None:
+        turns.append({"question": pending_user["content"], "trace": [], "answer": None})
 
     return {
         "id": conversation_id,
@@ -252,5 +313,6 @@ async def get_conversation_trace(conversation_id: str, request: Request):
             {"role": m["role"], "content": m["content"]}
             for m in msgs
         ],
-        "tool_traces": tool_traces,
+        "tool_traces": [t["trace"] for t in turns if t["trace"]],
+        "turns": turns,
     }

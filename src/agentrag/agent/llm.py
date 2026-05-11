@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
 from src.agentrag.config import settings
+from src.agentrag.observability.cost import record_llm_call
 
 
 class AgentLLM:
@@ -25,6 +27,7 @@ class AgentLLM:
         system_prompt: str,
         user_prompt: str,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
         response = await self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
@@ -34,7 +37,13 @@ class AgentLLM:
                 {"role": "user", "content": user_prompt},
             ],
         )
+        latency_ms = (time.perf_counter() - started) * 1000
         content = response.choices[0].message.content or "{}"
+        record_llm_call(
+            task="json", model=self.model, latency_ms=latency_ms,
+            in_text=system_prompt + user_prompt, out_text=content,
+            usage=getattr(response, "usage", None),
+        )
         result = json.loads(content)
         # Some providers return a JSON array instead of an object; unwrap if needed
         if isinstance(result, list):
@@ -49,6 +58,7 @@ class AgentLLM:
         user_prompt: str,
     ) -> str:
         """Plain text response — no JSON enforcement. Used by transformations."""
+        started = time.perf_counter()
         response = await self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
@@ -57,7 +67,14 @@ class AgentLLM:
                 {"role": "user", "content": user_prompt},
             ],
         )
-        return response.choices[0].message.content or ""
+        latency_ms = (time.perf_counter() - started) * 1000
+        out = response.choices[0].message.content or ""
+        record_llm_call(
+            task="text", model=self.model, latency_ms=latency_ms,
+            in_text=system_prompt + user_prompt, out_text=out,
+            usage=getattr(response, "usage", None),
+        )
+        return out
 
     async def stream_text(
         self,
@@ -65,6 +82,7 @@ class AgentLLM:
         user_prompt: str,
     ) -> AsyncIterator[str]:
         """Stream raw text tokens từ LLM (không ép JSON)."""
+        started = time.perf_counter()
         stream = await self.client.chat.completions.create(
             model=self.model,
             temperature=self.temperature,
@@ -74,10 +92,17 @@ class AgentLLM:
                 {"role": "user", "content": user_prompt},
             ],
         )
+        buf: list[str] = []
         async for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
+                buf.append(delta)
                 yield delta
+        latency_ms = (time.perf_counter() - started) * 1000
+        record_llm_call(
+            task="stream", model=self.model, latency_ms=latency_ms,
+            in_text=system_prompt + user_prompt, out_text="".join(buf),
+        )
 
     def _resolve_backend(self) -> tuple[str, str | None, str]:
         provider = settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER

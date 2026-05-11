@@ -47,14 +47,29 @@ async def _segment_count(session, doc_id) -> int:
     return row.scalar() or 0
 
 
+import re as _re
+
+# Matches empty-src markdown image refs like ![alt]() that some PDF parsers emit
+# for figures they couldn't extract; we drop these from the rendered preview.
+_EMPTY_IMG_RE = _re.compile(r"!\[([^\]]*)\]\(\s*\)")
+
+
 async def _stitched_full_text(session, doc_id) -> str | None:
     """Concatenate all segment contents ordered by position for preview UI.
 
-    Cheap enough for typical docs (<100 chunks). Returns None if no segments.
+    Image-type segments (vision-described page bitmaps) are emitted as
+    `![alt](url)` markdown so the frontend renders the actual figure. Empty
+    `![]()` refs in text segments are stripped to avoid broken <img> elements.
     """
     rows = (
         await session.execute(
-            select(Segment.content, Segment.section_path, Segment.position)
+            select(
+                Segment.content,
+                Segment.section_path,
+                Segment.position,
+                Segment.segment_type,
+                Segment.extra_metadata,
+            )
             .where(Segment.document_id == doc_id)
             .order_by(Segment.position.asc())
         )
@@ -62,12 +77,22 @@ async def _stitched_full_text(session, doc_id) -> str | None:
     if not rows:
         return None
     parts: list[str] = []
-    for content, section_path, _pos in rows:
+    for content, section_path, _pos, segment_type, metadata in rows:
+        if segment_type == "image":
+            url = ""
+            if isinstance(metadata, dict):
+                url = metadata.get("image_url") or metadata.get("image_path") or ""
+            alt = (content or "image").splitlines()[0][:200]
+            if url:
+                parts.append(f"![{alt}]({url})")
+            else:
+                parts.append(f"_[image]_ {content or ''}")
+            continue
         if section_path:
             parts.append(f"## {section_path}")
         if content:
-            parts.append(content)
-    return "\n\n".join(parts) if parts else None
+            parts.append(_EMPTY_IMG_RE.sub("", content))
+    return "\n\n".join(p for p in parts if p) if parts else None
 
 
 async def _doc_to_source(
@@ -89,7 +114,7 @@ async def _doc_to_source(
         embedded=seg_count > 0,
         embedded_chunks=seg_count,
         created=doc.created_at.isoformat() if doc.created_at else "",
-        updated=doc.updated_at.isoformat() if doc.updated_at else "",
+        updated=(doc.updated_at or doc.created_at).isoformat() if (doc.updated_at or doc.created_at) else "",
         status=status,
         notebooks=notebook_ids,
     ).model_dump()

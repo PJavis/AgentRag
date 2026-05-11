@@ -148,6 +148,36 @@ class Settings(BaseSettings):
     # while the job runs (instead of one big bulk commit at the end).
     VISION_FLUSH_BATCH_SIZE: int = 10
 
+    # Token-aware context budget. When >0, replaces AGENT_MAX_CONTEXT_CHUNKS
+    # as the trim signal: keep adding ranked chunks until total tokens exceed
+    # this budget. Keeps chunk count flexible (short chunks → more, long → fewer).
+    AGENT_MAX_CONTEXT_TOKENS: int = 6000
+    # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
+    # at the start AND end of the prompt, weaker middle. Set false for plain
+    # rank-order packing.
+    AGENT_LOST_IN_MIDDLE_REORDER: bool = True
+
+    # Self-critique pass: after the agent drafts an answer, run a second LLM
+    # call that checks the draft against the retrieved context and flags
+    # hallucinations / sycophantic agreement / unsupported claims.
+    # Costs +1 LLM call per turn. Disable for ultra-low-cost mode.
+    AGENT_SELF_CRITIQUE_ENABLED: bool = False
+    # Only critique when retrieval looks weak (top hit RRF score below threshold).
+    # Higher → critique more often. Set to 1.0 to always critique.
+    AGENT_SELF_CRITIQUE_RRF_THRESHOLD: float = 0.05
+
+    # Plan-then-execute: before retrieval, decompose complex / multi-hop
+    # questions into a list of sub-queries, retrieve evidence for each in
+    # parallel, then answer once with consolidated context. Trades 1 extra
+    # planner-LLM call for fewer reactive decide-loop iterations. Skip when
+    # the question is short / single-clause (no benefit).
+    AGENT_PLAN_THEN_EXECUTE_ENABLED: bool = True
+    # Minimum char length before plan-then-execute kicks in. Below this, plain
+    # reactive loop is used (greetings, lookups don't need a planner pass).
+    AGENT_PLAN_TRIGGER_MIN_CHARS: int = 60
+    # Max sub-queries per plan. Cap to avoid runaway fan-out under bad planner.
+    AGENT_PLAN_MAX_SUBQUERIES: int = 4
+
     # Excel ingest strategy
     EXCEL_INGEST_MODE: Literal["markdown", "sql"] = "markdown"
     # markdown: sheet → markdown table → chunk như text thường

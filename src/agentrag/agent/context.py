@@ -5,11 +5,38 @@ from typing import Any
 from src.agentrag.config import settings
 
 
+def _estimate_tokens(text: str) -> int:
+    """Cheap char-density token estimate; matches observability/cost.py."""
+    if not text:
+        return 0
+    non_ascii = sum(1 for c in text if ord(c) > 127)
+    return int((len(text) - non_ascii) / 4 + non_ascii * 0.55) + 1
+
+
+def _lost_in_middle_reorder(items: list[Any]) -> list[Any]:
+    """Reorder a ranked list so highest-ranked entries sit at the start and
+    the end of the sequence (weak in the middle). Empirically improves LLM
+    attention on long contexts (Liu et al., "Lost in the Middle", 2023).
+
+    With ranks [r1, r2, r3, r4, r5] (best→worst) the output is
+    [r1, r3, r5, r4, r2] — best first, second-best last, etc.
+    """
+    if len(items) <= 2:
+        return list(items)
+    front: list[Any] = []
+    back: list[Any] = []
+    for i, item in enumerate(items):
+        (front if i % 2 == 0 else back).append(item)
+    return front + list(reversed(back))
+
+
 class ContextAssembler:
     def assemble(self, question: str, tool_results: list[dict[str, Any]]) -> dict[str, Any]:
         retrieved = self._stage_retrieve(tool_results)
         deduped = self._stage_dedupe(retrieved)
         ranked = self._stage_rank_trim(question, deduped)
+        if settings.AGENT_LOST_IN_MIDDLE_REORDER and len(ranked) > 2:
+            ranked = _lost_in_middle_reorder(ranked)
         packed = self._stage_citation_pack(ranked)
         return {
             "retrieved": retrieved,
@@ -75,7 +102,25 @@ class ContextAssembler:
             key=rank_score,
             reverse=True,
         )
-        selected = ranked[: settings.AGENT_MAX_CONTEXT_CHUNKS]
+
+        # Token-budget trim — keep chunks until the accumulated content tokens
+        # exceed AGENT_MAX_CONTEXT_TOKENS. Falls back to chunk-count cap when
+        # budget is 0 (preserves old behaviour).
+        token_budget = settings.AGENT_MAX_CONTEXT_TOKENS
+        if token_budget > 0:
+            selected: list[dict[str, Any]] = []
+            used = 0
+            for item in ranked:
+                t = _estimate_tokens(item.get("content") or "")
+                if selected and used + t > token_budget:
+                    break
+                selected.append(item)
+                used += t
+            # Always keep at least 1 chunk if we have any candidates.
+            if not selected and ranked:
+                selected = ranked[:1]
+        else:
+            selected = ranked[: settings.AGENT_MAX_CONTEXT_CHUNKS]
 
         _structmem_sources = {"graph", "structmem", "synthesis"}
         has_graph_candidate = any(item.get("source") in _structmem_sources for item in ranked)

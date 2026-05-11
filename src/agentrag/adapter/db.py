@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Table, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.sql import func
 
@@ -90,6 +91,26 @@ class AdapterSourceInsight(Base):
     )
     insight_type = Column(String(64), nullable=False)
     content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AdapterChatFeedback(Base):
+    """User thumbs-up/down on assistant turns. Builds dataset for later
+    prompt tuning / DPO. One row per (turn_id, user_id) — re-rating updates."""
+    __tablename__ = "adapter_chat_feedback"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(128), nullable=False, index=True)
+    conversation_id = Column(String(128), nullable=True, index=True)
+    turn_id = Column(String(128), nullable=False, index=True)
+    rating = Column(Integer, nullable=False)  # +1 = up, -1 = down
+    comment = Column(Text, nullable=True)
+    question = Column(Text, nullable=True)
+    answer = Column(Text, nullable=True)
+    reasoning_path = Column(String(32), nullable=True)
+    extra_metadata = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

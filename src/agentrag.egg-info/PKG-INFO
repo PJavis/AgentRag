@@ -1,3 +1,39 @@
+Metadata-Version: 2.4
+Name: agentrag
+Version: 0.1.0
+Summary: AgentRag — RAG agent with MCP server and CLI
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi[standard]>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.30.0
+Requires-Dist: gunicorn>=23.0.0
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: sqlalchemy[asyncio]>=2.0.0
+Requires-Dist: alembic>=1.13.0
+Requires-Dist: psycopg[binary]>=3.1.0
+Requires-Dist: redis>=5.0.0
+Requires-Dist: arq>=0.26.0
+Requires-Dist: cachetools>=5.3.0
+Requires-Dist: elasticsearch==8.15.0
+Requires-Dist: tiktoken>=0.7.0
+Requires-Dist: openai>=1.30.0
+Requires-Dist: huggingface-hub>=0.23.0
+Requires-Dist: sentence-transformers>=3.0.0
+Requires-Dist: markitdown[all]>=0.1.0
+Requires-Dist: pymupdf>=1.24.0
+Requires-Dist: pillow>=10.0.0
+Requires-Dist: openpyxl>=3.1.0
+Requires-Dist: xlrd>=2.0.1
+Requires-Dist: aiohttp>=3.9.0
+Requires-Dist: pydantic-settings>=2.2.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: mcp>=1.3.0
+Requires-Dist: typer[all]>=0.12.0
+Requires-Dist: pyjwt>=2.8.0
+Requires-Dist: bcrypt>=4.1.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: slowapi>=0.1.9
+
 # AgentRag
 
 Nền tảng RAG (Retrieval-Augmented Generation) cho học liệu, đặc biệt phục vụ sinh viên y khoa. Hai luồng suy luận song song, bộ nhớ phân cấp, CLI tương tác, và UI tương thích open-notebook.
@@ -163,9 +199,7 @@ UI mở tại http://localhost:3000, API tại http://localhost:8000.
 |---|---|
 | `make docker-up` | Start postgres + elasticsearch + redis (default services) |
 | `make docker-down` | Stop infra services |
-| `make docker-up-llm` | + Ollama container (GPU profile), pull every model referenced in `.env` (`EMBEDDING_MODEL`, `EXTRACTION_MODEL`, `AGENT_MODEL`, `RETRIEVAL_RERANK_MODEL`, `VISION_MODEL` when provider=ollama, plus `OLLAMA_EXTRA_MODELS`) |
-| `make ollama-pull` | Pull models from `.env` without restarting compose |
-| `make ollama-pull-dry` | Preview which models would be pulled |
+| `make docker-up-llm` | + Ollama container (GPU profile) và pull `qwen2.5:14b`, `nomic-embed-text`, reranker |
 | `make docker-up-app` | Build + start full stack trong docker (api + worker + frontend) |
 | `make docker-up-edge` | + Nginx reverse proxy tại port 80 |
 | `make docker-down-app` | Stop tất cả app/edge services |
@@ -392,30 +426,6 @@ LLM_ROUTING_ENABLED=true
 LLM_TASK_MODEL_MAP={"classify":"gpt-4o-mini","decide":"gpt-4o-mini","answer":"gpt-4o"}
 ```
 
-### Tier 5 — 6 GB VRAM (laptop) + Gemini cloud
-
-Embedding stays local on Ollama (`nomic-embed-text` ≈ 300 MB VRAM). Everything
-else routes to Gemini. Tested on Windows/WSL2 with 6 GB GPU.
-
-```env
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
-EXTRACTION_PROVIDER=gemini
-EXTRACTION_MODEL=gemini-2.5-flash
-AGENT_PROVIDER=gemini
-AGENT_MODEL=gemini-2.5-pro
-VISION_PROVIDER=gemini
-VISION_MODEL=gemini-2.5-flash
-RETRIEVAL_RERANK_ENABLED=true
-RETRIEVAL_RERANK_PROVIDER=gemini
-RETRIEVAL_RERANK_MODEL=gemini-2.5-flash-lite
-LLM_ROUTING_ENABLED=true
-LLM_TASK_MODEL_MAP={"classify":"gemini-2.5-flash-lite","decide":"gemini-2.5-flash-lite","schema_discovery":"gemini-2.5-flash","sql_compile":"gemini-2.5-flash","synthesize":"gemini-2.5-pro","answer":"gemini-2.5-pro"}
-LLM_COST_TRACKING_ENABLED=true
-# Free Gemini tier: 10 RPM for 2.5-flash; bump to 1000 on paid tier.
-VISION_MAX_RPM=10
-```
-
 ### 5.1 API Keys
 
 ```env
@@ -470,49 +480,15 @@ RETRIEVAL_RERANK_ENABLED=false
 RETRIEVAL_RERANK_BACKEND=llm_chat    # llm_chat | local_cross_encoder
 ```
 
-### 5.6 LLM Routing & Cost Tracking
+### 5.6 LLM Routing
 
 ```env
 LLM_ROUTING_ENABLED=false
 LLM_TASK_MODEL_MAP={}
-LLM_COST_TRACKING_ENABLED=false     # flip true → GET /on/api/metrics/cost
+LLM_COST_TRACKING_ENABLED=false
 ```
 
 Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`
-
-When cost tracking is on, every LLM call is logged in a process-local ring
-buffer (last 5000 calls) with estimated USD via public Gemini / OpenAI pricing.
-
-- `GET /on/api/metrics/cost` — per-task + per-model breakdown (`calls`, `in_tokens`, `out_tokens`, `usd`, `avg_latency_ms`)
-- `POST /on/api/metrics/cost/reset` — clear ledger
-
-### 5.6b Agent Harness (Context + Plan + Critique)
-
-```env
-# Token-aware context budget (replaces chunk-count cap when >0)
-AGENT_MAX_CONTEXT_TOKENS=6000
-# Lost-in-the-middle reorder: best chunks at start + end of packed context
-AGENT_LOST_IN_MIDDLE_REORDER=true
-
-# Self-critique 2nd pass — verifies draft against context. Fires only when
-# retrieval is thin (top RRF < threshold). +1 LLM call/turn.
-AGENT_SELF_CRITIQUE_ENABLED=false
-AGENT_SELF_CRITIQUE_RRF_THRESHOLD=0.05
-
-# Plan-then-execute: planner decomposes multi-hop questions into sub-queries,
-# parallel retrieval, then single answer pass. Skipped for short questions.
-AGENT_PLAN_THEN_EXECUTE_ENABLED=true
-AGENT_PLAN_TRIGGER_MIN_CHARS=60
-AGENT_PLAN_MAX_SUBQUERIES=4
-```
-
-**Chit-chat fast-path**: short messages with greeting/thanks tokens
-(`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...) skip retrieval and
-answer via the cheap routing model. Rule-based — no env knob.
-
-**User feedback**: every assistant message in the UI has thumbs-up/down
-buttons. Ratings persisted to `adapter_chat_feedback` table for later
-prompt tuning / preference-pair dataset.
 
 ### 5.7 Auto-scaler
 
@@ -535,20 +511,7 @@ VISION_MODEL=gpt-4o              # gpt-4o | gemini-1.5-flash | llava:13b
 VISION_BASE_URL=                 # override endpoint (cho Ollama)
 IMAGE_STORAGE_DIR=data/images
 IMAGE_MIN_SIZE_BYTES=5000        # bỏ qua icon nhỏ
-
-# Vision worker concurrency + RPM cap (used by vision_extract ARQ job).
-# Free Gemini tier (2.5-flash): 10 RPM. Paid: ~1000.
-# Ollama (llava): keep concurrency=1 to avoid GPU thrashing.
-VISION_MAX_CONCURRENCY=4
-VISION_MAX_RPM=10                # 0 = disable RPM cap
-VISION_PER_IMAGE_RETRIES=3
-VISION_FLUSH_BATCH_SIZE=10       # PG+ES commit every N described images (progress visibility)
 ```
-
-Image-heavy PDFs (e.g. 100-page scanned thesis) are processed by the
-`vision_extract` ARQ worker job. Describes each page with the vision LLM,
-embeds, then upserts segments to Postgres + Elasticsearch in batches —
-ES `docs.count` climbs every batch instead of one bulk write at the end.
 
 ### 5.9 Open-Notebook Adapter
 
@@ -632,17 +595,6 @@ curl -X POST http://127.0.0.1:8000/chat/stream \
   -d '{"question": "...", "conversation_id": "<uuid>"}' \
   --no-buffer
 ```
-
-### Adapter endpoints (`/on/api/*`)
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/on/api/metrics/cost` | Per-task + per-model LLM cost ledger summary |
-| `POST` | `/on/api/metrics/cost/reset` | Clear in-memory cost ledger |
-| `POST` | `/on/api/chat/feedback` | Upsert thumbs-up/down on assistant turn (body: `{turn_id, rating: +1\|-1, session_id?, comment?}`) |
-| `GET` | `/on/api/models/defaults` | Effective model defaults (`.env` + JSON overrides) |
-| `PUT` | `/on/api/models/defaults` | Persist defaults to `data/model_overrides.json` (live-applied) |
-| `GET` | `/on/api/images/{path}` | Static-serve extracted PDF images (no auth) |
 
 ### Conversation APIs
 
@@ -1251,12 +1203,9 @@ AgentRag/
     │   └── consolidation_jobs.py        # process_consolidation_job()
     │
     ├── worker/                          # ARQ background worker
-    │   ├── functions.py                 # graph_ingest, consolidate, chat_memory, vision_extract
+    │   ├── functions.py                 # graph_ingest, consolidate, chat_memory
     │   ├── pool.py                      # ARQ pool singleton (init/get/close)
     │   └── settings.py                  # WorkerSettings cho arq CLI
-    │
-    ├── observability/
-    │   └── cost.py                      # Process-global LLM cost ledger
     │
     ├── mcp/                             # Model Context Protocol server
     │   ├── app.py                       # FastMCP tools (search, structured_query)

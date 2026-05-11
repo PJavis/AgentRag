@@ -19,6 +19,7 @@ import { ModelSelector } from './ModelSelector'
 import { ContextIndicator } from '@/components/common/ContextIndicator'
 import { SessionManager } from '@/components/source/SessionManager'
 import { MessageActions } from '@/components/source/MessageActions'
+import { FeedbackButtons } from '@/components/source/FeedbackButtons'
 import { convertReferencesToCompactMarkdown, createCompactReferenceLinkComponent } from '@/lib/utils/source-references'
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { toast } from 'sonner'
@@ -202,10 +203,17 @@ export function ChatPanel({
                       )}
                     </div>
                     {message.type === 'ai' && (
-                      <MessageActions
-                        content={message.content}
-                        notebookId={notebookId}
-                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <MessageActions
+                          content={message.content}
+                          notebookId={notebookId}
+                        />
+                        <FeedbackButtons
+                          turnId={message.id}
+                          sessionId={currentSessionId ?? undefined}
+                          answer={message.content}
+                        />
+                      </div>
                     )}
                   </div>
                   {message.type === 'human' && (

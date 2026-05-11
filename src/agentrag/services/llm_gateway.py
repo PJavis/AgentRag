@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import time
 from typing import Any
 
@@ -9,6 +10,57 @@ from openai import AsyncOpenAI
 
 from src.agentrag.agent.llm import AgentLLM
 from src.agentrag.config import settings
+from src.agentrag.observability import cost as _cost
+
+log = logging.getLogger(__name__)
+
+# Gemini API pricing as of 2026-Q2, USD per 1M tokens (input / output).
+# Adjust when pricing changes. Unknown models default to flash pricing.
+_PRICE_PER_1M = {
+    "gemini-2.5-pro":          (1.25, 10.00),
+    "gemini-2.5-flash":        (0.075, 0.30),
+    "gemini-2.5-flash-lite":   (0.05, 0.20),
+    "gemini-2.0-flash":        (0.10, 0.40),
+    "gpt-4o":                  (2.50, 10.00),
+    "gpt-4o-mini":             (0.15, 0.60),
+}
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough char→token estimate. ~4 chars/token for English, ~2 for VN/CJK.
+    Avoids importing tiktoken (which we already use elsewhere) into the hot path.
+    """
+    if not text:
+        return 0
+    # Bias toward CJK density: count non-ASCII chars as ~0.5 tokens each.
+    non_ascii = sum(1 for c in text if ord(c) > 127)
+    ascii_chars = len(text) - non_ascii
+    return int(ascii_chars / 4 + non_ascii * 0.55) + 1
+
+
+def _price_for(model: str) -> tuple[float, float]:
+    if not model:
+        return _PRICE_PER_1M["gemini-2.5-flash"]
+    if model in _PRICE_PER_1M:
+        return _PRICE_PER_1M[model]
+    # Prefix match for variants like gemini-2.5-pro-preview.
+    for k, v in _PRICE_PER_1M.items():
+        if model.startswith(k):
+            return v
+    return _PRICE_PER_1M["gemini-2.5-flash"]
+
+
+def _relabel_last(model: str, generic_task: str, target_task: str) -> None:
+    """AgentLLM records calls with generic 'json'/'text'/'stream' task labels.
+    LLMGateway knows the real semantic task ('answer','decide',...). After
+    each call, rewrite the last matching ledger entry so dashboards roll up
+    per-task instead of per-method."""
+    from src.agentrag.observability.cost import _LEDGER, _LOCK
+    with _LOCK:
+        for entry in reversed(_LEDGER):
+            if entry["model"] == model and entry["task"] == generic_task:
+                entry["task"] = target_task
+                return
 
 
 class LLMGateway:
@@ -23,7 +75,6 @@ class LLMGateway:
     def __init__(self) -> None:
         self._default_client = AgentLLM()
         self._routed_clients: dict[str, AgentLLM] = {}   # task → AgentLLM instance
-        self._cost_log: list[dict[str, Any]] = []        # in-memory, Phase C v1
         self._vision_client: AsyncOpenAI | None = None
         self._vision_model: str | None = None
 
@@ -33,12 +84,13 @@ class LLMGateway:
         user_prompt: str,
         task: str = "general",
     ) -> tuple[dict[str, Any], float]:
+        """AgentLLM records the call internally; we just override the task label."""
         client = self._resolve_client(task)
         started = time.perf_counter()
         payload = await client.json_response(system_prompt, user_prompt)
         latency_ms = (time.perf_counter() - started) * 1000
-        if settings.LLM_COST_TRACKING_ENABLED:
-            self._record_cost(task, latency_ms)
+        # Relabel last entry from generic "json" → the task tag we know.
+        _relabel_last(client.model, "json", task)
         return payload, latency_ms
 
     async def text_response(
@@ -49,27 +101,12 @@ class LLMGateway:
     ) -> str:
         """Plain-text completion (no JSON enforcement)."""
         client = self._resolve_client(task)
-        started = time.perf_counter()
         text = await client.text_response(system_prompt, user_prompt)
-        latency_ms = (time.perf_counter() - started) * 1000
-        if settings.LLM_COST_TRACKING_ENABLED:
-            self._record_cost(task, latency_ms)
+        _relabel_last(client.model, "text", task)
         return text
 
     def cost_summary(self) -> dict[str, Any]:
-        """Aggregate cost_log theo task. Expose qua GET /metrics."""
-        summary: dict[str, dict[str, Any]] = {}
-        for entry in self._cost_log:
-            t = entry["task"]
-            if t not in summary:
-                summary[t] = {"calls": 0, "total_latency_ms": 0.0, "avg_latency_ms": 0.0}
-            summary[t]["calls"] += 1
-            summary[t]["total_latency_ms"] += entry["latency_ms"]
-        for t, stats in summary.items():
-            if stats["calls"] > 0:
-                stats["avg_latency_ms"] = round(stats["total_latency_ms"] / stats["calls"], 2)
-            stats["total_latency_ms"] = round(stats["total_latency_ms"], 2)
-        return {"tasks": summary, "total_calls": len(self._cost_log)}
+        return _cost.cost_summary()
 
     # ── Routing helpers ───────────────────────────────────────────────────────
 
@@ -135,8 +172,15 @@ class LLMGateway:
         )
         latency_ms = (time.perf_counter() - started) * 1000
         text = (response.choices[0].message.content or "").strip()
-        if settings.LLM_COST_TRACKING_ENABLED:
-            self._record_cost(task, latency_ms)
+        # image bytes also bill tokens; pad in_text proxy by image size.
+        _cost.record_llm_call(
+            task=task,
+            model=model,
+            latency_ms=latency_ms,
+            in_text=system_prompt + text_prompt + ("X" * (len(image_bytes) // 100)),
+            out_text=text,
+            usage=getattr(response, "usage", None),
+        )
         return text, latency_ms
 
     def _get_vision_client(self) -> tuple[AsyncOpenAI, str]:
@@ -175,9 +219,3 @@ class LLMGateway:
         self._vision_model = model
         return client, model
 
-    def _record_cost(self, task: str, latency_ms: float) -> None:
-        self._cost_log.append({
-            "task": task,
-            "latency_ms": round(latency_ms, 2),
-            "timestamp": time.time(),
-        })

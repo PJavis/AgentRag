@@ -11,7 +11,7 @@ Quản lý background jobs qua **ARQ** (Async Redis Queue). Jobs được persis
 | File | Mô tả |
 |---|---|
 | `pool.py` | ARQ pool singleton — `init_pool`, `get_pool`, `close_pool` |
-| `functions.py` | 3 ARQ task functions: `graph_ingest`, `consolidate`, `chat_memory` |
+| `functions.py` | 4 ARQ task functions: `graph_ingest`, `consolidate`, `chat_memory`, `vision_extract` |
 | `settings.py` | `WorkerSettings` — config cho `arq` CLI |
 
 ---
@@ -81,6 +81,38 @@ await arq_pool.enqueue_job(
 
 ---
 
+### `vision_extract`
+
+Describe page-image bitmaps extracted from PDFs via a vision LLM, then upsert
+image segments to Postgres + Elasticsearch.
+
+**Enqueue từ:** `ingestion/pipeline.py` (sau text-segment indexing) when
+`VISION_PROVIDER` is set and `VISION_INGEST_MODE=async` (default).
+
+```python
+await get_pool().enqueue_job(
+    "vision_extract",
+    document_id=str(doc_id),
+    title="Document Title",
+    image_records=[{"page": 1, "path": "data/images/title/p1_0.jpg",
+                    "url": "/images/title/p1_0.jpg", "mime": "image/jpeg"}],
+)
+```
+
+**Processing:** `graph.vision_jobs.process_vision_job()`
+- `asyncio.gather` describes images in parallel, bounded by `VISION_MAX_CONCURRENCY`
+- `_RpmBucket` 60s sliding-window token bucket caps describe calls at `VISION_MAX_RPM`
+- Per-image transient retry (429 / 5xx / timeout) up to `VISION_PER_IMAGE_RETRIES`
+- Flushes batches of `VISION_FLUSH_BATCH_SIZE` to PG + ES so ES `docs.count`
+  climbs while the job runs (instead of one bulk write at the end)
+- Returns `{described, indexed}` count
+
+For image-heavy PDFs (e.g. 100-page scanned thesis), free Gemini 2.5-flash
+(10 RPM) takes ~10 min for 100 images. Paid tier (`VISION_MAX_RPM=1000`)
+finishes in seconds.
+
+---
+
 ### `chat_memory`
 
 Extract dual-perspective memory entries từ một chat turn.
@@ -125,10 +157,10 @@ await close_pool()
 
 ```python
 class WorkerSettings:
-    functions = [graph_ingest, consolidate, chat_memory]
+    functions = [graph_ingest, consolidate, chat_memory, vision_extract]
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
-    max_jobs = settings.STRUCTMEM_MAX_CONCURRENCY  # concurrent jobs per worker
-    job_timeout = settings.STRUCTMEM_CHUNK_TIMEOUT_SECONDS
+    max_jobs = settings.STRUCTMEM_WORKER_MAX_JOBS
+    job_timeout = settings.STRUCTMEM_JOB_TIMEOUT_SECONDS
     keep_result = 3600   # giữ job result 1 giờ
     max_tries = 2        # retry 1 lần khi fail
 ```
@@ -153,7 +185,13 @@ class WorkerSettings:
 | Key | Default | Mô tả |
 |---|---|---|
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection (dùng chung cho cache + ARQ queue) |
-| `STRUCTMEM_MAX_CONCURRENCY` | `1` | Max concurrent jobs per worker process |
-| `STRUCTMEM_CHUNK_TIMEOUT_SECONDS` | `300` | Job timeout (giây) |
+| `STRUCTMEM_MAX_CONCURRENCY` | `1` | Max concurrent extraction chunks within a single graph_ingest job |
+| `STRUCTMEM_WORKER_MAX_JOBS` | `1` | Max concurrent document jobs per worker process |
+| `STRUCTMEM_CHUNK_TIMEOUT_SECONDS` | `300` | Per-chunk timeout (giây) |
+| `STRUCTMEM_JOB_TIMEOUT_SECONDS` | `3600` | Per-job timeout (giây) |
+| `VISION_MAX_CONCURRENCY` | `4` | Parallel describe calls in vision_extract |
+| `VISION_MAX_RPM` | `10` | Token-bucket RPM cap (0 = disable) |
+| `VISION_PER_IMAGE_RETRIES` | `3` | Per-image transient retry budget |
+| `VISION_FLUSH_BATCH_SIZE` | `10` | Commit described images to PG+ES every N |
 | `CHAT_STRUCTMEM_ENABLED` | `false` | Bật enqueue `chat_memory` jobs |
 | `CHAT_MEMORY_CONSOLIDATION_THRESHOLD` | `10` | Số turns trước khi consolidate |

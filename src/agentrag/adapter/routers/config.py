@@ -44,3 +44,17 @@ async def get_languages():
 @router.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@router.get("/metrics/cost")
+async def metrics_cost():
+    """Per-task + per-model LLM cost summary (in-memory, cleared on restart)."""
+    from src.agentrag.observability.cost import cost_summary
+    return cost_summary()
+
+
+@router.post("/metrics/cost/reset")
+async def metrics_cost_reset():
+    from src.agentrag.observability.cost import reset_ledger
+    reset_ledger()
+    return {"ok": True}

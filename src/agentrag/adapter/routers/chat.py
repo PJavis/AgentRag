@@ -477,4 +477,55 @@ async def _direct_rag(
     return payload
 
 
+# ── Feedback (thumbs up/down) ─────────────────────────────────────────────────
+
+
+@notebook_router.post("/feedback")
+async def submit_chat_feedback(body: dict, request: Request):
+    """Upsert thumbs-up/down on an assistant turn. Used later for prompt
+    tuning / preference-pair datasets.
+
+    Body: { turn_id, rating: +1|-1, session_id?, comment?, question?, answer?, reasoning_path? }
+    """
+    from src.agentrag.adapter.auth import get_identity
+    from src.agentrag.adapter.db import AdapterChatFeedback
+
+    turn_id = (body or {}).get("turn_id")
+    rating = (body or {}).get("rating")
+    if not turn_id or rating not in (1, -1, "1", "-1"):
+        raise HTTPException(400, "turn_id + rating (+1 or -1) required")
+    rating_int = int(rating)
+
+    identity = get_identity(request)
+    user_id = identity.user_id if identity else "anonymous"
+
+    async with AsyncSessionLocal() as session:
+        # Upsert: find existing row for (user, turn) → update; else insert.
+        existing = (
+            await session.execute(
+                select(AdapterChatFeedback).where(
+                    AdapterChatFeedback.user_id == user_id,
+                    AdapterChatFeedback.turn_id == str(turn_id),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing:
+            existing.rating = rating_int
+            if "comment" in body:
+                existing.comment = body.get("comment") or None
+        else:
+            session.add(AdapterChatFeedback(
+                user_id=user_id,
+                conversation_id=body.get("session_id"),
+                turn_id=str(turn_id),
+                rating=rating_int,
+                comment=body.get("comment") or None,
+                question=body.get("question"),
+                answer=body.get("answer"),
+                reasoning_path=body.get("reasoning_path"),
+            ))
+        await session.commit()
+    return {"ok": True, "rating": rating_int}
+
+
 router.include_router(notebook_router)

@@ -22,11 +22,17 @@ Vòng lặp suy luận ngữ nghĩa chính. Nhận câu hỏi, tự chọn tool 
 ```
 question
   │
+  ├─[chit-chat heuristic]──▶ _is_chitchat()  → reply via cheap routing model, skip retrieval
+  │
   ├─[STRUCTURED_REASONING_ENABLED]──▶ QueryIntentClassifier.classify()
   │         │  intent == "structured"
   │         └──▶ StructuredReasoningPipeline.run() ──▶ return kết quả SQL
   │
-  ├──▶ KnowledgeService.bootstrap_search()       ← warm retrieval bước đầu
+  ├─[AGENT_PLAN_THEN_EXECUTE_ENABLED, len≥trigger]──▶ _plan_subqueries()
+  │         │ multi_step=true
+  │         └──▶ asyncio.gather(bootstrap_search(sq) for sq in subqueries)
+  │
+  ├──▶ KnowledgeService.bootstrap_search()       ← bootstrap on original question
   │
   └──▶ for step in range(AGENT_MAX_STEPS - 1):
           _decide()                               ← LLM chọn tool tiếp theo
@@ -34,8 +40,9 @@ question
           SecurityService.filter_tool_results()   ← lọc theo document_title
        │
        ▼
-       ContextAssemblyService.assemble()          ← dedup + rank + trim
+       ContextAssemblyService.assemble()          ← dedup + rank + token-budget trim + LiM reorder
        _answer()                                  ← LLM sinh answer + citations
+      [AGENT_SELF_CRITIQUE_ENABLED, thin retrieval] ──▶ _self_critique() → maybe revise
        _ground_citations()                        ← validate citations vs context
 ```
 
@@ -121,8 +128,52 @@ Wrapper `AsyncOpenAI`. Tự resolve backend từ `AGENT_PROVIDER` / `EXTRACTION_
 |---|---|---|
 | `AGENT_MAX_STEPS` | `4` | Số bước tool tối đa mỗi request |
 | `AGENT_TOOL_TOP_K` | `5` | top_k mặc định khi LLM không chỉ định |
-| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Số chunks tối đa trong packed context |
+| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy chunk-count cap (used when token budget = 0) |
+| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware budget for packed context |
+| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Reorder packed context: best at start + end |
+| `AGENT_SELF_CRITIQUE_ENABLED` | `false` | 2nd LLM call verifies draft against context |
+| `AGENT_SELF_CRITIQUE_RRF_THRESHOLD` | `0.05` | Critique only when top RRF below threshold |
+| `AGENT_PLAN_THEN_EXECUTE_ENABLED` | `true` | Planner decomposes multi-hop → parallel sub-retrieval |
+| `AGENT_PLAN_TRIGGER_MIN_CHARS` | `60` | Skip planner for shorter questions |
+| `AGENT_PLAN_MAX_SUBQUERIES` | `4` | Cap on sub-queries per plan |
 | `STRUCTURED_REASONING_ENABLED` | `true` | Bật/tắt nhánh SQL reasoning |
 | `AGENT_PROVIDER` | (fallback EXTRACTION_PROVIDER) | LLM provider cho agent |
 | `AGENT_MODEL` | (fallback EXTRACTION_MODEL) | LLM model cho agent |
 | `AGENT_TEMPERATURE` | (fallback EXTRACTION_TEMPERATURE) | Temperature cho agent calls |
+
+## Chit-chat fast-path
+
+`_is_chitchat()` is a rule-based detector — short messages (≤60 chars) containing
+greeting/thanks tokens (`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...)
+**and** no information-request signal (`?`, `tại sao`, `what`, `tóm tắt`, ...)
+get a brief warm reply via the `classify` task client (cheapest routing model).
+No retrieval, no citations. `reasoning_path: "chitchat"` in the response.
+
+## Self-critique pass
+
+When `AGENT_SELF_CRITIQUE_ENABLED=true` and top retrieval RRF score is below
+`AGENT_SELF_CRITIQUE_RRF_THRESHOLD`, the draft answer is sent back to the
+`decide` task client for audit. Returns strict JSON:
+
+```json
+{"verdict": "ok|unsupported|sycophantic", "issues": [...], "revised": "..."}
+```
+
+When verdict is `unsupported` / `sycophantic`, the revised answer replaces the
+draft before being returned to the user. The `critique` field in the chat
+response surfaces the verdict for debugging.
+
+## Plan-then-execute
+
+For questions ≥ `AGENT_PLAN_TRIGGER_MIN_CHARS` chars, the agent calls a
+planner LLM first:
+
+```json
+{"multi_step": true, "subqueries": ["...", "...", "..."]}
+```
+
+Each sub-query is dispatched to `KnowledgeService.bootstrap_search` in
+parallel via `asyncio.gather`. The original-question bootstrap still runs
+afterwards as a safety net. The reactive `_decide` loop then usually
+short-circuits because evidence is pre-collected. Result includes
+`plan_subqueries: [...]` and `timings_ms.plan`.

@@ -12,7 +12,7 @@ Sub-application FastAPI mount tại `/on` của main app, expose API tương th�
 |---|---|
 | `app.py` | `adapter` FastAPI sub-app — mount tất cả routers + middleware |
 | `auth.py` | `OpenNotebookAuthMiddleware` (Bearer password), `is_admin()` helper |
-| `db.py` | `AdapterNotebook`, `AdapterNote`, `adapter_notebook_sources` (SQLAlchemy) |
+| `db.py` | `AdapterNotebook`, `AdapterNote`, `AdapterTransformation`, `AdapterSourceInsight`, `AdapterChatFeedback`, `adapter_notebook_sources` (SQLAlchemy) |
 | `models.py` | Pydantic schemas khớp open-notebook contract |
 | `admin.py` | Admin reasoning inspector (HTML + JSON API) — mount tại `/admin` của main app |
 | `routers/notebooks.py` | CRUD notebooks + add/remove sources |
@@ -32,6 +32,11 @@ app.mount("/on", adapter)                   # tất cả /on/api/* và /on/healt
 app.include_router(adapter_admin.router)    # /admin (HTML) + /admin/api/* (JSON)
 ```
 
+Inside the adapter, stored images are also re-mounted under
+`/on/api/images/*` (StaticFiles → `IMAGE_STORAGE_DIR`) so the frontend can
+resolve markdown `<img src>` URLs through the same `/api/*` Next.js rewrite
+it uses for the rest of the API.
+
 ---
 
 ## Auth model
@@ -43,7 +48,7 @@ Hai layer độc lập:
 | `Authorization: Bearer ${OPEN_NOTEBOOK_PASSWORD}` | Tất cả `/on/api/*` (trừ public list) | User nhập password trong UI login form |
 | `X-Admin-Token: ${ADAPTER_ADMIN_TOKEN}` | `/admin/api/*` | Admin nhập token trong `/admin` page |
 
-**Public prefixes** (không cần Bearer): `/api/config`, `/api/auth/status`, `/api/health`, `/health`, `/docs`, `/admin`.
+**Public prefixes** (không cần Bearer): `/api/config`, `/api/auth/status`, `/api/auth/login`, `/api/auth/signup`, `/api/auth/google/*`, `/api/health`, `/api/images`, `/health`, `/docs`, `/admin`.
 
 OPTIONS preflight luôn pass-through để CORS hoạt động.
 
@@ -58,6 +63,9 @@ OPTIONS preflight luôn pass-through để CORS hoạt động.
 | `adapter_notebooks` | Open-notebook notebook entity | `id`, `name`, `description`, `archived`, `created_at`, `updated_at` |
 | `adapter_notes` | Notes thuộc notebook | `id`, `notebook_id`, `title`, `content`, `note_type` |
 | `adapter_notebook_sources` | M-N notebook ↔ document | `notebook_id`, `document_id` |
+| `adapter_transformations` | User-defined transformation prompts | `id`, `name`, `prompt`, `apply_default` |
+| `adapter_source_insights` | LLM-generated insights per source | `id`, `source_id`, `insight_type`, `content` |
+| `adapter_chat_feedback` | Thumbs-up/down ratings per assistant turn | `user_id`, `turn_id`, `rating ∈ {+1,-1}`, `question`, `answer`, `reasoning_path` |
 
 `Document` (table gốc của AgentRag) được dùng làm "source" — không tạo table riêng. Frontend gửi `source_id` dạng `source:<uuid>`; `_parse_source_id()` strip prefix trước khi UUID parse.
 
@@ -95,6 +103,45 @@ SSE stream:
 ```
 
 Dùng `_direct_rag` thay vì agent để **strict isolation** theo document — tránh leak context từ document khác qua graph memory.
+
+---
+
+## Model defaults — runtime override
+
+`PUT /on/api/models/defaults` persists user-selected models to
+`data/model_overrides.json` (key/value of `EMBEDDING_PROVIDER`,
+`EMBEDDING_MODEL`, `EXTRACTION_*`, `AGENT_*`, `VISION_*`). Overrides are
+re-applied to the in-memory `settings` singleton at every process startup
+(see `src/agentrag/config_overrides.py`).
+
+API process picks up changes immediately. ARQ worker picks up on its next
+restart — restart worker after switching the extraction/agent model.
+
+`GET /on/api/models/defaults` returns the currently effective defaults
+(env values merged with overrides).
+
+---
+
+## Feedback collection
+
+`POST /on/api/chat/feedback` — upsert per `(user_id, turn_id)`:
+
+```json
+{
+  "turn_id": "<assistant message id>",
+  "session_id": "<conversation id>",
+  "rating": 1,                      // +1 or -1
+  "question": "...",
+  "answer": "...",
+  "reasoning_path": "semantic|structured|chitchat",
+  "comment": "optional"
+}
+```
+
+Frontend wires this to thumbs-up/down buttons (`FeedbackButtons.tsx`)
+rendered next to every assistant message. The accumulated ledger in
+`adapter_chat_feedback` is the seed asset for future preference-pair
+training (DPO) or prompt tuning.
 
 ---
 

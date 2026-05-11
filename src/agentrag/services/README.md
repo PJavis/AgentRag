@@ -69,9 +69,18 @@ Assemble + dedup + rank + trim kết quả từ nhiều tool calls thành packed
 
 | Method | Mô tả |
 |---|---|
-| `assemble(question, tool_outputs)` | Merge, dedup theo content_hash, rank theo score + source boost, trim theo AGENT_MAX_CONTEXT_CHUNKS |
+| `assemble(question, tool_outputs)` | Merge, dedup theo content_hash, rank theo score + source boost, trim theo token budget (hoặc chunk-count fallback), reorder lost-in-middle |
 
 Source boost: `structmem +0.08`, `synthesis +0.07`, `hybrid +0.06`, `sparse +0.03`
+
+**Trim strategy:** when `AGENT_MAX_CONTEXT_TOKENS > 0`, keep adding ranked
+chunks until accumulated content tokens (char-density estimate) exceed the
+budget. Falls back to `AGENT_MAX_CONTEXT_CHUNKS` cap when budget is 0.
+
+**Reorder (Liu 2023 — lost in the middle):** when
+`AGENT_LOST_IN_MIDDLE_REORDER=true`, ranked list `[r1, r2, r3, r4, r5]`
+becomes `[r1, r3, r5, r4, r2]` — best at start AND end, weaker in the middle.
+Empirically improves LLM attention on long contexts.
 
 ---
 
@@ -92,8 +101,26 @@ Source boost: `structmem +0.08`, `synthesis +0.07`, `hybrid +0.06`, `sparse +0.0
 |---|---|---|
 | `LLM_ROUTING_ENABLED` | `false` | Bật task-based model routing |
 | `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model name. Tasks: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary` |
-| `LLM_COST_TRACKING_ENABLED` | `false` | Bật cost tracking |
-| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Giới hạn chunks trong packed context |
+| `LLM_COST_TRACKING_ENABLED` | `false` | Bật cost tracking (`GET /on/api/metrics/cost`) |
+| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy chunk-count cap (used when token budget = 0) |
+| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware packed-context budget |
+| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Best chunks at start + end of packed context |
 | `VISION_PROVIDER` | `None` | Provider cho `vision_response()`: `openai` / `gemini` / `ollama` |
 | `VISION_MODEL` | `None` | Model cho vision calls (gpt-4o / gemini-1.5-flash / llava:13b) |
 | `VISION_BASE_URL` | `None` | Override endpoint (chủ yếu cho Ollama) |
+
+## Cost tracking
+
+Process-global LLM ledger lives in `src/agentrag/observability/cost.py`.
+Every call from `AgentLLM` (json/text/stream) and `LLMGateway.vision_response`
+auto-records `(task, model, latency_ms, in_tokens, out_tokens, usd)` when
+`LLM_COST_TRACKING_ENABLED=true`.
+
+- Token counts: prefer provider `usage.prompt_tokens` / `completion_tokens` when
+  the OpenAI-compat response surfaces them; otherwise char-density heuristic.
+- USD estimate: per-model price table (Gemini 2.5 / 1.5 family, OpenAI 4o/4o-mini).
+  Unknown models default to `gemini-2.5-flash` pricing.
+- In-memory ring buffer of 5000 last calls. Cleared on process restart.
+
+`LLMGateway.cost_summary()` aggregates by task + by model. Surfaced via
+`GET /on/api/metrics/cost`; reset via `POST /on/api/metrics/cost/reset`.

@@ -47,17 +47,45 @@ async def _segment_count(session, doc_id) -> int:
     return row.scalar() or 0
 
 
+async def _stitched_full_text(session, doc_id) -> str | None:
+    """Concatenate all segment contents ordered by position for preview UI.
+
+    Cheap enough for typical docs (<100 chunks). Returns None if no segments.
+    """
+    rows = (
+        await session.execute(
+            select(Segment.content, Segment.section_path, Segment.position)
+            .where(Segment.document_id == doc_id)
+            .order_by(Segment.position.asc())
+        )
+    ).all()
+    if not rows:
+        return None
+    parts: list[str] = []
+    for content, section_path, _pos in rows:
+        if section_path:
+            parts.append(f"## {section_path}")
+        if content:
+            parts.append(content)
+    return "\n\n".join(parts) if parts else None
+
+
 async def _doc_to_source(
-    session, doc: Document, notebook_ids: list[str] | None = None
+    session,
+    doc: Document,
+    notebook_ids: list[str] | None = None,
+    *,
+    include_full_text: bool = False,
 ) -> dict:
     status = _STATUS_MAP.get(doc.graph_status, "processing")
     seg_count = await _segment_count(session, doc.id)
+    full_text = await _stitched_full_text(session, doc.id) if include_full_text else None
     return SourceResponse(
         id=str(doc.id),
         title=doc.title,
         topics=None,
         asset=None,
-        full_text=None,
+        full_text=full_text,
         embedded=seg_count > 0,
         embedded_chunks=seg_count,
         created=doc.created_at.isoformat() if doc.created_at else "",
@@ -308,7 +336,9 @@ async def get_source(source_id: str):
                 )
             )
         ).scalars().all()
-        return await _doc_to_source(session, doc, [str(n) for n in nb_ids])
+        return await _doc_to_source(
+            session, doc, [str(n) for n in nb_ids], include_full_text=True
+        )
 
 
 @router.put("/{source_id}")

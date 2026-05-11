@@ -10,11 +10,45 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from src.agentrag.config import settings
+from src.agentrag.config_overrides import save_overrides, apply_overrides
 
 router = APIRouter()
+
+
+def _parse_model_id(model_id: str) -> tuple[str, str, str] | None:
+    """Parse `prefix::provider::model` IDs produced by _model_row.
+
+    Returns (prefix, provider, model) or None if malformed.
+    """
+    if not model_id or "::" not in model_id:
+        return None
+    parts = model_id.split("::", 2)
+    if len(parts) != 3:
+        return None
+    prefix, provider, model = parts
+    if not provider or not model:
+        return None
+    return prefix, provider, model
+
+
+_PREFIX_FIELDS = {
+    "agent":   ("AGENT_PROVIDER", "AGENT_MODEL"),
+    "extract": ("EXTRACTION_PROVIDER", "EXTRACTION_MODEL"),
+    "embed":   ("EMBEDDING_PROVIDER", "EMBEDDING_MODEL"),
+    "vision":  ("VISION_PROVIDER", "VISION_MODEL"),
+}
+
+
+# Frontend field name → which model_id prefix is expected.
+_DEFAULT_FIELD_TO_PREFIX = {
+    "default_chat_model":      "agent",
+    "default_language_model":  "agent",
+    "default_embedding_model": "embed",
+    "default_vision_model":    "vision",
+}
 
 _FIXED_TS = "2025-01-01T00:00:00Z"
 
@@ -120,6 +154,37 @@ async def get_default_models():
 
 @router.put("/models/defaults")
 async def set_default_models(body: dict):
+    """Persist UI-selected defaults to data/model_overrides.json + apply live.
+
+    Accepts:
+      { default_chat_model | default_language_model | default_embedding_model
+        | default_vision_model: "<prefix>::<provider>::<model>" }
+
+    The override file is loaded on every process start, so changes survive
+    restarts. ARQ worker picks up new values on its next boot.
+    """
+    updates: dict[str, str] = {}
+    for field, value in (body or {}).items():
+        if field not in _DEFAULT_FIELD_TO_PREFIX or not isinstance(value, str):
+            continue
+        parsed = _parse_model_id(value)
+        if parsed is None:
+            raise HTTPException(400, f"Malformed model_id for {field!r}: {value!r}")
+        prefix, provider, model = parsed
+        expected_prefix = _DEFAULT_FIELD_TO_PREFIX[field]
+        if prefix != expected_prefix:
+            raise HTTPException(
+                400,
+                f"{field!r} expects prefix {expected_prefix!r}, got {prefix!r}",
+            )
+        provider_field, model_field = _PREFIX_FIELDS[prefix]
+        updates[provider_field] = provider
+        updates[model_field] = model
+
+    if updates:
+        save_overrides(updates)
+        apply_overrides(settings)
+
     return await get_default_models()
 
 

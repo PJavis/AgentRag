@@ -95,18 +95,25 @@ docker-up-edge:
 docker-down-app:
 	docker compose --profile app --profile edge down
 
+# Bring up Ollama container, then pull every model your .env references.
+# Provider/model pairs scanned: EMBEDDING, EXTRACTION, AGENT, RETRIEVAL_RERANK, VISION.
+# Add OLLAMA_EXTRA_MODELS="tag1 tag2" in .env to pull more (e.g. routing-only tags).
 .PHONY: docker-up-llm
 docker-up-llm:
 	docker compose --profile local-llm up -d
-	@echo "📦 Pulling models for 16GB VRAM tier (~12GB total)..."
-	docker exec agentrag-ollama ollama pull qwen2.5:7b-instruct || true   # main LLM (4.7GB)
-	docker exec agentrag-ollama ollama pull llama3.2:3b || true           # fast classify/decide (2.0GB)
-	docker exec agentrag-ollama ollama pull mxbai-embed-large || true     # embedding (0.7GB, top MTEB, stable)
-	docker exec agentrag-ollama ollama pull llava:7b || true              # vision LLM (4.5GB)
-	@echo "✅ Models ready. Reranker (BAAI/bge-reranker-v2-m3) auto-load via sentence-transformers."
+	@bash scripts/pull_ollama_models.sh .env
 
-# Pull a vision model for image parsing (PDF images + standalone uploads).
-# Default is llava:13b; override with VISION_MODEL_TAG=llava:7b for less VRAM.
+# Pull models without (re)starting compose; same dynamic logic.
+.PHONY: ollama-pull
+ollama-pull:
+	@bash scripts/pull_ollama_models.sh .env
+
+# Preview what would be pulled.
+.PHONY: ollama-pull-dry
+ollama-pull-dry:
+	@DRY_RUN=1 bash scripts/pull_ollama_models.sh .env
+
+# Pull a specific vision model on demand (manual override).
 VISION_MODEL_TAG ?= llava:13b
 .PHONY: vision-pull
 vision-pull:

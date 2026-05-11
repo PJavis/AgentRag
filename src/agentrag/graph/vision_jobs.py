@@ -1,13 +1,16 @@
 """Vision extraction job — async describe + index image segments.
 
 Runs after the main ingest pipeline has stored text segments (so sparse + dense
-retrieval is ready). Reads images from disk, calls Vision LLM, builds image
-segments, then upserts them into ES (and PG segments table).
+retrieval is ready). Reads images from disk, calls Vision LLM concurrently with
+a token-bucket RPM cap (so we don't burst past the provider's per-minute quota),
+builds image segments, then upserts them into ES (and PG segments table).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,8 +36,105 @@ class VisionExtractJob:
     image_records: list[dict[str, Any]]   # [{path, page, mime, url}]
 
 
+class _RpmBucket:
+    """Async token bucket: refills `rpm` tokens per 60s. acquire() blocks until a token is free."""
+
+    def __init__(self, rpm: int):
+        self.rpm = max(0, int(rpm))
+        self._lock = asyncio.Lock()
+        # Timestamps of recent acquisitions (monotonic seconds).
+        self._stamps: list[float] = []
+
+    async def acquire(self) -> None:
+        if self.rpm <= 0:
+            return
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                cutoff = now - 60.0
+                self._stamps = [t for t in self._stamps if t > cutoff]
+                if len(self._stamps) < self.rpm:
+                    self._stamps.append(now)
+                    return
+                # Need to wait until oldest stamp slides out of the window.
+                wait = 60.0 - (now - self._stamps[0]) + 0.05
+            await asyncio.sleep(max(0.0, wait))
+
+
+# Transient errors worth retrying. We sniff on substring so we don't have to
+# import provider-specific exception classes.
+_TRANSIENT_HINTS = (
+    "429", "rate_limit", "rate limit", "RESOURCE_EXHAUSTED",
+    "503", "504", "timeout", "TimeoutError",
+)
+
+
+def _is_transient(exc: BaseException) -> bool:
+    s = f"{type(exc).__name__}: {exc}"
+    return any(h.lower() in s.lower() for h in _TRANSIENT_HINTS)
+
+
+async def _describe_one(
+    image_parser: ImageParser,
+    img: dict[str, Any],
+    title: str,
+    sem: asyncio.Semaphore,
+    bucket: _RpmBucket,
+    retries: int,
+) -> dict[str, Any] | None:
+    path = Path(img["path"])
+    if not path.exists():
+        logger.warning("vision_extract: missing image %s", path)
+        return None
+    try:
+        img_bytes = path.read_bytes()
+    except OSError as exc:
+        logger.warning("vision_extract: cannot read %s: %s", path, exc)
+        return None
+
+    attempt = 0
+    while True:
+        async with sem:
+            await bucket.acquire()
+            try:
+                description = await image_parser.describe(
+                    img_bytes, img.get("mime", "image/jpeg"), context=title
+                )
+            except Exception as exc:
+                if attempt < retries and _is_transient(exc):
+                    backoff = min(2 ** attempt, 30)
+                    logger.warning(
+                        "vision_extract: transient error on %s (attempt %d/%d): %s — retry in %ds",
+                        path, attempt + 1, retries, exc, backoff,
+                    )
+                    attempt += 1
+                    await asyncio.sleep(backoff)
+                    continue
+                logger.exception("vision_extract: describe failed for %s: %s", path, exc)
+                return None
+            break
+
+    if not description or description.startswith("[image"):
+        return None
+
+    return {
+        "content": description,
+        "content_hash": hashlib.sha256(description.encode("utf-8")).hexdigest(),
+        "segment_type": "image",
+        "section_path": f"page_{img['page']}_image",
+        "position": 0,  # rewritten by caller after collecting all
+        "page_start": img["page"],
+        "page_end": img["page"],
+        "metadata": {
+            "document_title": title,
+            "image_url": img.get("url", ""),
+            "image_path": img["path"],
+        },
+    }
+
+
 async def process_vision_job(job: VisionExtractJob) -> dict[str, Any]:
-    """Describe each image, embed, then upsert image segments to PG + ES."""
+    """Describe each image concurrently, embed, then upsert segments to PG + ES."""
     if not job.image_records:
         return {"described": 0, "indexed": 0}
 
@@ -46,77 +146,76 @@ async def process_vision_job(job: VisionExtractJob) -> dict[str, Any]:
     es_store = ElasticsearchStore()
     embedder = build_embedding_provider(settings)
 
-    img_chunks: list[dict[str, Any]] = []
-    next_pos = 0  # placeholder offset; final position read from existing segments
+    sem = asyncio.Semaphore(max(1, settings.VISION_MAX_CONCURRENCY))
+    bucket = _RpmBucket(settings.VISION_MAX_RPM)
+    retries = max(0, settings.VISION_PER_IMAGE_RETRIES)
+    batch_size = max(1, settings.VISION_FLUSH_BATCH_SIZE)
 
-    for img in job.image_records:
-        path = Path(img["path"])
-        if not path.exists():
-            logger.warning("vision_extract: missing image %s", path)
-            continue
-        try:
-            img_bytes = path.read_bytes()
-            description = await image_parser.describe(
-                img_bytes, img.get("mime", "image/jpeg"), context=job.title
-            )
-        except Exception as e:
-            logger.exception("vision_extract: describe failed for %s: %s", path, e)
-            continue
-        if not description or description.startswith("[image"):
-            continue
-        img_chunks.append({
-            "content": description,
-            "content_hash": hashlib.sha256(description.encode("utf-8")).hexdigest(),
-            "segment_type": "image",
-            "section_path": f"page_{img['page']}_image",
-            "position": next_pos,
-            "page_start": img["page"],
-            "page_end": img["page"],
-            "metadata": {
-                "document_title": job.title,
-                "image_url": img.get("url", ""),
-                "image_path": img["path"],
-            },
-        })
-        next_pos += 1
+    started = time.perf_counter()
 
-    if not img_chunks:
-        logger.info("vision_extract: 0 valid descriptions for doc %s", job.document_id)
-        return {"described": 0, "indexed": 0}
-
-    # Embed
-    embeddings = await embedder.embed([c["content"] for c in img_chunks])
-    for c, emb in zip(img_chunks, embeddings):
-        c["embedding"] = emb
-
-    # Insert PG segments + index ES
+    # Resolve starting position once — image chunks share document with text chunks.
     async with AsyncSessionLocal() as session:
-        # Find max existing position to avoid collision
         result = await session.execute(
             select(Segment.position).where(Segment.document_id == job.document_id)
         )
         positions = [r[0] for r in result.all()]
-        base_pos = (max(positions) + 1) if positions else 0
+    base_pos = (max(positions) + 1) if positions else 0
 
-        for offset, chunk in enumerate(img_chunks):
-            chunk["position"] = base_pos + offset
-            seg = Segment(
-                document_id=job.document_id,
-                content=chunk["content"],
-                content_hash=chunk["content_hash"],
-                segment_type=chunk["segment_type"],
-                section_path=chunk["section_path"],
-                position=chunk["position"],
-                extra_metadata=chunk["metadata"],
-                version=1,
-            )
-            session.add(seg)
-        await session.commit()
+    pending: list[dict[str, Any]] = []
+    total_indexed = 0
+    described = 0
 
-    await es_store.index_segments(img_chunks, job.title)
+    async def _flush() -> None:
+        nonlocal total_indexed
+        if not pending:
+            return
+        # Embed + assign positions starting at base_pos + total_indexed.
+        embeddings = await embedder.embed([c["content"] for c in pending])
+        for i, (c, emb) in enumerate(zip(pending, embeddings)):
+            c["embedding"] = emb
+            c["position"] = base_pos + total_indexed + i
 
+        async with AsyncSessionLocal() as session:
+            for c in pending:
+                session.add(Segment(
+                    document_id=job.document_id,
+                    content=c["content"],
+                    content_hash=c["content_hash"],
+                    segment_type=c["segment_type"],
+                    section_path=c["section_path"],
+                    position=c["position"],
+                    extra_metadata=c["metadata"],
+                    version=1,
+                ))
+            await session.commit()
+
+        await es_store.index_segments(pending, job.title)
+        total_indexed += len(pending)
+        logger.info(
+            "vision_extract: flushed batch (cumulative indexed=%d) doc=%s",
+            total_indexed, job.document_id,
+        )
+        pending.clear()
+
+    tasks = [
+        asyncio.create_task(
+            _describe_one(image_parser, img, job.title, sem, bucket, retries)
+        )
+        for img in job.image_records
+    ]
+    for coro in asyncio.as_completed(tasks):
+        result = await coro
+        described += 1
+        if result is not None:
+            pending.append(result)
+        if len(pending) >= batch_size:
+            await _flush()
+
+    await _flush()
+
+    elapsed = time.perf_counter() - started
     logger.info(
-        "vision_extract: described=%d indexed=%d for doc %s",
-        len(img_chunks), len(img_chunks), job.document_id,
+        "vision_extract: described=%d/%d indexed=%d in %.1fs doc=%s",
+        total_indexed, len(job.image_records), total_indexed, elapsed, job.document_id,
     )
-    return {"described": len(img_chunks), "indexed": len(img_chunks)}
+    return {"described": total_indexed, "indexed": total_indexed}

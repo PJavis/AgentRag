@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import tempfile
@@ -185,7 +186,25 @@ async def create_source(
 
     identity = getattr(request.state, "auth_identity", None)
     user_id = identity.user_id if identity else "anonymous"
-    all_notebooks = list({n for n in ([notebook_id] + (notebooks or [])) if n})
+
+    # Frontend sends `notebooks` as a single JSON-stringified form field
+    # (multipart with one entry, not repeated fields). FastAPI then hands us
+    # `['["uuid","uuid"]']` instead of `["uuid","uuid"]`. Unwrap that.
+    flat_notebooks: list[str] = []
+    for raw in (notebooks or []):
+        if not isinstance(raw, str):
+            continue
+        s = raw.strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    flat_notebooks.extend(str(x) for x in parsed if x)
+                    continue
+            except json.JSONDecodeError:
+                pass
+        flat_notebooks.append(s)
+    all_notebooks = list({n for n in ([notebook_id] + flat_notebooks) if n})
 
     if file is not None:
         raw = await file.read()

@@ -135,6 +135,18 @@ class Settings(BaseSettings):
     # sync: describe images inline during ingest (slow, blocks pipeline).
     # async: skip describe; queue ARQ vision_extract job → text retrieval ready ngay.
     VISION_INGEST_MODE: Literal["sync", "async"] = "async"
+    # Max concurrent describe calls in vision_extract worker job.
+    # Cloud APIs (Gemini/OpenAI): 4-8. Local Ollama: keep at 1 to avoid GPU thrashing.
+    VISION_MAX_CONCURRENCY: int = 4
+    # Max requests-per-minute against the vision provider. Token-bucket smoothing.
+    # Gemini free tier: 10 RPM for 2.5-flash. Tier 1 paid: ~1000 RPM.
+    # Set to 0 to disable RPM cap (still bounded by VISION_MAX_CONCURRENCY).
+    VISION_MAX_RPM: int = 10
+    # Retry transient 429/5xx per image before giving up. 0 = no retry.
+    VISION_PER_IMAGE_RETRIES: int = 3
+    # Flush described chunks → PG + ES every N images so progress is visible
+    # while the job runs (instead of one big bulk commit at the end).
+    VISION_FLUSH_BATCH_SIZE: int = 10
 
     # Excel ingest strategy
     EXCEL_INGEST_MODE: Literal["markdown", "sql"] = "markdown"
@@ -188,3 +200,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Apply persisted UI overrides (PUT /on/api/models/defaults) on top of .env.
+from src.agentrag.config_overrides import apply_overrides  # noqa: E402
+
+apply_overrides(settings)

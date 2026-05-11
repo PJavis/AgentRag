@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -34,6 +35,7 @@ interface CreateNotebookDialogProps {
 
 export function CreateNotebookDialog({ open, onOpenChange }: CreateNotebookDialogProps) {
   const { t } = useTranslation()
+  const router = useRouter()
   const createNotebook = useCreateNotebook()
   const {
     register,
@@ -52,9 +54,12 @@ export function CreateNotebookDialog({ open, onOpenChange }: CreateNotebookDialo
   const closeDialog = () => onOpenChange(false)
 
   const onSubmit = async (data: CreateNotebookFormData) => {
-    await createNotebook.mutateAsync(data)
+    const created = await createNotebook.mutateAsync(data)
     closeDialog()
     reset()
+    if (created?.id) {
+      router.push(`/notebooks/${created.id}`)
+    }
   }
 
   useEffect(() => {

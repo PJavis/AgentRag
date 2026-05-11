@@ -315,11 +315,16 @@ class ElasticsearchStore:
                     ],
                 }
             }
-        response = await self.client.search(
-            index=self.index_name,
-            size=size,
-            query=query_body,
-        )
+        try:
+            response = await self.client.search(
+                index=self.index_name,
+                size=size,
+                query=query_body,
+            )
+        except ESNotFoundError:
+            # Index not created yet (no chunks ingested) — return empty so the
+            # agent can still answer with its own knowledge / structmem.
+            return []
         return self._normalize_hits(response.get("hits", {}).get("hits", []), "sparse")
 
     async def dense_search(
@@ -344,7 +349,10 @@ class ElasticsearchStore:
             search_body["knn"]["filter"] = {
                 "term": {"document_title.keyword": document_title}
             }
-        response = await self.client.search(index=self.index_name, **search_body)
+        try:
+            response = await self.client.search(index=self.index_name, **search_body)
+        except ESNotFoundError:
+            return []
         return self._normalize_hits(response.get("hits", {}).get("hits", []), "dense")
 
     async def hybrid_search(
@@ -378,15 +386,18 @@ class ElasticsearchStore:
     async def get_chunks_by_hashes(self, content_hashes: list[str]) -> list[dict[str, Any]]:
         if not content_hashes:
             return []
-        response = await self.client.search(
-            index=self.index_name,
-            size=len(content_hashes),
-            query={
-                "terms": {
-                    "content_hash": content_hashes,
-                }
-            },
-        )
+        try:
+            response = await self.client.search(
+                index=self.index_name,
+                size=len(content_hashes),
+                query={
+                    "terms": {
+                        "content_hash": content_hashes,
+                    }
+                },
+            )
+        except ESNotFoundError:
+            return []
         return self._normalize_hits(response.get("hits", {}).get("hits", []), "lookup")
 
     def _normalize_hits(

@@ -1,0 +1,50 @@
+# Text Embeddings Inference (TEI) — OpenAI-compatible embedding server.
+# Serves your finetuned embedding model so AgentRag can hit it via
+# EMBEDDING_PROVIDER=openai + EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/.
+#
+# Start (GPU, 16 GB box):
+#   docker compose -f deploy/tei.compose.yml --profile gpu up -d
+#
+# Start (CPU fallback, no GPU):
+#   docker compose -f deploy/tei.compose.yml --profile cpu up -d
+#
+# Stop:
+#   docker compose -f deploy/tei.compose.yml down
+
+services:
+  tei-gpu:
+    profiles: ["gpu"]
+    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    container_name: agentrag-tei
+    ports:
+      - "8080:80"
+    volumes:
+      # Point this at your finetuned checkpoint dir.
+      - ../models/agentrag-embed-v1:/data
+    command:
+      - --model-id=/data
+      - --pooling=mean
+      - --max-batch-tokens=16384
+    environment:
+      - HF_HUB_OFFLINE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
+    restart: unless-stopped
+
+  tei-cpu:
+    profiles: ["cpu"]
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    container_name: agentrag-tei
+    ports:
+      - "8080:80"
+    volumes:
+      - ../models/agentrag-embed-v1:/data
+    command:
+      - --model-id=/data
+      - --pooling=mean
+    restart: unless-stopped

@@ -272,3 +272,90 @@ test:
 .PHONY: bench-ingest
 bench-ingest:
 	uv run python scripts/benchmark_ingest.py data/test_docs/SYSTEM_DESIGN.md
+
+# ── Finetune loop (16 GB GPU box) ─────────────────────────────────────────────
+# See docs/FINETUNE_STRATEGY.md for the full plan.
+
+FT_BASE_EMBED ?= intfloat/multilingual-e5-base
+FT_BASE_RERANK ?= BAAI/bge-reranker-v2-m3
+FT_BASE_LLM ?= unsloth/Qwen2.5-7B-Instruct
+FT_OUT_EMBED ?= models/agentrag-embed-v1
+FT_OUT_RERANK ?= models/agentrag-rerank-v1
+FT_OUT_LLM ?= models/qwen-agentrag-7b
+FT_OLLAMA_NAME ?= qwen-agentrag
+FT_QUANT ?= Q4_K_M
+
+.PHONY: mine-pairs
+mine-pairs:
+	uv run python scripts/mine_finetune_pairs.py \
+	  --out data/finetune/embed_triplets.jsonl
+
+.PHONY: split-pairs
+split-pairs:
+	uv run python scripts/split_pairs.py \
+	  --input data/finetune/embed_triplets.jsonl \
+	  --train data/finetune/embed_train.jsonl \
+	  --test  data/finetune/embed_test.jsonl
+
+.PHONY: train-embed
+train-embed:
+	uv run python scripts/finetune_embedding.py \
+	  --base $(FT_BASE_EMBED) \
+	  --train data/finetune/embed_train.jsonl \
+	  --out  $(FT_OUT_EMBED)
+
+.PHONY: eval-embed
+eval-embed:
+	uv run python scripts/eval_retrieval.py \
+	  --baseline $(FT_BASE_EMBED) \
+	  --candidate $(FT_OUT_EMBED) \
+	  --test data/finetune/embed_test.jsonl
+
+.PHONY: serve-embed
+serve-embed:
+	docker compose -f deploy/tei.compose.yml --profile gpu up -d
+	@echo "✅ TEI on :8080. Set in .env:"
+	@echo "    EMBEDDING_PROVIDER=openai"
+	@echo "    EMBEDDING_MODEL=$$(basename $(FT_OUT_EMBED))"
+	@echo "    EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/"
+	@echo "    OPENAI_API_KEY=tei-dummy"
+
+.PHONY: stop-embed
+stop-embed:
+	docker compose -f deploy/tei.compose.yml down
+
+.PHONY: train-rerank
+train-rerank:
+	uv run python scripts/finetune_reranker.py \
+	  --base $(FT_BASE_RERANK) \
+	  --train data/finetune/embed_train.jsonl \
+	  --out  $(FT_OUT_RERANK)
+
+.PHONY: mine-sft
+mine-sft:
+	uv run python scripts/mine_sft.py --out data/finetune/llm_sft.jsonl --limit 1000
+
+.PHONY: train-llm-lora
+train-llm-lora:
+	uv run python scripts/finetune_qwen_lora.py \
+	  --base $(FT_BASE_LLM) \
+	  --train data/finetune/llm_sft.jsonl \
+	  --out  $(FT_OUT_LLM)
+
+.PHONY: convert-llm
+convert-llm:
+	bash scripts/convert_to_ollama.sh $(FT_OUT_LLM) $(FT_OLLAMA_NAME) $(FT_QUANT)
+
+# End-to-end nightly: mine → split → train embed → eval → (if exit 0) restart TEI.
+.PHONY: retrain-embedding-nightly
+retrain-embedding-nightly:
+	$(MAKE) mine-pairs
+	$(MAKE) split-pairs
+	$(MAKE) train-embed FT_OUT_EMBED=models/agentrag-embed-candidate
+	@$(MAKE) eval-embed FT_OUT_EMBED=models/agentrag-embed-candidate && \
+	  rm -rf $(FT_OUT_EMBED).prev && \
+	  mv -f $(FT_OUT_EMBED) $(FT_OUT_EMBED).prev 2>/dev/null || true && \
+	  mv models/agentrag-embed-candidate $(FT_OUT_EMBED) && \
+	  docker compose -f deploy/tei.compose.yml restart tei-gpu && \
+	  echo "✅ promoted candidate → prod" || \
+	  echo "❌ candidate failed gate, kept old"

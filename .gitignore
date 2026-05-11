@@ -3,3 +3,7 @@
 .cache
 .run/
 data/
+# Finetune artifacts (large)
+models/
+data/finetune/
+vendor/llama.cpp/

@@ -77,7 +77,7 @@ services:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_KEEP_ALIVE=24h          # giữ model trong VRAM 24h sau lần dùng cuối
-      - OLLAMA_MAX_LOADED_MODELS=2     # tối đa 2 model cùng lúc trong VRAM
+      - OLLAMA_MAX_LOADED_MODELS=3     # 16GB VRAM: qwen2.5:7b + llava:7b + llama3.2:3b cùng lúc
     # GPU passthrough: dùng `deploy.resources` (legacy) HOẶC CDI (workaround
     # segfault của nvidia-container-toolkit trên WSL2). Nếu legacy bị segfault:
     #   1. sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml

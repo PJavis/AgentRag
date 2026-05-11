@@ -102,6 +102,7 @@ class AgentTools:
             mode="sparse",
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
+            dense_query=tool_input.get("dense_query"),
         )
 
     async def search_dense(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +111,7 @@ class AgentTools:
             mode="dense",
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
+            dense_query=tool_input.get("dense_query"),
         )
 
     async def search_hybrid(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -118,6 +120,7 @@ class AgentTools:
             mode="hybrid",
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
+            dense_query=tool_input.get("dense_query"),
         )
 
     async def search_hybrid_kg(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -126,6 +129,7 @@ class AgentTools:
             mode="hybrid_kg",
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
+            dense_query=tool_input.get("dense_query"),
         )
 
     async def compare_retrieval_modes(self, tool_input: dict[str, Any]) -> dict[str, Any]:

@@ -23,10 +23,24 @@ const nextConfig: NextConfig = {
 
     console.log(`[Next.js Rewrites] Proxying /api/* to ${internalApiUrl}/api/*`)
 
+    // INTERNAL_API_URL points at /on/<adapter root>; strip trailing /on for routes
+    // that live above the adapter on the main FastAPI app (admin panel).
+    const apiRoot = internalApiUrl.replace(/\/on$/, '')
+
     return [
       {
         source: '/api/:path*',
         destination: `${internalApiUrl}/api/:path*`,
+      },
+      // /admin (reasoning inspector) is mounted on the MAIN FastAPI app, not
+      // under /on. Proxy so users can hit it from the Next.js origin.
+      {
+        source: '/admin',
+        destination: `${apiRoot}/admin`,
+      },
+      {
+        source: '/admin/:path*',
+        destination: `${apiRoot}/admin/:path*`,
       },
     ]
   },

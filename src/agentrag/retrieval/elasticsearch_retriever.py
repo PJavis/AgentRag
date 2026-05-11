@@ -42,7 +42,11 @@ class ElasticsearchRetriever:
         top_k: int | None = None,
         document_title: str | None = None,
         rerank: bool | None = None,
+        dense_query: str | None = None,
     ) -> dict:
+        """`query` drives BM25 + rerank + intent ranking (kept clean for keyword match).
+        `dense_query` is embedded for kNN — pass HyDE-augmented text here. Falls back to `query` when None.
+        """
         if mode not in {"sparse", "dense", "hybrid", "hybrid_kg"}:
             raise ValueError("mode must be one of: sparse, dense, hybrid, hybrid_kg")
 
@@ -53,6 +57,7 @@ class ElasticsearchRetriever:
 
         size = top_k or settings.RETRIEVAL_TOP_K
         lexical_query = self._rewrite_query(query)
+        embed_text = dense_query if dense_query else query
         should_rerank = settings.RETRIEVAL_RERANK_ENABLED if rerank is None else rerank
         candidate_size = self.reranker.candidate_size(size, force=should_rerank)
 
@@ -84,7 +89,7 @@ class ElasticsearchRetriever:
             _RESULT_CACHE[ck] = payload
             return payload
 
-        query_embedding = (await self.embedder.embed([query]))[0]
+        query_embedding = (await self.embedder.embed([embed_text]))[0]
 
         if mode == "dense":
             hits = await self.store.dense_search(

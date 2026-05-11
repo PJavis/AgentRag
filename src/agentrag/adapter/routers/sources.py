@@ -9,6 +9,7 @@ import tempfile
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
@@ -95,6 +96,16 @@ async def _stitched_full_text(session, doc_id) -> str | None:
     return "\n\n".join(p for p in parts if p) if parts else None
 
 
+def _original_path(doc: Document) -> str | None:
+    """Return absolute path of the persisted original file (if any)."""
+    if not settings.ORIGINALS_DIR:
+        return None
+    ext = (doc.source_type or "").lower().lstrip(".")
+    ext_safe = f".{ext}" if ext else ""
+    path = os.path.join(settings.ORIGINALS_DIR, f"{doc.id}{ext_safe}")
+    return path if os.path.isfile(path) else None
+
+
 async def _doc_to_source(
     session,
     doc: Document,
@@ -105,11 +116,19 @@ async def _doc_to_source(
     status = _STATUS_MAP.get(doc.graph_status, "processing")
     seg_count = await _segment_count(session, doc.id)
     full_text = await _stitched_full_text(session, doc.id) if include_full_text else None
+    original_path = _original_path(doc)
+    asset = None
+    if original_path:
+        ext = (doc.source_type or "").lower().lstrip(".")
+        asset = {
+            "file_path": f"{doc.title or 'source'}.{ext}" if ext else (doc.title or "source"),
+            "url": None,
+        }
     return SourceResponse(
         id=str(doc.id),
         title=doc.title,
         topics=None,
-        asset=None,
+        asset=asset,
         full_text=full_text,
         embedded=seg_count > 0,
         embedded_chunks=seg_count,
@@ -325,6 +344,20 @@ async def create_source(
         await session.commit()
         payload = await _doc_to_source(session, skeleton, all_notebooks)
 
+    # Persist the raw bytes under data/originals/<doc_id>.<ext> so the user can
+    # re-download or open the original in a native viewer. Mirrors the temp file
+    # we just wrote — keeps it after the ingest worker tears down its tmp dir.
+    if settings.ORIGINALS_DIR:
+        try:
+            originals_root = os.path.join(settings.ORIGINALS_DIR)
+            os.makedirs(originals_root, exist_ok=True)
+            ext_safe = ("." + ext) if ext else ""
+            original_path = os.path.join(originals_root, f"{skeleton.id}{ext_safe}")
+            with open(original_path, "wb") as fout:
+                fout.write(raw)
+        except OSError:
+            pass  # not fatal — download endpoint will 404 if missing
+
     background_tasks.add_task(
         _run_ingest_background, dest, user_id, all_notebooks, content_hash
     )
@@ -346,6 +379,48 @@ async def create_source_json(request: Request, body: dict):
         content=body.get("content", ""),
         async_processing=False,
     )
+
+
+_MIME_BY_EXT = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "csv": "text/csv",
+    "md": "text/markdown; charset=utf-8",
+    "txt": "text/plain; charset=utf-8",
+    "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "png": "image/png", "webp": "image/webp", "gif": "image/gif",
+}
+
+
+@router.get("/{source_id}/download")
+async def download_source(source_id: str, request: Request):
+    """Serve the original uploaded bytes. Used by the UI 'Open original' button.
+    PDFs render inline (browser viewer); other types prompt download.
+    """
+    async with AsyncSessionLocal() as session:
+        doc = await session.get(Document, _parse_source_id(source_id))
+        if not doc:
+            raise HTTPException(404, "Source not found")
+        ext = (doc.source_type or "").lower().lstrip(".")
+        ext_safe = f".{ext}" if ext else ""
+        path = os.path.join(settings.ORIGINALS_DIR, f"{doc.id}{ext_safe}")
+        if not os.path.isfile(path):
+            raise HTTPException(404, "Original file not available")
+        mime = _MIME_BY_EXT.get(ext, "application/octet-stream")
+        # PDFs / images / text → inline. Office formats → attachment so the
+        # browser triggers download instead of showing binary blob.
+        inline_types = {"pdf", "md", "txt", "csv", "jpg", "jpeg", "png", "webp", "gif"}
+        disposition = "inline" if ext in inline_types else "attachment"
+        filename_for_download = f"{doc.title or 'source'}{ext_safe}"
+        return FileResponse(
+            path,
+            media_type=mime,
+            filename=filename_for_download,
+            headers={"Content-Disposition": f'{disposition}; filename="{filename_for_download}"'},
+        )
 
 
 @router.get("/{source_id}")

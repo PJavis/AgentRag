@@ -268,6 +268,26 @@ export function SourceDetailContent({
     return value.replace(/^["']|["']$/g, '')
   }
 
+  // Open a fresh blob in a new tab (PDF → native viewer, others → download).
+  const handleOpenOriginal = async () => {
+    if (!source?.asset?.file_path) return
+    try {
+      const response = await sourcesApi.downloadFile(source.id)
+      const blobUrl = window.URL.createObjectURL(response.data)
+      const w = window.open(blobUrl, '_blank', 'noopener,noreferrer')
+      if (!w) toast.error(t('common.error'))
+      // Revoke after a delay so the new tab has time to load.
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 60_000)
+    } catch (err) {
+      if (isAxiosError(err) && err.response?.status === 404) {
+        setFileAvailable(false)
+        toast.error(t('sources.fileUnavailable'))
+      } else {
+        toast.error(t('common.error'))
+      }
+    }
+  }
+
   const handleDownloadFile = async () => {
     if (!source?.asset?.file_path || isDownloadingFile || fileAvailable === false) {
       return
@@ -478,10 +498,23 @@ export function SourceDetailContent({
           <TabsContent value="content" className="mt-6">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  {isYouTubeUrl && <Youtube className="h-5 w-5" />}
-                  {t('sources.content')}
-                </CardTitle>
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="flex items-center gap-2">
+                    {isYouTubeUrl && <Youtube className="h-5 w-5" />}
+                    {t('sources.content')}
+                  </CardTitle>
+                  {source.asset?.file_path && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleOpenOriginal}
+                      className="gap-1"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {t('sources.openOriginal') || 'Open original'}
+                    </Button>
+                  )}
+                </div>
                 {source.asset?.url && !isYouTubeUrl && (
                   <CardDescription className="flex items-center gap-2">
                     <LinkIcon className="h-4 w-4" />
@@ -523,7 +556,7 @@ export function SourceDetailContent({
                     )}
                   </div>
                 )}
-                <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none prose-headings:font-semibold prose-a:text-blue-600 prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2">
+                <div className="prose prose-base prose-neutral dark:prose-invert max-w-none prose-headings:font-semibold prose-a:text-blue-600 prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2 prose-img:rounded-md prose-img:border prose-img:border-border">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[[rehypeKatex, { strict: 'ignore', throwOnError: false }]]}

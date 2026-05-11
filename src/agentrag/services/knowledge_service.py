@@ -56,11 +56,14 @@ class KnowledgeService:
         if intent is not None and intent.query_type == "aggregation":
             effective_top_k = max(effective_top_k, 15)
 
-        # HyDE: augment query with a hypothetical answer for better vocabulary match
+        # HyDE: hypothetical-answer text used ONLY for dense kNN embedding.
+        # BM25 + reranker still see the clean expanded query → keyword search
+        # doesn't get poisoned when HyDE hallucinates the wrong domain.
+        dense_query: str | None = None
         if self._rewriter is not None and settings.QUERY_REWRITE_HYDE:
             hyde_text = await self._rewriter.make_hyde_text(query)
             if hyde_text:
-                expanded_query = self._rewriter.augment_with_hyde(expanded_query, hyde_text)
+                dense_query = self._rewriter.augment_with_hyde(expanded_query, hyde_text)
 
         # Multi-hop decomposition: retrieve for each sub-question, merge with RRF
         if self._rewriter is not None and settings.QUERY_REWRITE_DECOMPOSE:
@@ -74,12 +77,14 @@ class KnowledgeService:
                     document_title=document_title,
                 )
 
-        tool_input = {
+        tool_input: dict[str, Any] = {
             "query": expanded_query,
             "mode": mode,
             "top_k": effective_top_k,
             "document_title": document_title,
         }
+        if dense_query:
+            tool_input["dense_query"] = dense_query
         # map mode → tool name
         tool_name = self._mode_to_tool(mode)
         output = await self._tools.call(tool_name, tool_input)

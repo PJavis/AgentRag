@@ -130,6 +130,11 @@ class Settings(BaseSettings):
     VISION_MODEL: str | None = None          # e.g. gpt-4o | gemini-1.5-flash | llava:13b
     VISION_BASE_URL: str | None = None
     IMAGE_STORAGE_DIR: str = "data/images"
+    # Persist original uploaded bytes (PDF/DOCX/XLSX/MD) so users can re-download
+    # or open in a native viewer (browser PDF.js, Word, Excel). One file per
+    # document_id, named `<doc_id><ext>`. Empty/None → originals discarded after
+    # ingest (old behavior).
+    ORIGINALS_DIR: str = "data/originals"
     IMAGE_MIN_SIZE_BYTES: int = 5000         # skip icons / decorative bullets
     VISION_TIMEOUT_SECONDS: int = 180        # bump cao cho llava cold-start
     # sync: describe images inline during ingest (slow, blocks pipeline).

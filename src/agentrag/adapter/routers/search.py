@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from src.agentrag.adapter.models import AskRequest, SearchRequest, SearchResponse, SearchResult
-from src.agentrag.agent.service import AgentService
+from src.agentrag.agent.factory import get_agent_service
 from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
 
 router = APIRouter(prefix="/search")
@@ -45,7 +45,7 @@ async def search(body: SearchRequest):
 @router.post("/ask")
 async def ask_sse(body: AskRequest, request: Request):
     """SSE streaming answer — open-notebook format."""
-    agent = AgentService()
+    agent = get_agent_service()
 
     async def event_stream():
         yield json.dumps({"type": "strategy", "reasoning": "Searching knowledge base...", "search_terms": [body.question]}) + "\n"
@@ -87,7 +87,7 @@ async def ask_sse(body: AskRequest, request: Request):
 
 @router.post("/ask/simple")
 async def ask_simple(body: AskRequest):
-    agent = AgentService()
+    agent = get_agent_service()
     result = await agent.chat(
         question=body.question,
         document_title=None,

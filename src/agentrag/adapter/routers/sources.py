@@ -415,11 +415,22 @@ async def download_source(source_id: str, request: Request):
         inline_types = {"pdf", "md", "txt", "csv", "jpg", "jpeg", "png", "webp", "gif"}
         disposition = "inline" if ext in inline_types else "attachment"
         filename_for_download = f"{doc.title or 'source'}{ext_safe}"
+        # RFC 5987: non-ASCII filenames must be percent-encoded with charset.
+        # HTTP headers are latin-1; raw Vietnamese chars crash starlette.
+        from urllib.parse import quote as _q
+        ascii_fallback = filename_for_download.encode("ascii", "replace").decode("ascii")
+        encoded = _q(filename_for_download, safe="")
+        # NOTE: don't pass `filename=` (starlette latin-1 encodes it). Set
+        # Content-Disposition manually with RFC 5987 fallback.
         return FileResponse(
             path,
             media_type=mime,
-            filename=filename_for_download,
-            headers={"Content-Disposition": f'{disposition}; filename="{filename_for_download}"'},
+            headers={
+                "Content-Disposition": (
+                    f'{disposition}; filename="{ascii_fallback}"; '
+                    f"filename*=UTF-8''{encoded}"
+                )
+            },
         )
 
 

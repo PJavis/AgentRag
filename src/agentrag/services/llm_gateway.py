@@ -85,7 +85,7 @@ class LLMGateway:
         task: str = "general",
     ) -> tuple[dict[str, Any], float]:
         """AgentLLM records the call internally; we just override the task label."""
-        client = self._resolve_client(task)
+        client = self._resolve_client(task, content=system_prompt + user_prompt)
         started = time.perf_counter()
         payload = await client.json_response(system_prompt, user_prompt)
         latency_ms = (time.perf_counter() - started) * 1000
@@ -100,7 +100,7 @@ class LLMGateway:
         task: str = "general",
     ) -> str:
         """Plain-text completion (no JSON enforcement)."""
-        client = self._resolve_client(task)
+        client = self._resolve_client(task, content=system_prompt + user_prompt)
         text = await client.text_response(system_prompt, user_prompt)
         _relabel_last(client.model, "text", task)
         return text
@@ -110,12 +110,27 @@ class LLMGateway:
 
     # ── Routing helpers ───────────────────────────────────────────────────────
 
-    def _resolve_client(self, task: str) -> AgentLLM:
+    def _resolve_client(self, task: str, content: str = "") -> AgentLLM:
         """
-        Nếu LLM_ROUTING_ENABLED và task có trong LLM_TASK_MODEL_MAP
-        → trả cached AgentLLM với override model.
-        Else → trả default client.
+        Resolution order:
+          1. If LLM_LARGE_CONTEXT_MODEL set AND content tokens > threshold
+             → large-context client (highest priority).
+          2. If LLM_ROUTING_ENABLED AND task ∈ LLM_TASK_MODEL_MAP
+             → task-specific client.
+          3. Default client.
         """
+        # 1. Large-context auto-route (open-notebook pattern).
+        large_model = settings.LLM_LARGE_CONTEXT_MODEL
+        if large_model and content:
+            tokens = _estimate_tokens(content)
+            if tokens > settings.LLM_LARGE_CONTEXT_THRESHOLD:
+                if large_model not in self._routed_clients:
+                    self._routed_clients[large_model] = AgentLLM(
+                        model_override=large_model
+                    )
+                return self._routed_clients[large_model]
+
+        # 2. Task-based routing.
         if not settings.LLM_ROUTING_ENABLED:
             return self._default_client
 

@@ -20,7 +20,7 @@ from src.agentrag.health.providers import collect_provider_health
 from src.agentrag.ingestion.pipeline import ingest_folder
 from src.agentrag.worker.pool import init_pool, close_pool, get_pool
 from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
-from src.agentrag.agent.service import AgentService
+from src.agentrag.agent.factory import get_agent_service
 from src.agentrag.services.llm_gateway import LLMGateway
 from src.agentrag.adapter.db import create_adapter_tables
 from src.agentrag.adapter.app import adapter
@@ -252,7 +252,7 @@ async def chat(payload: dict = Body(...)):
         conversation_id=conversation["conversation_id"],
         limit=settings.CHAT_HISTORY_WINDOW,
     )
-    agent = AgentService()
+    agent = get_agent_service()
     try:
         await store.append_message(
             conversation_id=conversation["conversation_id"],
@@ -396,7 +396,7 @@ async def chat_stream(payload: dict = Body(...)):
         extra_metadata={"document_title": document_title},
     )
 
-    agent = AgentService()
+    agent = get_agent_service()
 
     stream_cid = conversation["conversation_id"]
 

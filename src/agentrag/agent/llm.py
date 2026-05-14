@@ -38,12 +38,16 @@ class AgentLLM:
             ],
         )
         latency_ms = (time.perf_counter() - started) * 1000
-        content = response.choices[0].message.content or "{}"
+        raw = response.choices[0].message.content or "{}"
         record_llm_call(
             task="json", model=self.model, latency_ms=latency_ms,
-            in_text=system_prompt + user_prompt, out_text=content,
+            in_text=system_prompt + user_prompt, out_text=raw,
             usage=getattr(response, "usage", None),
         )
+        # Strip <think>...</think> chain-of-thought from reasoning models
+        # (DeepSeek-R1, QwQ, etc.) so the residual JSON parses cleanly.
+        from src.agentrag.common.thinking import clean_thinking_content
+        content = clean_thinking_content(raw) or "{}"
         result = json.loads(content)
         # Some providers return a JSON array instead of an object; unwrap if needed
         if isinstance(result, list):
@@ -68,13 +72,14 @@ class AgentLLM:
             ],
         )
         latency_ms = (time.perf_counter() - started) * 1000
-        out = response.choices[0].message.content or ""
+        raw = response.choices[0].message.content or ""
         record_llm_call(
             task="text", model=self.model, latency_ms=latency_ms,
-            in_text=system_prompt + user_prompt, out_text=out,
+            in_text=system_prompt + user_prompt, out_text=raw,
             usage=getattr(response, "usage", None),
         )
-        return out
+        from src.agentrag.common.thinking import clean_thinking_content
+        return clean_thinking_content(raw)
 
     async def stream_text(
         self,

@@ -119,9 +119,20 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
 fi
 
 echo "📦 Pulling ${#unique[@]} model(s) into '$CONTAINER'..."
+# Fallback map: custom finetuned names → base they're derived from.
+# When the custom variant isn't in registry AND no local Modelfile artifact
+# exists, ensure_ollama_model.sh creates an alias `FROM <base>` so the .env
+# stays functional after a `make nuke`.
+declare -A FALLBACK_MAP=(
+  ["qwen-agentrag"]="qwen2.5:7b-instruct"
+  ["agentrag-embed-v1"]="mxbai-embed-large"
+)
+HERE="$(cd "$(dirname "$0")" && pwd)"
 for m in "${unique[@]}"; do
-  echo "── ollama pull $m"
-  docker exec "$CONTAINER" ollama pull "$m" || echo "⚠️  failed: $m (continuing)"
+  fb="${FALLBACK_MAP[$m]:-}"
+  echo "── ensure $m ${fb:+(fallback: $fb)}"
+  CONTAINER="$CONTAINER" bash "$HERE/ensure_ollama_model.sh" "$m" "$fb" \
+    || echo "⚠️  failed: $m (continuing)"
 done
 
 echo "✅ Done."

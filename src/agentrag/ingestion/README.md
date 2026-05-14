@@ -138,3 +138,10 @@ ingest_folder(folder_path)
 | `VISION_BASE_URL` | `None` | Override endpoint nếu cần (Ollama / custom) |
 | `IMAGE_STORAGE_DIR` | `data/images` | Thư mục lưu ảnh extract từ PDF + standalone uploads |
 | `IMAGE_MIN_SIZE_BYTES` | `5000` | Skip ảnh nhỏ hơn ngưỡng (icons, decorative bullets) |
+| `VISION_INGEST_MODE` | `async` | `sync` = describe inline (blocks pipeline); `async` = queue ARQ vision_extract job |
+| `VISION_TIMEOUT_SECONDS` | `180` | Timeout vision LLM call (llava cold-start) |
+| `VISION_MAX_CONCURRENCY` | `4` | Parallel describes in vision_extract job |
+| `VISION_MAX_RPM` | `10` | RPM cap (0 = disabled) — Gemini free tier = 10 |
+| `VISION_PER_IMAGE_RETRIES` | `3` | Transient error retry per image |
+| `VISION_FLUSH_BATCH_SIZE` | `10` | Commit segments to PG+ES every N images |
+| `ORIGINALS_DIR` | `data/originals` | Persist original uploaded bytes for `'Open original'` UI button. Empty = discard after ingest |

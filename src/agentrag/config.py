@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
 
     AGENT_MAX_STEPS: int = 4
+    # Backend orchestrator: hand-rolled loop (default) or langgraph StateGraph.
+    AGENT_BACKEND: Literal["loop", "langgraph"] = "loop"
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10
@@ -140,6 +142,12 @@ class Settings(BaseSettings):
     # sync: describe images inline during ingest (slow, blocks pipeline).
     # async: skip describe; queue ARQ vision_extract job → text retrieval ready ngay.
     VISION_INGEST_MODE: Literal["sync", "async"] = "async"
+
+    # Auto-route to large-context model khi prompt > threshold tokens.
+    # Inspired by open-notebook provision_langchain_model.
+    # None = disabled (use default model regardless of size).
+    LLM_LARGE_CONTEXT_MODEL: str | None = None         # ví dụ gemini-2.5-pro, qwen2.5:32b
+    LLM_LARGE_CONTEXT_THRESHOLD: int = 100_000         # tokens
     # Max concurrent describe calls in vision_extract worker job.
     # Cloud APIs (Gemini/OpenAI): 4-8. Local Ollama: keep at 1 to avoid GPU thrashing.
     VISION_MAX_CONCURRENCY: int = 4

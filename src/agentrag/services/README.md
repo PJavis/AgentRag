@@ -102,6 +102,9 @@ Empirically improves LLM attention on long contexts.
 | `LLM_ROUTING_ENABLED` | `false` | Bật task-based model routing |
 | `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model name. Tasks: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary` |
 | `LLM_COST_TRACKING_ENABLED` | `false` | Bật cost tracking (`GET /on/api/metrics/cost`) |
+| `LLM_LARGE_CONTEXT_MODEL` | `None` | Auto-override khi prompt > threshold (open-notebook pattern). Bỏ trống = disabled |
+| `LLM_LARGE_CONTEXT_THRESHOLD` | `100000` | Token cutoff để switch sang large-context model |
+| `VISION_TIMEOUT_SECONDS` | `180` | Timeout cho vision LLM calls (llava cold-start có thể >60s) |
 | `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy chunk-count cap (used when token budget = 0) |
 | `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware packed-context budget |
 | `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Best chunks at start + end of packed context |

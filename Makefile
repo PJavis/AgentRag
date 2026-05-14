@@ -108,6 +108,12 @@ docker-up-llm:
 ollama-pull:
 	@bash scripts/pull_ollama_models.sh .env
 
+# After `make nuke` or fresh checkout: re-register all models referenced in
+# .env (registry pull, local Modelfile, or alias fallback to base). Idempotent.
+.PHONY: reseed-models
+reseed-models:
+	@bash scripts/pull_ollama_models.sh .env
+
 # Preview what would be pulled.
 .PHONY: ollama-pull-dry
 ollama-pull-dry:
@@ -245,7 +251,11 @@ nuke:
 	find . -type d -name __pycache__ -prune -exec rm -rf {} \; 2>/dev/null || true
 	rm -rf $(FRONTEND_DIR)/.next $(FRONTEND_DIR)/.turbo $(FRONTEND_DIR)/node_modules
 	rm -rf .venv
-	@echo "✅ Nuked. Run \`make install\` to rebuild from scratch."
+	@echo "✅ Nuked. Next:"
+	@echo "  1. make install        # rebuild deps + DB schema"
+	@echo "  2. make docker-up-llm  # auto-reseed Ollama models (registry / local Modelfile / alias)"
+	@echo "  Custom finetuned models (qwen-agentrag, agentrag-embed-v1) are aliased to their base"
+	@echo "  unless models/ artifacts remain. Re-run finetune to restore quality."
 
 .PHONY: clean
 clean:

@@ -230,6 +230,37 @@ VISION_BASE_URL=http://127.0.0.1:11434/v1/
 
 Sau khi nuke chạy `make install` để dựng lại từ đầu.
 
+**Custom finetuned Ollama models** (`qwen-agentrag`, `agentrag-embed-v1`):
+
+| Tình huống | Hành vi |
+|---|---|
+| `models/<name>*/Modelfile` còn (đã `make convert-llm`) | `make reseed-models` re-register exact GGUF, chất lượng finetune giữ |
+| Chỉ HF dir còn (chưa convert) | Cần `make convert-llm` để build GGUF + Modelfile, rồi reseed |
+| Không artifact nào | `make reseed-models` tự động create alias `FROM qwen2.5:7b-instruct` (chất lượng base). Script sẽ pull base model nếu chưa có, rồi tạo alias. |
+
+**Cách alias hoạt động:**
+```bash
+# scripts/ensure_ollama_model.sh quản lý 5 bước resolution:
+# 1. Kiểm tra model đã registered? → done
+# 2. Pull từ registry (public model)?  → done
+# 3. Local Modelfile từ finetune? → done
+# 4. Local Modelfile matching pattern? → done
+# 5. Fallback: tạo alias FROM base model
+#    - Đảm bảo base model đã pulled trước
+#    - Viết Modelfile vào /tmp, rồi ollama create
+#    - Tạo lightweight alias tag
+```
+
+Recovery sau nuke đầy đủ:
+```bash
+make nuke
+make install                  # uv + npm + alembic
+make docker-up-llm            # auto reseed via ensure_ollama_model.sh
+# Nếu muốn restore finetune quality:
+make convert-llm              # rebuild GGUF từ models/qwen-agentrag-7b/
+make reseed-models            # re-register exact
+```
+
 ```bash
 # Database hỏng / muốn ingest lại từ đầu
 make reset
@@ -359,7 +390,34 @@ LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","answer":"qw
 STRUCTMEM_MAX_CONCURRENCY=2
 ```
 
-### Tier 3 — GPU 16–24 GB VRAM
+### Tier 3a — GPU 16 GB VRAM (full feature set, qwen 7B + vision)
+
+Recommended for laptop/workstation users who want every feature on (vision,
+StructMem, mindmap, summary, transformations) without OOM. Concurrent loaded:
+qwen2.5:7b (~5GB) + llava:7b (~4.5GB) + llama3.2:3b (~2GB) + mxbai-embed-large (~0.7GB).
+
+```env
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_MODEL=mxbai-embed-large
+EXTRACTION_PROVIDER=ollama
+EXTRACTION_MODEL=qwen2.5:7b-instruct
+AGENT_PROVIDER=ollama
+AGENT_MODEL=qwen2.5:7b-instruct
+VISION_PROVIDER=ollama
+VISION_MODEL=llava:7b
+VISION_INGEST_MODE=async                 # vital — vision blocks ingest otherwise
+RETRIEVAL_RERANK_ENABLED=true
+RETRIEVAL_RERANK_BACKEND=local_cross_encoder
+STRUCTURED_REASONING_ENABLED=true
+LLM_ROUTING_ENABLED=true
+LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","schema_discovery":"qwen2.5:7b-instruct","sql_compile":"qwen2.5:7b-instruct","answer":"qwen2.5:7b-instruct","mindmap":"qwen2.5:7b-instruct","summary":"qwen2.5:7b-instruct"}
+STRUCTMEM_MAX_CONCURRENCY=2
+```
+
+Also bump `OLLAMA_MAX_LOADED_MODELS=3` in `docker-compose.yml` so 3 LLMs stay
+hot together.
+
+### Tier 3b — GPU 24 GB VRAM (qwen 14B/32B)
 
 ```env
 EMBEDDING_PROVIDER=ollama
@@ -476,9 +534,15 @@ RETRIEVAL_RERANK_BACKEND=llm_chat    # llm_chat | local_cross_encoder
 LLM_ROUTING_ENABLED=false
 LLM_TASK_MODEL_MAP={}
 LLM_COST_TRACKING_ENABLED=false     # flip true → GET /on/api/metrics/cost
+
+# Auto-route to large-context model when prompt > threshold tokens
+# (open-notebook provision_langchain_model pattern). Bỏ trống = disabled.
+# Ví dụ: gemini-2.5-pro (1M ctx), qwen2.5:32b (128k ctx)
+LLM_LARGE_CONTEXT_MODEL=
+LLM_LARGE_CONTEXT_THRESHOLD=100000
 ```
 
-Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`
+Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `transformation`
 
 When cost tracking is on, every LLM call is logged in a process-local ring
 buffer (last 5000 calls) with estimated USD via public Gemini / OpenAI pricing.
@@ -504,7 +568,19 @@ AGENT_SELF_CRITIQUE_RRF_THRESHOLD=0.05
 AGENT_PLAN_THEN_EXECUTE_ENABLED=true
 AGENT_PLAN_TRIGGER_MIN_CHARS=60
 AGENT_PLAN_MAX_SUBQUERIES=4
+
+# Orchestrator backend:
+#   loop      = hand-rolled chat() loop (battle-tested)
+#   langgraph = StateGraph with 13 nodes (checkpoint + replay)
+AGENT_BACKEND=loop
 ```
+
+**LangGraph backend** (`AGENT_BACKEND=langgraph`): same nodes as legacy loop
+(validate → memory → chitchat_check → classify → structured/semantic →
+plan → bootstrap → decide ⇄ tool_exec → assemble → answer → ground) but
+orchestrated as a `StateGraph` with `InMemorySaver` checkpointer. Each
+turn's state is persisted by `thread_id = conversation_id` → resume from
+any node, inspect state via `_GRAPH.aget_state(config)`.
 
 **Chit-chat fast-path**: short messages with greeting/thanks tokens
 (`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...) skip retrieval and
@@ -543,6 +619,14 @@ VISION_MAX_CONCURRENCY=4
 VISION_MAX_RPM=10                # 0 = disable RPM cap
 VISION_PER_IMAGE_RETRIES=3
 VISION_FLUSH_BATCH_SIZE=10       # PG+ES commit every N described images (progress visibility)
+VISION_TIMEOUT_SECONDS=180       # llava cold-start có thể > 60s
+# sync: describe inline (blocks pipeline). async: queue ARQ vision_extract
+# → text retrieval ready ngay; image segments lấp dần khi vision xong.
+VISION_INGEST_MODE=async
+
+# Persist original uploaded bytes so UI 'Open original' button works.
+# Empty/None = bytes discarded after ingest.
+ORIGINALS_DIR=data/originals
 ```
 
 Image-heavy PDFs (e.g. 100-page scanned thesis) are processed by the

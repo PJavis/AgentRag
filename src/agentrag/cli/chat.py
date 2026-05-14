@@ -15,7 +15,7 @@ from rich.live import Live
 from rich.spinner import Spinner
 from rich.text import Text
 
-from src.agentrag.agent.service import AgentService
+from src.agentrag.agent.factory import get_agent_service
 from src.agentrag.chat.history import ConversationStore
 from src.agentrag.cli.state import (
     get_active_conversation,
@@ -128,7 +128,7 @@ async def _chat_loop(
         padding=(0, 1),
     ))
 
-    agent = AgentService()
+    agent = get_agent_service()
 
     while True:
         try:
@@ -153,7 +153,7 @@ async def _chat_loop(
             title = conv.get("title") or "(no title)"
             set_active_conversation(cid, conv.get("title"))
             console.print(f"[green]✓[/green] New conversation: [bold]{title}[/bold]  [dim]{cid}[/dim]")
-            agent = AgentService()
+            agent = get_agent_service()
             continue
 
         if question.startswith("/switch"):
@@ -175,7 +175,7 @@ async def _chat_loop(
             title = conv.get("title") or "(no title)"
             set_active_conversation(cid, conv.get("title"))
             console.print(f"[green]✓[/green] Switched to [bold]{title}[/bold]  [dim]{cid}[/dim]")
-            agent = AgentService()
+            agent = get_agent_service()
             continue
 
         if question == "/list":
@@ -192,7 +192,7 @@ async def _chat_loop(
             cid = conv["conversation_id"]
             set_active_conversation(cid, None)
             console.print("[dim]Started fresh conversation.[/dim]")
-            agent = AgentService()
+            agent = get_agent_service()
             continue
 
         # Save user message

@@ -117,7 +117,8 @@ class TransformationUpdate(BaseModel):
 class TransformationExecuteRequest(BaseModel):
     transformation_id: str | None = None
     name: str | None = None
-    input_text: str
+    input_text: str | None = None
+    source_id: str | None = None         # auto-fetch full text from Document segments
     model_id: str | None = None
 
 
@@ -151,10 +152,42 @@ async def update_default_prompt(body: dict):
     return {"transformation_instructions": body.get("transformation_instructions", "")}
 
 
+async def _load_source_text(source_id: str) -> str:
+    """Fetch all segments of a Document and concat into a single input blob."""
+    from sqlalchemy import select as _sel
+    from src.agentrag.database.models import Segment
+
+    raw = source_id.removeprefix("source:")
+    try:
+        sid = uuid.UUID(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Invalid source_id")
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            _sel(Segment.content, Segment.section_path, Segment.position)
+            .where(Segment.document_id == sid)
+            .order_by(Segment.position.asc())
+        )
+        rows = result.all()
+    if not rows:
+        raise HTTPException(404, "Source has no indexed segments yet")
+    parts: list[str] = []
+    for content, section_path, _pos in rows:
+        if section_path:
+            parts.append(f"[{section_path}]\n{content}")
+        else:
+            parts.append(content)
+    return "\n\n---\n\n".join(parts)
+
+
 @router.post("/execute")
 async def execute_transformation(body: TransformationExecuteRequest):
-    if not body.input_text:
-        raise HTTPException(400, "input_text is required")
+    # Resolve input_text: explicit OR fetched from source_id
+    input_text = body.input_text
+    if not input_text and body.source_id:
+        input_text = await _load_source_text(body.source_id)
+    if not input_text:
+        raise HTTPException(400, "input_text or source_id is required")
 
     transformation: AdapterTransformation | None = None
     async with AsyncSessionLocal() as session:
@@ -175,8 +208,8 @@ async def execute_transformation(body: TransformationExecuteRequest):
     llm = LLMGateway()
     text = await llm.text_response(
         system_prompt=transformation.prompt,
-        user_prompt=body.input_text,
-        task="answer",
+        user_prompt=input_text,
+        task="transformation",
     ) if hasattr(llm, "text_response") else None
 
     if text is None:
@@ -184,10 +217,26 @@ async def execute_transformation(body: TransformationExecuteRequest):
         data, _ = await llm.json_response(
             system_prompt=transformation.prompt
             + "\n\nTrả về một JSON object chính xác có dạng: {\"output\": <kết quả>}.",
-            user_prompt=body.input_text,
-            task="answer",
+            user_prompt=input_text,
+            task="transformation",
         )
         text = (data.get("output") or "").strip() if isinstance(data, dict) else str(data)
+
+    # Optionally persist as a SourceInsight if source-derived
+    if body.source_id:
+        from src.agentrag.adapter.db import AdapterSourceInsight
+        raw = body.source_id.removeprefix("source:")
+        try:
+            sid = uuid.UUID(raw)
+            async with AsyncSessionLocal() as session:
+                session.add(AdapterSourceInsight(
+                    source_id=sid,
+                    insight_type=transformation.name,
+                    content=text,
+                ))
+                await session.commit()
+        except (ValueError, TypeError):
+            pass
 
     return {
         "output": text,

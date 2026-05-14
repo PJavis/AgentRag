@@ -26,7 +26,7 @@ from src.agentrag.adapter.models import (
     SendMessageRequest,
     UpdateSessionRequest,
 )
-from src.agentrag.agent.service import AgentService
+from src.agentrag.agent.factory import get_agent_service
 from src.agentrag.chat.history import ConversationStore
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Conversation, Document
@@ -160,7 +160,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     history = await store.list_messages(body.session_id, limit=20)
     await store.append_message(body.session_id, role="user", content=body.message)
 
-    agent = AgentService()
+    agent = get_agent_service()
     result = await agent.chat(
         question=body.message,
         document_title=document_title,

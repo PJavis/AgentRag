@@ -9,6 +9,20 @@ from elasticsearch import AsyncElasticsearch, NotFoundError as ESNotFoundError
 from src.agentrag.config import settings
 
 
+def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Build ES `terms` filter clauses for S5 domain tags."""
+    if not filters:
+        return []
+    clauses: list[dict[str, Any]] = []
+    systems = filters.get("systems") or []
+    if systems:
+        clauses.append({"terms": {"system_tag": list(systems)}})
+    specs = filters.get("specialties") or []
+    if specs:
+        clauses.append({"terms": {"specialty_tag": list(specs)}})
+    return clauses
+
+
 class ElasticsearchStore:
     def __init__(self):
         self.client = AsyncElasticsearch([settings.ELASTICSEARCH_URL])
@@ -306,6 +320,7 @@ class ElasticsearchStore:
         query: str,
         top_k: int | None = None,
         document_title: str | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         size = top_k or settings.RETRIEVAL_TOP_K
         query_body: dict[str, Any] = {
@@ -315,13 +330,17 @@ class ElasticsearchStore:
                 "type": "best_fields",
             }
         }
+        filter_clauses: list[dict[str, Any]] = []
         if document_title:
+            filter_clauses.append(
+                {"term": {"document_title.keyword": document_title}}
+            )
+        filter_clauses.extend(_tag_filter_clauses(filters))
+        if filter_clauses:
             query_body = {
                 "bool": {
                     "must": [query_body],
-                    "filter": [
-                        {"term": {"document_title.keyword": document_title}},
-                    ],
+                    "filter": filter_clauses,
                 }
             }
         try:
@@ -342,6 +361,7 @@ class ElasticsearchStore:
         top_k: int | None = None,
         num_candidates: int | None = None,
         document_title: str | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         size = top_k or settings.RETRIEVAL_TOP_K
         candidates = num_candidates or settings.RETRIEVAL_NUM_CANDIDATES
@@ -354,10 +374,19 @@ class ElasticsearchStore:
             },
             "size": size,
         }
+        knn_filter_clauses: list[dict[str, Any]] = []
         if document_title:
-            search_body["knn"]["filter"] = {
-                "term": {"document_title.keyword": document_title}
-            }
+            knn_filter_clauses.append(
+                {"term": {"document_title.keyword": document_title}}
+            )
+        knn_filter_clauses.extend(_tag_filter_clauses(filters))
+        if knn_filter_clauses:
+            # knn.filter accepts single clause or bool wrapper for multiple
+            search_body["knn"]["filter"] = (
+                knn_filter_clauses[0]
+                if len(knn_filter_clauses) == 1
+                else {"bool": {"filter": knn_filter_clauses}}
+            )
         try:
             response = await self.client.search(index=self.index_name, **search_body)
         except ESNotFoundError:
@@ -372,18 +401,21 @@ class ElasticsearchStore:
         num_candidates: int | None = None,
         rrf_k: int | None = None,
         document_title: str | None = None,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         size = top_k or settings.RETRIEVAL_TOP_K
         sparse_hits = await self.sparse_search(
             query=query,
             top_k=size,
             document_title=document_title,
+            filters=filters,
         )
         dense_hits = await self.dense_search(
             query_embedding=query_embedding,
             top_k=size,
             num_candidates=num_candidates,
             document_title=document_title,
+            filters=filters,
         )
         return self._rrf_fuse(
             sparse_hits=sparse_hits,

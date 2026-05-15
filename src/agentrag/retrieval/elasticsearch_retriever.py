@@ -22,9 +22,9 @@ from src.agentrag.retrieval.reranker import LLMReranker
 _RESULT_CACHE: TTLCache[str, dict] = TTLCache(maxsize=512, ttl=60)
 
 
-def _cache_key(query: str, mode: str, top_k: int | None, document_title: str | None, rerank: bool | None) -> str:
+def _cache_key(query: str, mode: str, top_k: int | None, document_title: str | None, rerank: bool | None, extra: dict | None = None) -> str:
     h = hashlib.sha256()
-    h.update(json.dumps([query, mode, top_k, document_title, rerank], ensure_ascii=False, sort_keys=True).encode())
+    h.update(json.dumps([query, mode, top_k, document_title, rerank, extra], ensure_ascii=False, sort_keys=True).encode())
     return h.hexdigest()
 
 
@@ -43,14 +43,19 @@ class ElasticsearchRetriever:
         document_title: str | None = None,
         rerank: bool | None = None,
         dense_query: str | None = None,
+        filters: dict | None = None,
     ) -> dict:
         """`query` drives BM25 + rerank + intent ranking (kept clean for keyword match).
         `dense_query` is embedded for kNN — pass HyDE-augmented text here. Falls back to `query` when None.
+        `filters` carries S5 domain filters: {"systems": [...], "specialties": [...]}.
         """
         if mode not in {"sparse", "dense", "hybrid", "hybrid_kg"}:
             raise ValueError("mode must be one of: sparse, dense, hybrid, hybrid_kg")
 
-        ck = _cache_key(query, mode, top_k, document_title, rerank)
+        ck = _cache_key(
+            query, mode, top_k, document_title, rerank,
+            extra=filters,
+        )
         cached = _RESULT_CACHE.get(ck)
         if cached is not None:
             return cached
@@ -66,6 +71,7 @@ class ElasticsearchRetriever:
                 query=lexical_query,
                 top_k=candidate_size,
                 document_title=document_title,
+                filters=filters,
             )
             hits = self._dedupe_hits(hits)
             hits, reranked = await self._rerank_hits(
@@ -96,6 +102,7 @@ class ElasticsearchRetriever:
                 query_embedding=query_embedding,
                 top_k=candidate_size,
                 document_title=document_title,
+                filters=filters,
             )
             hits = self._dedupe_hits(hits)
             hits, reranked = await self._rerank_hits(
@@ -124,6 +131,7 @@ class ElasticsearchRetriever:
             query_embedding=query_embedding,
             top_k=candidate_size,
             document_title=document_title,
+            filters=filters,
         )
         if mode == "hybrid_kg":
             if self._should_use_graph(query):

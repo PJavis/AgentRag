@@ -47,8 +47,25 @@ class AgentLLM:
         # Strip <think>...</think> chain-of-thought from reasoning models
         # (DeepSeek-R1, QwQ, etc.) so the residual JSON parses cleanly.
         from src.agentrag.common.thinking import clean_thinking_content
-        content = clean_thinking_content(raw) or "{}"
-        result = json.loads(content)
+        cleaned = clean_thinking_content(raw)
+        # Fallback: if cleaning emptied the response (model returned only
+        # <think>…</think> with no answer body), keep raw so json.loads at
+        # least surfaces a useful error instead of silently returning {}.
+        content = cleaned if cleaned.strip() else raw
+        # Extract first balanced JSON object in case of leading prose.
+        if content and not content.lstrip().startswith("{"):
+            idx = content.find("{")
+            if idx >= 0:
+                content = content[idx:]
+        try:
+            result = json.loads(content or "{}")
+        except json.JSONDecodeError as e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "json_response parse failed (model=%s): %s | raw[:300]=%r",
+                self.model, e, raw[:300],
+            )
+            result = {}
         # Some providers return a JSON array instead of an object; unwrap if needed
         if isinstance(result, list):
             result = result[0] if result and isinstance(result[0], dict) else {}

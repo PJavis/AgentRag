@@ -49,6 +49,22 @@ dependencies = [
     # Agent graph (langgraph backend, optional path)
     "langgraph>=0.2.50",
     "langchain-core>=0.3.20",
+    # YAML ontology seeder + tests
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests requiring a running API + Ollama",
 ]
 
 [project.scripts]

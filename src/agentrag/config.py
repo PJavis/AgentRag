@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # S5 — domain tagging during ingest (SectionTagger). Adds system_tag /
     # specialty_tag / canonical_terms to every chunk.
     TAGGING_ENABLED: bool = True
+    # S5 — federated retrieval (DomainRouter + FederatedRetriever).
+    DOMAIN_FILTER_ENABLED: bool = True
+    DOMAIN_ROUTER_CONFIDENCE_THRESHOLD: float = 0.7
+    DOMAIN_ROUTER_TOP_K: int = 3
     STRUCTMEM_ENTRIES_INDEX_NAME: str = "agentrag_entries"
     STRUCTMEM_SYNTHESIS_INDEX_NAME: str = "agentrag_synthesis"
     # Số chunks/group tích luỹ trước khi trigger cross-chunk consolidation

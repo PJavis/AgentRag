@@ -73,6 +73,9 @@ class ElasticsearchStore:
                     "segment_type": {"type": "keyword"},
                     "page_start": {"type": "integer"},
                     "page_end": {"type": "integer"},
+                    "system_tag": {"type": "keyword"},
+                    "specialty_tag": {"type": "keyword"},
+                    "canonical_terms": {"type": "keyword"},
                     "metadata": {"type": "object", "enabled": True},
                     "embedding": {
                         "type": "dense_vector",
@@ -86,7 +89,7 @@ class ElasticsearchStore:
         await self.client.indices.create(index=self.index_name, body=mapping)
 
     async def _ensure_segment_fields(self) -> None:
-        """Add page_start, page_end, segment_type to an existing index (non-destructive)."""
+        """Add page_start, page_end, segment_type + S5 domain tags to existing index (non-destructive)."""
         try:
             await self.client.indices.put_mapping(
                 index=self.index_name,
@@ -95,6 +98,9 @@ class ElasticsearchStore:
                         "segment_type": {"type": "keyword"},
                         "page_start": {"type": "integer"},
                         "page_end": {"type": "integer"},
+                        "system_tag": {"type": "keyword"},
+                        "specialty_tag": {"type": "keyword"},
+                        "canonical_terms": {"type": "keyword"},
                     }
                 },
             )
@@ -230,6 +236,9 @@ class ElasticsearchStore:
                     "segment_type": chunk.get("segment_type", "text"),
                     "page_start": chunk.get("page_start"),
                     "page_end": chunk.get("page_end"),
+                    "system_tag": chunk.get("system_tag"),
+                    "specialty_tag": chunk.get("specialty_tag") or [],
+                    "canonical_terms": chunk.get("canonical_terms") or [],
                     "metadata": chunk.get("metadata", {}),
                 }
             )

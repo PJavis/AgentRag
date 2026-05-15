@@ -43,6 +43,9 @@ def _to_resolved(row: OntologyTerm, *, confidence: float) -> ResolvedTerm:
     )
 
 
+_FUZZY_THRESHOLD = 0.45
+
+
 class TermResolver:
     async def resolve(self, term: str) -> ResolvedTerm | None:
         if not term or not term.strip():
@@ -60,8 +63,7 @@ class TermResolver:
             if row is not None:
                 return _to_resolved(row, confidence=1.0)
 
-            # 2. synonym match — case-insensitive substring in JSONB text.
-            # Wrap term in quotes so we match array element, not partial.
+            # 2. synonym match — case-insensitive JSONB substring (quoted).
             lower_term = term.lower()
             row = (
                 await s.execute(
@@ -75,4 +77,67 @@ class TermResolver:
             if row is not None:
                 return _to_resolved(row, confidence=1.0)
 
+            # 3. Trigram fuzzy (pg_trgm extension).
+            sim = func.similarity(OntologyTerm.canonical_norm, norm)
+            fuzzy = (
+                await s.execute(
+                    select(OntologyTerm, sim.label("sim"))
+                    .where(sim > _FUZZY_THRESHOLD)
+                    .order_by(sim.desc())
+                    .limit(1)
+                )
+            ).first()
+            if fuzzy is not None:
+                row, similarity = fuzzy
+                return _to_resolved(row, confidence=float(similarity))
+
         return None
+
+    async def expand_query(self, query: str) -> str:
+        """Append canonical + synonym hints to a query string for retrieval."""
+        hits = await self.find_in_text(query, max_terms=5)
+        extras: list[str] = []
+        for h in hits:
+            extras.append(h.canonical)
+            extras.extend(h.synonyms[:3])
+        if not extras:
+            return query
+        unique = []
+        seen = set()
+        for e in extras:
+            low = e.lower()
+            if low not in seen and low not in query.lower():
+                seen.add(low)
+                unique.append(e)
+        if not unique:
+            return query
+        return f"{query} {' '.join(unique)}"
+
+    async def find_in_text(
+        self, text: str, max_terms: int = 10
+    ) -> list[ResolvedTerm]:
+        """Scan text for known ontology terms via case-insensitive substring.
+
+        Cheap for ≤ a few thousand rows. Loads all terms once per call.
+        """
+        if not text or not text.strip():
+            return []
+        text_lower = text.lower()
+        async with AsyncSessionLocal() as s:
+            all_rows = (
+                await s.execute(select(OntologyTerm))
+            ).scalars().all()
+        hits: list[ResolvedTerm] = []
+        seen_ids: set[Any] = set()
+        for row in all_rows:
+            needles = [row.canonical.lower()] + [
+                str(syn).lower() for syn in (row.synonyms or [])
+            ]
+            if any(n and n in text_lower for n in needles):
+                if row.id in seen_ids:
+                    continue
+                seen_ids.add(row.id)
+                hits.append(_to_resolved(row, confidence=1.0))
+                if len(hits) >= max_terms:
+                    break
+        return hits

@@ -46,3 +46,31 @@ async def test_resolver_miss_returns_none():
 
 def test_norm_collapse_whitespace():
     assert _norm("  Đau   NGỰC  ") == "dau nguc"
+
+
+@pytest.mark.asyncio
+async def test_resolver_fuzzy_typo():
+    r = TermResolver()
+    out = await r.resolve("dauu ngucc")  # one-letter typos
+    assert out is not None
+    assert out.canonical == "Đau ngực"
+    assert 0.45 < out.confidence < 1.0
+
+
+@pytest.mark.asyncio
+async def test_expand_query_adds_synonyms():
+    r = TermResolver()
+    expanded = await r.expand_query("chest pain trong cấp cứu")
+    # Canonical should be appended when a synonym match is found.
+    assert "Đau ngực" in expanded
+
+
+@pytest.mark.asyncio
+async def test_find_in_text_returns_terms():
+    r = TermResolver()
+    hits = await r.find_in_text(
+        "Bệnh nhân vào viện vì đau ngực và khó thở."
+    )
+    canonicals = {t.canonical for t in hits}
+    assert "Đau ngực" in canonicals
+    assert "Khó thở" in canonicals

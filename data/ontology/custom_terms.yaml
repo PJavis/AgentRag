@@ -1,0 +1,346 @@
+# Curated Vietnamese medical canonical terms — seed for ontology_terms (source=custom).
+# Schema: canonical | synonyms[] | system_tag | specialty_tags[] | icd10? | parent?
+# system_tag values: tim_mach, ho_hap, tieu_hoa, than_kinh, noi_tiet, co_xuong_khop,
+#                    huyet_hoc, tiet_nieu, sinh_duc, da_lieu, mat_tmh, tam_than,
+#                    mien_dich, nhi_khoa, da_he, null
+# specialty_tags values: noi, ngoai, san, nhi, cap_cuu, hoi_suc, truyen_nhiem,
+#                        ung_buou, chan_doan_hinh_anh, xet_nghiem, duoc_ly,
+#                        giai_phau, sinh_ly_benh, general
+
+# ── Symptoms / triệu chứng ──────────────────────────────────────────────────
+- canonical: Đau ngực
+  synonyms: [đau tức ngực, đau vùng ngực, thống tâm, chest pain]
+  system_tag: null
+  specialty_tags: [noi, cap_cuu, tim_mach]
+  icd10: R07.4
+
+- canonical: Khó thở
+  synonyms: [khó thở khi gắng sức, thở ngắn, dyspnea, shortness of breath]
+  system_tag: ho_hap
+  specialty_tags: [noi, cap_cuu]
+  icd10: R06.0
+
+- canonical: Ho ra máu
+  synonyms: [khái huyết, hemoptysis]
+  system_tag: ho_hap
+  specialty_tags: [noi]
+  icd10: R04.2
+
+- canonical: Sốt cao
+  synonyms: [sốt, sốt cao liên tục, hyperthermia, fever, pyrexia]
+  system_tag: da_he
+  specialty_tags: [noi, nhi, truyen_nhiem]
+  icd10: R50.9
+
+- canonical: Đau bụng
+  synonyms: [đau vùng bụng, abdominal pain]
+  system_tag: tieu_hoa
+  specialty_tags: [noi, ngoai, cap_cuu]
+  icd10: R10.4
+
+- canonical: Đau đầu
+  synonyms: [nhức đầu, headache, cephalalgia]
+  system_tag: than_kinh
+  specialty_tags: [noi]
+  icd10: R51
+
+- canonical: Chóng mặt
+  synonyms: [vertigo, dizziness, hoa mắt chóng mặt]
+  system_tag: than_kinh
+  specialty_tags: [noi, mat_tmh]
+  icd10: R42
+
+# ── Diseases — Tim mạch ─────────────────────────────────────────────────────
+- canonical: Tăng huyết áp
+  synonyms: [HTA, cao huyết áp, hypertension]
+  system_tag: tim_mach
+  specialty_tags: [noi]
+  icd10: I10
+
+- canonical: Suy tim
+  synonyms: [suy tim sung huyết, heart failure, CHF]
+  system_tag: tim_mach
+  specialty_tags: [noi]
+  icd10: I50.9
+
+- canonical: Nhồi máu cơ tim
+  synonyms: [NMCT, myocardial infarction, MI, heart attack]
+  system_tag: tim_mach
+  specialty_tags: [noi, cap_cuu]
+  icd10: I21.9
+
+- canonical: Rối loạn nhịp tim
+  synonyms: [arrhythmia, loạn nhịp, dysrhythmia]
+  system_tag: tim_mach
+  specialty_tags: [noi]
+  icd10: I49.9
+
+# ── Diseases — Hô hấp / Thần kinh / Nội tiết / Tiêu hóa ────────────────────
+- canonical: Đột quỵ
+  synonyms: [tai biến mạch máu não, stroke, CVA]
+  system_tag: than_kinh
+  specialty_tags: [noi, cap_cuu]
+  icd10: I64
+
+- canonical: Viêm phổi
+  synonyms: [pneumonia, viêm phổi cộng đồng, CAP]
+  system_tag: ho_hap
+  specialty_tags: [noi, truyen_nhiem, nhi]
+  icd10: J18.9
+
+- canonical: Hen phế quản
+  synonyms: [hen, asthma, bronchial asthma]
+  system_tag: ho_hap
+  specialty_tags: [noi, nhi]
+  icd10: J45.9
+
+- canonical: COPD
+  synonyms: [bệnh phổi tắc nghẽn mạn tính, chronic obstructive pulmonary disease, BPTNMT]
+  system_tag: ho_hap
+  specialty_tags: [noi]
+  icd10: J44.9
+
+- canonical: Đái tháo đường
+  synonyms: [tiểu đường, diabetes mellitus, DM, ĐTĐ]
+  system_tag: noi_tiet
+  specialty_tags: [noi]
+  icd10: E11.9
+
+- canonical: Loét dạ dày
+  synonyms: [loét dạ dày tá tràng, peptic ulcer, gastric ulcer]
+  system_tag: tieu_hoa
+  specialty_tags: [noi, ngoai]
+  icd10: K25.9
+
+- canonical: Viêm gan B
+  synonyms: [HBV, hepatitis B, viêm gan virus B]
+  system_tag: tieu_hoa
+  specialty_tags: [noi, truyen_nhiem]
+  icd10: B18.1
+
+- canonical: Xơ gan
+  synonyms: [cirrhosis, xơ gan giai đoạn cuối]
+  system_tag: tieu_hoa
+  specialty_tags: [noi]
+  icd10: K74.6
+
+# ── Cơ - Xương - Khớp ─────────────────────────────────────────────────────────
+- canonical: Gãy xương
+  synonyms: [fracture, gãy xương hở, gãy xương kín]
+  system_tag: co_xuong_khop
+  specialty_tags: [ngoai, cap_cuu]
+  icd10: T14.20
+
+- canonical: Gãy xương dài
+  synonyms: [gãy thân xương dài, long bone fracture]
+  system_tag: co_xuong_khop
+  specialty_tags: [ngoai]
+  parent: Gãy xương
+
+- canonical: Trật khớp
+  synonyms: [trật khớp vai, dislocation, joint dislocation]
+  system_tag: co_xuong_khop
+  specialty_tags: [ngoai, cap_cuu]
+  icd10: T14.30
+
+- canonical: Viêm khớp
+  synonyms: [arthritis, viêm đa khớp]
+  system_tag: co_xuong_khop
+  specialty_tags: [noi]
+  icd10: M13.9
+
+- canonical: Thoát vị đĩa đệm
+  synonyms: [herniated disc, disc herniation, đau lưng do đĩa đệm]
+  system_tag: co_xuong_khop
+  specialty_tags: [noi, ngoai]
+  icd10: M51.9
+
+# ── Anatomy / Giải phẫu ─────────────────────────────────────────────────────
+- canonical: Tim
+  synonyms: [heart, cardiac]
+  system_tag: tim_mach
+  specialty_tags: [giai_phau]
+
+- canonical: Van hai lá
+  synonyms: [mitral valve, van hai lá tim]
+  system_tag: tim_mach
+  specialty_tags: [tim_mach, giai_phau]
+  parent: Tim
+
+- canonical: Phổi
+  synonyms: [lung, pulmonary]
+  system_tag: ho_hap
+  specialty_tags: [giai_phau]
+
+- canonical: Gan
+  synonyms: [liver, hepatic]
+  system_tag: tieu_hoa
+  specialty_tags: [giai_phau]
+
+- canonical: Thận
+  synonyms: [kidney, renal]
+  system_tag: tiet_nieu
+  specialty_tags: [giai_phau]
+
+- canonical: Não
+  synonyms: [brain, cerebrum, encephalon]
+  system_tag: than_kinh
+  specialty_tags: [giai_phau]
+
+- canonical: Tủy sống
+  synonyms: [spinal cord, medulla spinalis]
+  system_tag: than_kinh
+  specialty_tags: [giai_phau]
+
+- canonical: Thần kinh chi dưới
+  synonyms: [hệ thần kinh chi dưới, lower limb nerves, thần kinh chân]
+  system_tag: than_kinh
+  specialty_tags: [giai_phau]
+  parent: Tủy sống
+
+- canonical: Dạ dày
+  synonyms: [stomach, gastric]
+  system_tag: tieu_hoa
+  specialty_tags: [giai_phau]
+
+- canonical: Hệ tim mạch
+  synonyms: [cardiovascular system, hệ tuần hoàn]
+  system_tag: tim_mach
+  specialty_tags: [giai_phau]
+
+- canonical: Hệ hô hấp
+  synonyms: [respiratory system]
+  system_tag: ho_hap
+  specialty_tags: [giai_phau]
+
+- canonical: Hệ tiêu hóa
+  synonyms: [digestive system, gastrointestinal system]
+  system_tag: tieu_hoa
+  specialty_tags: [giai_phau]
+
+- canonical: Hệ thần kinh
+  synonyms: [nervous system, neural system]
+  system_tag: than_kinh
+  specialty_tags: [giai_phau]
+
+# ── Procedures / Thủ thuật ──────────────────────────────────────────────────
+- canonical: Sonde tiểu
+  synonyms: [đặt sonde tiểu, urinary catheter, catheter niệu]
+  system_tag: tiet_nieu
+  specialty_tags: [ngoai, cap_cuu]
+
+- canonical: Hồi sức tim phổi
+  synonyms: [CPR, cardiopulmonary resuscitation, hồi sinh tim phổi]
+  system_tag: da_he
+  specialty_tags: [cap_cuu, hoi_suc]
+
+- canonical: Đặt nội khí quản
+  synonyms: [intubation, đặt ống nội khí quản, NKQ]
+  system_tag: ho_hap
+  specialty_tags: [cap_cuu, hoi_suc]
+
+- canonical: Truyền dịch
+  synonyms: [IV fluids, dịch truyền, intravenous fluids]
+  system_tag: null
+  specialty_tags: [cap_cuu, noi, hoi_suc]
+
+# ── Drugs / Dược ────────────────────────────────────────────────────────────
+- canonical: Thuốc giảm đau
+  synonyms: [analgesic, painkiller, NSAID]
+  system_tag: null
+  specialty_tags: [duoc_ly, noi]
+
+- canonical: Opioid
+  synonyms: [morphin, opiate, narcotic]
+  system_tag: null
+  specialty_tags: [duoc_ly, cap_cuu]
+  parent: Thuốc giảm đau
+
+- canonical: Paracetamol
+  synonyms: [acetaminophen, tylenol]
+  system_tag: null
+  specialty_tags: [duoc_ly]
+  parent: Thuốc giảm đau
+
+- canonical: Kháng sinh
+  synonyms: [antibiotic, kháng khuẩn]
+  system_tag: null
+  specialty_tags: [duoc_ly, truyen_nhiem]
+
+# ── Emergencies / Cấp cứu ──────────────────────────────────────────────────
+- canonical: Sốc
+  synonyms: [shock, sốc nhiễm khuẩn, sốc giảm thể tích]
+  system_tag: da_he
+  specialty_tags: [cap_cuu, hoi_suc]
+  icd10: R57.9
+
+- canonical: Sốc phản vệ
+  synonyms: [anaphylactic shock, anaphylaxis]
+  system_tag: mien_dich
+  specialty_tags: [cap_cuu]
+  icd10: T78.2
+  parent: Sốc
+
+- canonical: Ngộ độc
+  synonyms: [poisoning, intoxication]
+  system_tag: da_he
+  specialty_tags: [cap_cuu, noi]
+  icd10: T65.9
+
+- canonical: Chấn thương sọ não
+  synonyms: [TBI, head injury, traumatic brain injury, CTSN]
+  system_tag: than_kinh
+  specialty_tags: [ngoai, cap_cuu]
+  icd10: S06.9
+
+# ── Diagnostic / Cận lâm sàng ──────────────────────────────────────────────
+- canonical: Khám lâm sàng
+  synonyms: [physical examination, thăm khám]
+  system_tag: null
+  specialty_tags: [general]
+
+- canonical: Tiền sử bệnh
+  synonyms: [bệnh sử, medical history, past medical history]
+  system_tag: null
+  specialty_tags: [general]
+
+- canonical: Xét nghiệm máu
+  synonyms: [blood test, CBC, công thức máu]
+  system_tag: huyet_hoc
+  specialty_tags: [xet_nghiem]
+
+- canonical: X-quang
+  synonyms: [X-ray, chụp X quang, radiograph]
+  system_tag: null
+  specialty_tags: [chan_doan_hinh_anh]
+
+- canonical: CT scan
+  synonyms: [chụp CT, computed tomography, chụp cắt lớp]
+  system_tag: null
+  specialty_tags: [chan_doan_hinh_anh]
+
+- canonical: MRI
+  synonyms: [chụp cộng hưởng từ, magnetic resonance imaging]
+  system_tag: null
+  specialty_tags: [chan_doan_hinh_anh]
+
+- canonical: Siêu âm
+  synonyms: [ultrasound, sonography]
+  system_tag: null
+  specialty_tags: [chan_doan_hinh_anh]
+
+- canonical: Điện tâm đồ
+  synonyms: [ECG, EKG, electrocardiogram, ĐTĐ]
+  system_tag: tim_mach
+  specialty_tags: [xet_nghiem, chan_doan_hinh_anh]
+
+# ── Obstetrics / Sản ────────────────────────────────────────────────────────
+- canonical: Thai kỳ
+  synonyms: [pregnancy, có thai, mang thai]
+  system_tag: sinh_duc
+  specialty_tags: [san]
+
+- canonical: Cấp cứu sản khoa
+  synonyms: [obstetric emergency, băng huyết, tiền sản giật]
+  system_tag: sinh_duc
+  specialty_tags: [san, cap_cuu]

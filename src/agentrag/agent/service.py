@@ -69,6 +69,36 @@ from src.agentrag.structured.pipeline import StructuredReasoningPipeline
 from src.agentrag.structured.query_classifier import QueryIntentClassifier
 
 
+def _find_answer_field(obj: Any, max_depth: int = 6) -> str | None:
+    """Find first non-empty 'answer' string in nested dict/list.
+
+    Some finetuned models ignore the prompt and wrap output in odd shapes
+    like {"search_results":[{"result":[{"answer":"..."}]}]}. Walk the tree
+    instead of giving up.
+    """
+    if max_depth <= 0:
+        return None
+    if isinstance(obj, dict):
+        ans = obj.get("answer")
+        if isinstance(ans, str) and ans.strip():
+            return ans.strip()
+        if isinstance(ans, dict):
+            nested = _find_answer_field(ans, max_depth - 1)
+            if nested:
+                return nested
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                nested = _find_answer_field(v, max_depth - 1)
+                if nested:
+                    return nested
+    elif isinstance(obj, list):
+        for item in obj:
+            nested = _find_answer_field(item, max_depth - 1)
+            if nested:
+                return nested
+    return None
+
+
 class AgentService:
     def __init__(self):
         self.llm_gateway = LLMGateway()
@@ -796,4 +826,30 @@ class AgentService:
             user_prompt=user_prompt,
             task="answer",
         )
+        # Recover answer if model returned wrong top-level shape.
+        # Finetunes occasionally produce {"search_results":[...]} or
+        # decide-shape {"done":false, "reflection":...} despite the answer prompt.
+        if isinstance(answer, dict) and not answer.get("answer"):
+            recovered = _find_answer_field(answer)
+            if recovered:
+                answer = {
+                    "answer": recovered,
+                    "citations": answer.get("citations") or [],
+                    "highlights": answer.get("highlights") or [],
+                }
+            else:
+                # Last resort: pull a coherent text field (reflection/reason/summary)
+                # or synthesize a graceful "not found" so UI never shows empty bubble.
+                fallback_text = ""
+                for k in ("reflection", "reason", "summary", "explanation", "response"):
+                    v = answer.get(k)
+                    if isinstance(v, str) and v.strip():
+                        fallback_text = v.strip()
+                        break
+                if not fallback_text:
+                    fallback_text = (
+                        "Tôi không tìm thấy thông tin đủ rõ trong tài liệu để trả lời câu hỏi này. "
+                        "Bạn có thể hỏi cụ thể hơn về một mục hoặc trang nào không?"
+                    )
+                answer = {"answer": fallback_text, "citations": answer.get("citations") or [], "highlights": []}
         return answer

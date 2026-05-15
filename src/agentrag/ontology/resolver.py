@@ -47,7 +47,11 @@ _FUZZY_THRESHOLD = 0.45
 
 
 class TermResolver:
-    async def resolve(self, term: str) -> ResolvedTerm | None:
+    async def resolve(
+        self, term: str, *, strict: bool = False
+    ) -> ResolvedTerm | None:
+        """Resolve a term. strict=True disables fuzzy match (avoid false
+        positives when the caller is tagging short section titles)."""
         if not term or not term.strip():
             return None
         norm = _norm(term)
@@ -76,6 +80,9 @@ class TermResolver:
             ).scalar_one_or_none()
             if row is not None:
                 return _to_resolved(row, confidence=1.0)
+
+            if strict:
+                return None
 
             # 3. Trigram fuzzy (pg_trgm extension).
             sim = func.similarity(OntologyTerm.canonical_norm, norm)
@@ -116,12 +123,14 @@ class TermResolver:
     async def find_in_text(
         self, text: str, max_terms: int = 10
     ) -> list[ResolvedTerm]:
-        """Scan text for known ontology terms via case-insensitive substring.
+        """Scan text for known ontology terms via word-boundary regex.
 
-        Cheap for ≤ a few thousand rows. Loads all terms once per call.
+        Short acronym synonyms (e.g. "MI", "CT") need word boundaries —
+        plain substring catches noise like "programMIng".
         """
         if not text or not text.strip():
             return []
+        import re
         text_lower = text.lower()
         async with AsyncSessionLocal() as s:
             all_rows = (
@@ -130,12 +139,19 @@ class TermResolver:
         hits: list[ResolvedTerm] = []
         seen_ids: set[Any] = set()
         for row in all_rows:
-            needles = [row.canonical.lower()] + [
-                str(syn).lower() for syn in (row.synonyms or [])
+            needles = [row.canonical] + [
+                str(syn) for syn in (row.synonyms or [])
             ]
-            if any(n and n in text_lower for n in needles):
-                if row.id in seen_ids:
+            matched = False
+            for n in needles:
+                if not n:
                     continue
+                # Word-boundary regex, case-insensitive.
+                pattern = r"\b" + re.escape(n.lower()) + r"\b"
+                if re.search(pattern, text_lower):
+                    matched = True
+                    break
+            if matched and row.id not in seen_ids:
                 seen_ids.add(row.id)
                 hits.append(_to_resolved(row, confidence=1.0))
                 if len(hits) >= max_terms:

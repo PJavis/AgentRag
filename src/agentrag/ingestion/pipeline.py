@@ -202,6 +202,15 @@ async def ingest_folder(
             )
             timings["chunk_graph_ms"] = (time.perf_counter() - t0) * 1000
 
+            # S5 — tag chunks with system_tag / specialty_tag / canonical_terms
+            # via SectionTagger (lazy import to avoid hard dep when feature off).
+            if settings.TAGGING_ENABLED:
+                t0 = time.perf_counter()
+                from .section_tagger import SectionTagger
+                _tagger = SectionTagger()
+                chunks_search = [await _tagger.tag_chunk(c) for c in chunks_search]
+                timings["tagging_ms"] = (time.perf_counter() - t0) * 1000
+
             t0 = time.perf_counter()
             texts = [c["content"] for c in chunks_search]
             embeddings = await embedder.embed(texts)

@@ -77,6 +77,9 @@ class Settings(BaseSettings):
 
     # StructMem — thay thế Graphiti graph extraction
     STRUCTMEM_ENABLED: bool = True
+    # S5 — domain tagging during ingest (SectionTagger). Adds system_tag /
+    # specialty_tag / canonical_terms to every chunk.
+    TAGGING_ENABLED: bool = True
     STRUCTMEM_ENTRIES_INDEX_NAME: str = "agentrag_entries"
     STRUCTMEM_SYNTHESIS_INDEX_NAME: str = "agentrag_synthesis"
     # Số chunks/group tích luỹ trước khi trigger cross-chunk consolidation

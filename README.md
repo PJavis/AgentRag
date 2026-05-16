@@ -41,6 +41,11 @@ Nền tảng RAG (Retrieval-Augmented Generation) cho học liệu, đặc biệ
 
 ## 1. Kiến trúc tổng quan
 
+> S4 — codebase chia thành **Reasoning Plane** (agentic decision-making) và
+> **Execution Plane** (IO workers + service facades) với
+> `ServiceContainer` singleton là entry duy nhất cho Reasoning code lấy
+> service. Chi tiết: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
 ```
 POST /chat
     │

@@ -160,7 +160,7 @@ migrate:
 # Idempotent. Safe to re-run; upserts by (canonical_norm, source).
 .PHONY: seed-ontology
 seed-ontology: backfill-tags-prepare
-	uv run python scripts/seed_ontology.py \
+	PYTHONPATH=. uv run python scripts/seed_ontology.py \
 	  --yaml data/ontology/custom_terms.yaml \
 	  $$([ -f data/ontology/icd10_vn.csv ] && echo "--icd10 data/ontology/icd10_vn.csv")
 	$(MAKE) -s backfill-tags
@@ -171,11 +171,11 @@ backfill-tags-prepare:
 
 .PHONY: backfill-tags
 backfill-tags:
-	uv run python scripts/backfill_tags.py
+	PYTHONPATH=. uv run python scripts/backfill_tags.py
 
 .PHONY: backfill-tags-dry
 backfill-tags-dry:
-	uv run python scripts/backfill_tags.py --dry-run
+	PYTHONPATH=. uv run python scripts/backfill_tags.py --dry-run
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 

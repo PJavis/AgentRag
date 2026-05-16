@@ -4,10 +4,18 @@ import json
 import time
 from typing import Any, AsyncIterator
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, NotFoundError
 
 from src.agentrag.config import settings
 from src.agentrag.observability.cost import record_llm_call
+
+
+def _is_model_missing(exc: Exception) -> bool:
+    """Detect 'model not found' across Ollama / OpenAI / vLLM error shapes."""
+    if isinstance(exc, NotFoundError):
+        return True
+    msg = str(exc).lower()
+    return "not found" in msg or "model_not_found" in msg or "does not exist" in msg
 
 
 class AgentLLM:
@@ -21,6 +29,29 @@ class AgentLLM:
             else settings.EXTRACTION_TEMPERATURE
         )
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        # Sticky fallback: once we miss the primary model we keep using the
+        # fallback for the rest of the process. Avoids re-hitting the 404.
+        self._fallback_engaged = False
+
+    async def _create(self, **kwargs):
+        """Wrap client.chat.completions.create with model-missing fallback."""
+        try:
+            return await self.client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if not _is_model_missing(exc):
+                raise
+            fallback = (settings.LLM_FALLBACK_MODEL or "").strip()
+            if not fallback or fallback == kwargs.get("model"):
+                raise
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "AgentLLM: model %r not found, falling back to %r",
+                kwargs.get("model"), fallback,
+            )
+            kwargs["model"] = fallback
+            self.model = fallback  # sticky
+            self._fallback_engaged = True
+            return await self.client.chat.completions.create(**kwargs)
 
     async def json_response(
         self,
@@ -28,7 +59,7 @@ class AgentLLM:
         user_prompt: str,
     ) -> dict[str, Any]:
         started = time.perf_counter()
-        response = await self.client.chat.completions.create(
+        response = await self._create(
             model=self.model,
             temperature=self.temperature,
             response_format={"type": "json_object"},
@@ -80,7 +111,7 @@ class AgentLLM:
     ) -> str:
         """Plain text response — no JSON enforcement. Used by transformations."""
         started = time.perf_counter()
-        response = await self.client.chat.completions.create(
+        response = await self._create(
             model=self.model,
             temperature=self.temperature,
             messages=[
@@ -105,7 +136,7 @@ class AgentLLM:
     ) -> AsyncIterator[str]:
         """Stream raw text tokens từ LLM (không ép JSON)."""
         started = time.perf_counter()
-        stream = await self.client.chat.completions.create(
+        stream = await self._create(
             model=self.model,
             temperature=self.temperature,
             stream=True,

@@ -251,6 +251,7 @@ logs:
 
 .PHONY: stop
 stop:
+	@# 1) Kill any process whose pid we recorded
 	@for n in $(PIDS); do \
 	  if [ -f $(LOG_DIR)/$$n.pid ]; then \
 	    pid=$$(cat $(LOG_DIR)/$$n.pid); \
@@ -258,6 +259,22 @@ stop:
 	    rm -f $(LOG_DIR)/$$n.pid; \
 	  fi; \
 	done
+	@# 2) Belt-and-suspenders: kill anything still bound to API_PORT / FRONTEND_PORT.
+	@# Tolerate empty results under set -e via leading `:` no-op + trailing `|| true`.
+	@for p in $(API_PORT) $(FRONTEND_PORT); do \
+	  pids=$$(ss -ltnp 2>/dev/null | awk -v port=":$$p" '$$4 ~ port {print}' | grep -oP 'pid=\K[0-9]+' 2>/dev/null | sort -u || true); \
+	  for pid in $$pids; do \
+	    kill -9 $$pid 2>/dev/null && echo "🛑 killed stray pid $$pid on :$$p" || true; \
+	  done; \
+	done || true
+	@# 3) Sweep any orphan uvicorn / next-dev / arq still running.
+	@# Use -P $$$$ exclusions via setsid would be cleaner, but here we
+	@# simply run pkill in a backgrounded subshell so signals can't
+	@# propagate back up to this make invocation.
+	@-(pkill -9 -f "uvicorn main:app" >/dev/null 2>&1 && echo "🛑 swept uvicorn"; true)
+	@-(pkill -9 -f "next dev"        >/dev/null 2>&1 && echo "🛑 swept next dev"; true)
+	@-(pkill -9 -f "arq src.agentrag.worker.settings" >/dev/null 2>&1 && echo "🛑 swept arq worker"; true)
+	@true
 
 # ── Maintenance ───────────────────────────────────────────────────────────────
 

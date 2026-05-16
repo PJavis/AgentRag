@@ -9,6 +9,7 @@ import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { convertReferencesToMarkdownLinks, createReferenceLinkComponent } from '@/lib/utils/source-references'
+import { FollowupChips } from '@/components/source/FollowupChips'
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { toast } from 'sonner'
@@ -23,13 +24,19 @@ interface StreamingResponseProps {
   strategy: StrategyData | null
   answers: string[]
   finalAnswer: string | null
+  /** Optional follow-up question chips (rendered under the final answer). */
+  followUps?: string[]
+  /** Click handler when a follow-up chip is pressed. */
+  onFollowUpSelect?: (q: string) => void
 }
 
 export function StreamingResponse({
   isStreaming,
   strategy,
   answers,
-  finalAnswer
+  finalAnswer,
+  followUps,
+  onFollowUpSelect,
 }: StreamingResponseProps) {
   const [strategyOpen, setStrategyOpen] = useState(false)
   const [answersOpen, setAnswersOpen] = useState(false)
@@ -143,6 +150,15 @@ export function StreamingResponse({
               content={finalAnswer}
               onReferenceClick={handleReferenceClick}
             />
+            {followUps && followUps.length > 0 && onFollowUpSelect && (
+              <div className="mt-3 border-t pt-3">
+                <FollowupChips
+                  suggestions={followUps}
+                  onSelect={onFollowUpSelect}
+                  disabled={isStreaming}
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

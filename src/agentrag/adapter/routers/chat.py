@@ -154,19 +154,28 @@ async def delete_session(session_id: str):
 
 @notebook_router.post("/execute")
 async def execute_chat(body: ExecuteChatRequest, request: Request):
+    import logging
+    _log = logging.getLogger(__name__)
     store = ConversationStore()
     conv = await store.get_conversation(body.session_id)
     if not conv:
         raise HTTPException(404, "Session not found")
 
-    meta = conv.get("extra_metadata") or {}
-    notebook_id = meta.get("notebook_id")
-
     # Find document_title from notebook sources (search all docs in notebook)
     document_title: str | None = None
 
-    history = await store.list_messages(body.session_id, limit=20)
-    await store.append_message(body.session_id, role="user", content=body.message)
+    history: list[dict] = []
+    user_appended_ok = False
+    try:
+        history = await store.list_messages(body.session_id, limit=20)
+    except Exception:
+        _log.exception("execute_chat: list_messages(history) failed")
+
+    try:
+        await store.append_message(body.session_id, role="user", content=body.message)
+        user_appended_ok = True
+    except Exception:
+        _log.exception("execute_chat: append_message(user) failed")
 
     # S5: auto domain detection when caller didn't pick a domain manually.
     # Reasoning plane drives routing — call DomainRouter then forward picks
@@ -184,7 +193,8 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
                         **({"specialties": route.specialties} if route.specialties else {}),
                     }
             except Exception:
-                effective_domain_filter = None  # router failure → no filter
+                _log.exception("execute_chat: domain_router.classify failed")
+                effective_domain_filter = None
 
     agent = get_agent_service()
     try:
@@ -196,15 +206,9 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
             domain_filter=effective_domain_filter,
         )
     except Exception as exc:
-        # Surface backend failures (Ollama down, LLM timeout, etc.) as a
-        # graceful assistant turn instead of dropping the connection.
-        # The user message stays persisted (appended above) so refetch
-        # keeps the question visible in the UI.
-        import logging
-        logging.getLogger(__name__).exception("execute_chat: agent.chat failed")
-        error_text = f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}"
+        _log.exception("execute_chat: agent.chat failed")
         result = {
-            "answer": error_text,
+            "answer": f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}",
             "citations": [],
             "tool_trace": [],
             "timings_ms": {},
@@ -213,43 +217,77 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
             "sql_query": None,
         }
 
-    appended = await store.append_message(
-        body.session_id,
-        role="assistant",
-        content=result.get("answer", ""),
-        citations=result.get("citations", []),
-        tool_trace=result.get("tool_trace", []),
-        timings_ms=result.get("timings_ms", {}),
-        extra_metadata={
-            "reasoning_path": result.get("reasoning_path"),
-            "plan_subqueries": result.get("plan_subqueries") or [],
-            "sql_query": result.get("sql_query"),
-        },
-    )
+    appended: dict | None = None
+    try:
+        appended = await store.append_message(
+            body.session_id,
+            role="assistant",
+            content=result.get("answer", ""),
+            citations=result.get("citations", []),
+            tool_trace=result.get("tool_trace", []),
+            timings_ms=result.get("timings_ms", {}),
+            extra_metadata={
+                "reasoning_path": result.get("reasoning_path"),
+                "plan_subqueries": result.get("plan_subqueries") or [],
+                "sql_query": result.get("sql_query"),
+            },
+        )
+    except Exception:
+        _log.exception("execute_chat: append_message(assistant) failed")
 
-    # S6 — record chat_turn event for the activity feed
-    identity = get_identity(request)
-    timings = result.get("timings_ms") or {}
-    await record_event(
-        user_id=identity.user_id if identity else None,
-        event_type="chat_turn",
-        target_kind="conversation",
-        target_id=body.session_id,
-        payload={
-            "message": body.message[:200],
-            "message_id": appended.get("message_id") if isinstance(appended, dict) else None,
-            "tokens_in": timings.get("tokens_in"),
-            "tokens_out": timings.get("tokens_out"),
-            "latency_ms": timings.get("total"),
-            "reasoning_path": result.get("reasoning_path"),
-        },
-    )
+    # S6 — record chat_turn event for the activity feed (best-effort)
+    try:
+        identity = get_identity(request)
+        timings = result.get("timings_ms") or {}
+        await record_event(
+            user_id=identity.user_id if identity else None,
+            event_type="chat_turn",
+            target_kind="conversation",
+            target_id=body.session_id,
+            payload={
+                "message": body.message[:200],
+                "message_id": appended.get("message_id") if isinstance(appended, dict) else None,
+                "tokens_in": timings.get("tokens_in"),
+                "tokens_out": timings.get("tokens_out"),
+                "latency_ms": timings.get("total"),
+                "reasoning_path": result.get("reasoning_path"),
+            },
+        )
+    except Exception:
+        _log.exception("execute_chat: record_event failed")
 
-    msgs = await store.list_messages(body.session_id, limit=1000)
-    return ExecuteChatResponse(
-        session_id=body.session_id,
-        messages=[_msg_to_chat(m) for m in msgs],
-    ).model_dump()
+    # Final response — try fresh list_messages, fall back to a hand-rolled
+    # message pair if DB read fails so the UI still shows both turns.
+    try:
+        msgs = await store.list_messages(body.session_id, limit=1000)
+        return ExecuteChatResponse(
+            session_id=body.session_id,
+            messages=[_msg_to_chat(m) for m in msgs],
+        ).model_dump()
+    except Exception:
+        _log.exception("execute_chat: final list_messages failed")
+        fallback: list[dict] = []
+        if user_appended_ok or True:
+            fallback.append(_msg_to_chat({
+                "role": "user", "content": body.message,
+                "message_id": f"local-user-{body.session_id}",
+            }))
+        fallback.append(_msg_to_chat({
+            "role": "assistant", "content": result.get("answer", ""),
+            "citations": result.get("citations", []),
+            "tool_trace": result.get("tool_trace", []),
+            "timings_ms": result.get("timings_ms", {}),
+            "extra_metadata": {
+                "reasoning_path": result.get("reasoning_path"),
+                "plan_subqueries": result.get("plan_subqueries") or [],
+                "sql_query": result.get("sql_query"),
+            },
+            "message_id": f"local-ai-{body.session_id}",
+        }))
+        return ExecuteChatResponse(
+            session_id=body.session_id,
+            messages=fallback,
+        ).model_dump()
 
 
 @notebook_router.post("/context")

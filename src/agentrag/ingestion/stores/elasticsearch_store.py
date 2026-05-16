@@ -100,7 +100,15 @@ class ElasticsearchStore:
                 }
             },
         }
-        await self.client.indices.create(index=self.index_name, body=mapping)
+        try:
+            await self.client.indices.create(index=self.index_name, body=mapping)
+        except Exception as exc:
+            # Concurrent ingests can race the create — swallow only the
+            # "already exists" outcome, raise other errors.
+            msg = str(exc)
+            if "resource_already_exists_exception" not in msg:
+                raise
+            await self._ensure_segment_fields()
 
     async def _ensure_segment_fields(self) -> None:
         """Add page_start, page_end, segment_type + S5 domain tags to existing index (non-destructive)."""

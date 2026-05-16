@@ -85,6 +85,78 @@ async def _get_document_title(source_id: str) -> str | None:
         return doc.title if doc else None
 
 
+# Patterns the user might type to refer to a document by short name:
+#   "lec10", "Lec 10", "LEC 10", "lec.10"
+#   "bài 12", "Bài12"
+#   "chương 3", "chuong 3", "Chuong3"
+#   "file <foo>"
+_FILENAME_HINT_RE = re.compile(
+    # No trailing `\b` so 'Lec10' is captured as ('lec', '10').
+    # Word-style kinds (chương/bài/file) still get the leading boundary.
+    r"\b(?P<kind>chương|chuong|chapter|bài|bai|file|lec)\.?\s*(?P<num>\d{1,3})?",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+async def _resolve_document_hint(question: str, notebook_id: str | None) -> str | None:
+    """Scan the user message for filename hints ('lec10', 'chương 3', etc.)
+    and return the best-matching Document.title from the notebook.
+
+    Cheap ILIKE pass; no embeddings. Returns None when nothing convincing
+    matches so the agent can still answer cross-document.
+    """
+    hits = list(_FILENAME_HINT_RE.finditer(question))
+    if not hits:
+        return None
+    # Build LIKE patterns. Require a number for kinds that are also common
+    # English/Vietnamese words ('lec', 'file'); otherwise too many false
+    # positives ('lecture', 'file Canxi').
+    patterns: list[str] = []
+    _REQUIRES_NUM = {"lec", "file"}
+    for m in hits:
+        kind = (m.group("kind") or "").lower()
+        num = (m.group("num") or "").strip()
+        if not num and kind in _REQUIRES_NUM:
+            continue
+        if num:
+            patterns.append(f"%{kind}%{num}%")
+            patterns.append(f"%{kind}{num}%")
+        else:
+            patterns.append(f"%{kind}%")
+    if not patterns:
+        return None
+
+    async with AsyncSessionLocal() as session:
+        if notebook_id:
+            try:
+                nb_uuid = uuid.UUID(notebook_id)
+            except (TypeError, ValueError):
+                nb_uuid = None
+            if nb_uuid is not None:
+                # Restrict to documents linked to the current notebook.
+                q = (
+                    select(Document.title)
+                    .join(
+                        adapter_notebook_sources,
+                        adapter_notebook_sources.c.document_id == Document.id,
+                    )
+                    .where(adapter_notebook_sources.c.notebook_id == nb_uuid)
+                )
+                ors = [func.lower(Document.title).like(p.lower()) for p in patterns]
+                from sqlalchemy import or_
+                q = q.where(or_(*ors)).limit(5)
+                rows = (await session.execute(q)).all()
+                if rows:
+                    return rows[0][0]
+        # Fallback: search globally.
+        from sqlalchemy import or_
+        q2 = select(Document.title).where(
+            or_(*[func.lower(Document.title).like(p.lower()) for p in patterns])
+        ).limit(5)
+        rows = (await session.execute(q2)).all()
+        return rows[0][0] if rows else None
+
+
 # ── Notebook chat sessions ─────────────────────────────────────────────────────
 
 notebook_router = APIRouter(prefix="/chat")
@@ -161,8 +233,17 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     if not conv:
         raise HTTPException(404, "Session not found")
 
-    # Find document_title from notebook sources (search all docs in notebook)
+    # Find document_title from notebook sources (search all docs in notebook).
+    # Try to resolve filename hints in the user message ('lec10', 'chương 3'…)
+    # to a concrete title from the linked notebook docs.
+    notebook_id = (conv.get("extra_metadata") or {}).get("notebook_id")
     document_title: str | None = None
+    try:
+        document_title = await _resolve_document_hint(body.message, notebook_id)
+        if document_title:
+            _log.info("execute_chat: resolved document hint → %r", document_title)
+    except Exception:
+        _log.exception("execute_chat: _resolve_document_hint failed")
 
     history: list[dict] = []
     user_appended_ok = False

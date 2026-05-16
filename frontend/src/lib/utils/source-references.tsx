@@ -1,5 +1,7 @@
 import React from 'react'
 import { FileText, Lightbulb, FileEdit } from 'lucide-react'
+import { CitationHoverCard } from '@/components/source/CitationHoverCard'
+import type { Citation } from '@/lib/types/api'
 
 export type ReferenceType = 'source' | 'note' | 'source_insight'
 
@@ -483,4 +485,56 @@ export function convertSourceReferencesLegacy(text: string): React.ReactNode {
   // For legacy support, just return text as-is
   // Components should migrate to new convertSourceReferences function
   return text
+}
+
+/**
+ * B10 — Render compact reference markers as Radix HoverCards.
+ * Hover-only (no click), reads from the citation list passed in.
+ *
+ * `convertReferencesToCompactMarkdown` emits markers as
+ *   [N](#ref-source-<content_hash>)
+ * — we match the trailing id against citation.content_hash, fall back
+ * to the numeric index when there's no hash match.
+ */
+export function createCompactReferenceHoverComponent(
+  citations: Citation[],
+) {
+  const HoverComponent = ({
+    href,
+    children,
+    ...rest
+  }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+    if (!href?.startsWith('#ref-')) {
+      return <a href={href} {...rest}>{children}</a>
+    }
+    // Parse #ref-<type>-<id>
+    const tail = href.substring(5)
+    const dashIdx = tail.indexOf('-')
+    const refId = dashIdx >= 0 ? tail.substring(dashIdx + 1) : tail
+    // Resolve by content_hash; fall back to numeric label
+    let idx = citations.findIndex((c) => c.content_hash === refId)
+    if (idx < 0) {
+      const n = parseInt(String(children), 10)
+      if (!Number.isNaN(n) && n >= 1 && n <= citations.length) {
+        idx = n - 1
+      }
+    }
+    if (idx < 0) {
+      return <a href={href} {...rest}>{children}</a>
+    }
+    const citation = citations[idx]
+    return (
+      <CitationHoverCard index={idx + 1} citation={citation}>
+        <span
+          role="button"
+          tabIndex={0}
+          className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded bg-primary/15 text-primary text-[10px] font-mono cursor-help align-middle border border-primary/30"
+        >
+          {children}
+        </span>
+      </CitationHoverCard>
+    )
+  }
+  HoverComponent.displayName = 'CompactReferenceHoverComponent'
+  return HoverComponent
 }

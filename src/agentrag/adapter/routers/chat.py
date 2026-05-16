@@ -75,6 +75,7 @@ def _msg_to_chat(msg: dict) -> dict:
         reasoning_path=extra.get("reasoning_path"),
         plan_subqueries=extra.get("plan_subqueries"),
         sql_query=extra.get("sql_query"),
+        follow_ups=extra.get("follow_ups"),
         timestamp=msg.get("created_at"),
     ).model_dump()
 
@@ -315,6 +316,42 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         )
     except Exception:
         _log.exception("execute_chat: append_message(assistant) failed")
+
+    # B2 — Follow-up suggestions. Best-effort: log + ignore on failure.
+    follow_ups: list[str] = []
+    try:
+        from src.agentrag.agent.followups import generate_followups
+        from src.agentrag.services.container import get_container
+        follow_ups = await generate_followups(
+            question=body.message,
+            answer=result.get("answer", ""),
+            citations=result.get("citations") or [],
+            llm_gateway=get_container().llm,
+        )
+    except Exception:
+        _log.exception("execute_chat: generate_followups failed")
+    # Persist on the assistant turn's extra_metadata
+    if follow_ups and isinstance(appended, dict):
+        try:
+            from src.agentrag.database import AsyncSessionLocal
+            from src.agentrag.database.models import ChatMessage as _CM
+            msg_id = appended.get("message_id")
+            if msg_id:
+                async with AsyncSessionLocal() as _s:
+                    row = await _s.get(_CM, uuid.UUID(msg_id))
+                    if row is not None:
+                        meta = dict(row.extra_metadata or {})
+                        meta["follow_ups"] = follow_ups
+                        row.extra_metadata = meta
+                        await _s.commit()
+                # Invalidate the messages cache so the very next list_messages
+                # picks up the updated extra_metadata immediately.
+                try:
+                    await store._delete_messages_cache(body.session_id)
+                except Exception:
+                    pass
+        except Exception:
+            _log.exception("execute_chat: persist follow_ups failed")
 
     # S6 — record chat_turn event for the activity feed (best-effort)
     try:

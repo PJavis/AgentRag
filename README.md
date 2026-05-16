@@ -642,6 +642,59 @@ ADAPTER_ADMIN_TOKEN=admin_secret_123  # bỏ trống = admin disabled
 ADAPTER_VERSION=0.7.0
 ```
 
+### 5.10 Ontology & Domain Routing (S5)
+
+Knowledge base chia theo **hệ cơ quan × chuyên khoa lâm sàng** với shared
+ontology + cross-domain federation. Mọi chunk được gắn `system_tag`
+(15 hệ: `tim_mach`, `ho_hap`, `tieu_hoa`, …) và `specialty_tag`
+(14 chuyên khoa: `noi`, `ngoai`, `san`, …). Mỗi câu hỏi đi qua
+`DomainRouter` (SLM, JSON-only) chấm điểm domain rồi `FederatedRetriever`
+truy hồi top-1 (confidence ≥ 0.7) hoặc top-K khi mơ hồ.
+
+```env
+TAGGING_ENABLED=true
+DOMAIN_FILTER_ENABLED=true
+DOMAIN_ROUTER_CONFIDENCE_THRESHOLD=0.7
+DOMAIN_ROUTER_TOP_K=3
+```
+
+Tagging dùng **section-primary với content fallback**: `SectionTagger`
+quét `section_path` qua ontology trước (strict, no fuzzy), nếu không bắt
+được hệ thì rơi xuống `find_in_text` trên chunk content. UI override:
+dropdown `DomainFilter` trên ChatPanel (Hệ cơ quan + Chuyên khoa) — khi
+user chọn thủ công thì bỏ qua router.
+
+**Seed ontology** (idempotent, upsert theo `(canonical_norm, source)`):
+
+```bash
+make migrate            # tạo bảng + bật pg_trgm
+python scripts/seed_ontology.py \
+  --yaml data/ontology/custom_terms.yaml \
+  --icd10 data/ontology/icd10_vn.csv
+python scripts/backfill_tags.py     # re-tag ES segments
+```
+
+**Adapter taxonomy endpoints** (public, không cần token):
+
+```
+GET /on/api/ontology/systems       → [{value, label}, …]   # 15 hệ
+GET /on/api/ontology/specialties   → [{value, label}, …]   # 14 chuyên khoa
+```
+
+**Chat domain filter** (notebook chat):
+
+```json
+POST /on/api/chat/execute
+{
+  "session_id": "…",
+  "message": "…",
+  "context": {…},
+  "domain_filter": {"system": "tim_mach", "specialties": ["noi"]}
+}
+```
+
+Chi tiết kiến trúc: xem `src/agentrag/ontology/README.md`.
+
 ---
 
 ## 6. API Reference

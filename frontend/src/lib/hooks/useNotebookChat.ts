@@ -56,12 +56,16 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     enabled: !!notebookId && !!currentSessionId
   })
 
-  // Update messages when current session changes
+  // Sync local messages with server state on session changes / refetches.
+  // Guard against mid-send: while isSending=true, TanStack may surface a
+  // stale `currentSession.messages` (cache race) and wipe the optimistic
+  // user bubble. Skip until the send finishes — sendMessage handles the
+  // final reconciliation itself.
   useEffect(() => {
-    if (currentSession?.messages) {
-      setMessages(currentSession.messages)
-    }
-  }, [currentSession])
+    if (!currentSession?.messages) return
+    if (isSending) return
+    setMessages(currentSession.messages)
+  }, [currentSession, isSending])
 
   // Auto-select most recent session when sessions are loaded
   useEffect(() => {

@@ -187,13 +187,31 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
                 effective_domain_filter = None  # router failure → no filter
 
     agent = get_agent_service()
-    result = await agent.chat(
-        question=body.message,
-        document_title=document_title,
-        chat_history=history,
-        conversation_id=body.session_id,
-        domain_filter=effective_domain_filter,
-    )
+    try:
+        result = await agent.chat(
+            question=body.message,
+            document_title=document_title,
+            chat_history=history,
+            conversation_id=body.session_id,
+            domain_filter=effective_domain_filter,
+        )
+    except Exception as exc:
+        # Surface backend failures (Ollama down, LLM timeout, etc.) as a
+        # graceful assistant turn instead of dropping the connection.
+        # The user message stays persisted (appended above) so refetch
+        # keeps the question visible in the UI.
+        import logging
+        logging.getLogger(__name__).exception("execute_chat: agent.chat failed")
+        error_text = f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}"
+        result = {
+            "answer": error_text,
+            "citations": [],
+            "tool_trace": [],
+            "timings_ms": {},
+            "reasoning_path": "error",
+            "plan_subqueries": [],
+            "sql_query": None,
+        }
 
     appended = await store.append_message(
         body.session_id,

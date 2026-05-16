@@ -62,6 +62,7 @@ class AgentLLM:
         response = await self._create(
             model=self.model,
             temperature=self.temperature,
+            max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -114,6 +115,7 @@ class AgentLLM:
         response = await self._create(
             model=self.model,
             temperature=self.temperature,
+            max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -139,6 +141,7 @@ class AgentLLM:
         stream = await self._create(
             model=self.model,
             temperature=self.temperature,
+            max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
             stream=True,
             messages=[
                 {"role": "system", "content": system_prompt},

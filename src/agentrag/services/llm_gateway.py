@@ -184,6 +184,7 @@ class LLMGateway:
             response = await client.chat.completions.create(
                 model=model,
                 temperature=0.0,
+                max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
                 messages=messages,
             )
         except Exception as exc:
@@ -198,6 +199,7 @@ class LLMGateway:
                 response = await client.chat.completions.create(
                     model=fallback,
                     temperature=0.0,
+                    max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
                     messages=messages,
                 )
                 model = fallback

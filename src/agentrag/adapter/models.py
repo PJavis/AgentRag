@@ -120,6 +120,8 @@ class ChatMessage(BaseModel):
     timings_ms: dict[str, Any] | None = None
     plan_subqueries: list[Any] | None = None
     sql_query: str | None = None
+    # B3 — NotebookLM-style follow-up suggestions
+    follow_ups: list[str] | None = None
     timestamp: str | None = None
 
 

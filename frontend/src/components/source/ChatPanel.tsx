@@ -14,7 +14,8 @@ import {
   SourceChatMessage,
   SourceChatContextIndicator,
   BaseChatSession,
-  DomainFilterValue
+  DomainFilterValue,
+  Citation,
 } from '@/lib/types/api'
 import { ModelSelector } from './ModelSelector'
 import { DomainFilter } from './DomainFilter'
@@ -24,7 +25,13 @@ import { ContextIndicator } from '@/components/common/ContextIndicator'
 import { SessionManager } from '@/components/source/SessionManager'
 import { MessageActions } from '@/components/source/MessageActions'
 import { FeedbackButtons } from '@/components/source/FeedbackButtons'
-import { convertReferencesToCompactMarkdown, createCompactReferenceLinkComponent } from '@/lib/utils/source-references'
+import { FollowupChips } from '@/components/source/FollowupChips'
+import { InlineImageCitation } from '@/components/source/InlineImageCitation'
+import {
+  convertReferencesToCompactMarkdown,
+  createCompactReferenceLinkComponent,
+  createCompactReferenceHoverComponent,
+} from '@/lib/utils/source-references'
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { toast } from 'sonner'
 import { useTranslation } from '@/lib/hooks/use-translation'
@@ -206,6 +213,7 @@ export function ChatPanel({
                       {message.type === 'ai' ? (
                         <AIMessageContent
                           content={message.content}
+                          citations={(message.citations as Citation[] | undefined) || []}
                           onReferenceClick={handleReferenceClick}
                         />
                       ) : (
@@ -238,6 +246,19 @@ export function ChatPanel({
                           answer={message.content}
                         />
                       </div>
+                    )}
+                    {message.type === 'ai' && message.follow_ups && message.follow_ups.length > 0 && (
+                      <FollowupChips
+                        suggestions={message.follow_ups}
+                        onSelect={(q) =>
+                          onSendMessage(
+                            q,
+                            modelOverride,
+                            contextType === 'notebook' ? domainFilter : undefined,
+                          )
+                        }
+                        disabled={isStreaming}
+                      />
                     )}
                   </div>
                   {message.type === 'human' && (
@@ -376,23 +397,28 @@ export function ChatPanel({
   )
 }
 
-// Helper component to render AI messages with clickable references
+// Helper component to render AI messages with hover-card citations + inline images
 function AIMessageContent({
   content,
-  onReferenceClick
+  citations,
+  onReferenceClick,
 }: {
   content: string
+  citations: Citation[]
   onReferenceClick: (type: string, id: string) => void
 }) {
   const { t } = useTranslation()
-  // Convert references to compact markdown with numbered citations
   const markdownWithCompactRefs = convertReferencesToCompactMarkdown(content, t('common.references'))
-
-  // Create custom link component for compact references
-  const LinkComponent = createCompactReferenceLinkComponent(onReferenceClick)
-
+  // Prefer hover when citations are present; fall back to clickable when not.
+  const LinkComponent = citations && citations.length > 0
+    ? createCompactReferenceHoverComponent(citations)
+    : createCompactReferenceLinkComponent(onReferenceClick)
+  const imageCitations = (citations || []).filter((c) => c.segment_type === 'image' && c.image_url)
   return (
     <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none break-words prose-headings:font-semibold prose-a:text-blue-600 prose-a:break-all prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2">
+      {imageCitations.map((c, i) => (
+        <InlineImageCitation key={`img-${i}-${c.content_hash ?? i}`} citation={c} />
+      ))}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

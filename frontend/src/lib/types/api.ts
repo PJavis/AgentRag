@@ -144,6 +144,21 @@ export interface SourceChatSession extends BaseChatSession {
   model_override?: string
 }
 
+export interface Citation {
+  document_title: string
+  section_path?: string | null
+  position?: number | null
+  page?: number | null
+  page_label?: string | null
+  page_start?: number | null
+  page_end?: number | null
+  excerpt?: string
+  content_hash?: string
+  mime?: string | null
+  segment_type?: 'text' | 'image' | 'table'
+  image_url?: string | null
+}
+
 export interface SourceChatMessage {
   id: string
   type: 'human' | 'ai'
@@ -155,6 +170,7 @@ export interface SourceChatMessage {
   timings_ms?: ChatTimings
   plan_subqueries?: unknown[]
   sql_query?: string | null
+  follow_ups?: string[]
 }
 
 export interface SourceChatContextIndicator {
@@ -229,6 +245,7 @@ export interface NotebookChatMessage {
   timings_ms?: ChatTimings
   plan_subqueries?: unknown[]
   sql_query?: string | null
+  follow_ups?: string[]
 }
 
 export interface NotebookChatSessionWithMessages extends NotebookChatSession {

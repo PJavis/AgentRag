@@ -63,6 +63,14 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
     else:
         path = Path(job.folder_path) / job.source_id
         suffix = path.suffix.lower()
+        # Fallback: tmp upload dir may have been cleaned up by the upload
+        # endpoint's BackgroundTask finally block. Prefer the persistent
+        # originals path written by adapter/routers/sources.py.
+        if not path.exists() and settings.ORIGINALS_DIR:
+            originals_dir = Path(settings.ORIGINALS_DIR)
+            candidate = originals_dir / f"{job.document_id}{suffix}"
+            if candidate.exists():
+                path = candidate
         if suffix in (".xlsx", ".xls"):
             parse_result = ExcelParser().parse(str(path), mode=settings.EXCEL_INGEST_MODE)
             content = parse_result["parsed_content"]

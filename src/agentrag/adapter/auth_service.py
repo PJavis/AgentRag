@@ -94,6 +94,16 @@ async def get_user_by_id(user_id: str) -> User | None:
         return await session.get(User, uid)
 
 
+def _is_admin_email(email: str) -> bool:
+    """Check ADMIN_EMAILS whitelist (case-insensitive comma-separated list)."""
+    from src.agentrag.config import settings as _settings
+    raw = (_settings.ADMIN_EMAILS or "").strip()
+    if not raw:
+        return False
+    target = email.lower().strip()
+    return any(target == e.strip().lower() for e in raw.split(",") if e.strip())
+
+
 async def create_user(
     email: str,
     password: str | None = None,
@@ -108,6 +118,7 @@ async def create_user(
             name=name,
             google_id=google_id,
             avatar_url=avatar_url,
+            is_admin=_is_admin_email(email),  # bootstrap from ADMIN_EMAILS env
         )
         session.add(user)
         await session.commit()
@@ -131,6 +142,15 @@ async def authenticate(email: str, password: str) -> User | None:
         return None
     if not verify_password(password, user.password_hash):
         return None
+    # Auto-promote on login when email is on the ADMIN_EMAILS whitelist
+    # (one-way: never demotes an existing admin).
+    if not user.is_admin and _is_admin_email(user.email):
+        async with AsyncSessionLocal() as session:
+            u = await session.get(User, user.id)
+            if u and not u.is_admin:
+                u.is_admin = True
+                await session.commit()
+                user.is_admin = True
     return user
 
 

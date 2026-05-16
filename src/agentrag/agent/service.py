@@ -765,22 +765,66 @@ class AgentService:
             if key not in allowed:
                 continue
             ctx = hash_to_ctx.get(citation.get("content_hash", ""), {})
+            seg_type = ctx.get("segment_type") or citation.get("segment_type") or "text"
+            mime = self._mime_for_segment(ctx, seg_type)
+            excerpt = (ctx.get("excerpt") or ctx.get("content") or "")[:300]
             entry: dict[str, Any] = {
                 "document_title": citation.get("document_title"),
                 "section_path": citation.get("section_path"),
                 "position": citation.get("position"),
                 "content_hash": citation.get("content_hash"),
-                "excerpt": ctx.get("excerpt", ""),
+                "excerpt": excerpt,
+                "segment_type": seg_type,
+                "mime": mime,
             }
-            # Include page reference when available (PDF sources)
-            if ctx.get("page") is not None:
-                entry["page"] = ctx["page"]
+            # Page-aware fields (PDF only)
+            page = ctx.get("page") or ctx.get("page_start")
+            if page is not None:
+                entry["page"] = page
+                entry["page_label"] = f"p.{page}"
             if ctx.get("page_start") is not None:
                 entry["page_start"] = ctx["page_start"]
             if ctx.get("page_end") is not None:
                 entry["page_end"] = ctx["page_end"]
+            # Image segments — expose URL so the UI can render <img>
+            if seg_type == "image":
+                meta = ctx.get("metadata") or {}
+                img = meta.get("image_url") or meta.get("image_path") or ctx.get("image_url")
+                if img:
+                    entry["image_url"] = self._normalize_image_url(img)
             grounded.append(entry)
         return grounded
+
+    @staticmethod
+    def _mime_for_segment(ctx: dict[str, Any], seg_type: str) -> str | None:
+        """Infer mime from document filename suffix; falls back by segment_type."""
+        if seg_type == "image":
+            return (ctx.get("metadata") or {}).get("image_mime") or "image/jpeg"
+        title = (ctx.get("document_title") or "").lower()
+        if title.endswith(".pdf"):
+            return "application/pdf"
+        if title.endswith(".docx") or title.endswith(".doc"):
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if title.endswith(".md"):
+            return "text/markdown"
+        if title.endswith(".txt"):
+            return "text/plain"
+        return None
+
+    @staticmethod
+    def _normalize_image_url(raw: str) -> str:
+        """Rewrite pipeline image_path → /api/images/<rest> so the frontend can fetch."""
+        if not raw:
+            return raw
+        if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("/api/"):
+            return raw
+        if raw.startswith("/images/"):
+            return f"/api{raw}"
+        if raw.startswith("data/images/"):
+            return f"/api/{raw[len('data/'):]}"
+        if raw.startswith("images/"):
+            return f"/api/{raw}"
+        return raw
 
     async def _answer(
         self,

@@ -1,97 +1,200 @@
-# Module: `services` — Service Layer
+# Module: `services` — Execution Plane
 
 **Vị trí:** `src/agentrag/services/`
 
-Lớp trung gian kết nối agent/structured pipeline với retrieval và LLM. Bao gồm unified LLM gateway với task routing, knowledge retrieval facade, và access control.
+> S4 — đây là **Execution Plane**. Mọi IO/LLM/embedding/vision/storage đi qua
+> các facade ở đây. Reasoning Plane (`agent/`, `orchestration/`, `structured/`)
+> chỉ fetch service từ `ServiceContainer`, không tự khởi tạo concrete class.
+> Xem `ARCHITECTURE.md` (root) cho luật chia plane đầy đủ.
 
 ---
 
 ## Files
 
-| File | Class | Mô tả |
-|---|---|---|
-| `llm_gateway.py` | `LLMGateway` | Unified LLM client — task routing, cost tracking |
-| `knowledge_service.py` | `KnowledgeService` | Retrieval facade — bootstrap, tool dispatch, normalization |
-| `security_service.py` | `SecurityService` | Query-time access control và result filtering |
-| `context_assembly_service.py` | `ContextAssemblyService` | Wrapper cho context dedup + rank + trim |
+| File | Class / Helper | Plane | Mô tả |
+|---|---|---|---|
+| `protocols.py` | `EmbeddingProtocol`, `VisionProtocol`, `RetrievalProtocol`, `StorageProtocol`, `RerankerProtocol`, `LLMProtocol` | E | Contract `Protocol` (runtime_checkable) cho Reasoning code type-hint |
+| `container.py` | `ServiceContainer`, `get_container()`, `set_container()`, `reset_container()` | E | Singleton DI, lazy-init từng service, `override()` cho test |
+| `llm_gateway.py` | `LLMGateway` | E | Unified LLM client — task routing, cost tracking, vision multimodal |
+| `embedding_service.py` | `EmbeddingService` | E | Dense embedding facade + TTL cache (S3) |
+| `vision_service.py` | `VisionService` | E | Vision LLM facade — wrap `ImageParser` |
+| `storage_service.py` | `StorageService` | E | CRUD facade trên Postgres + ES segments |
+| `retrieval_service.py` | `RetrievalService` | E | Hybrid retrieval facade — wrap `FederatedRetriever` |
+| `context_assembly_service.py` | `ContextAssemblyService` | E | Context dedup + rank + trim + lost-in-middle reorder |
+| `security_service.py` | `SecurityService` | E | Query-time access control, output filtering |
+| `knowledge_service.py` | `KnowledgeService` | mixed | Legacy facade — kết hợp reasoning + execution. New code dùng `reasoning_knowledge.py` + `RetrievalService` thay thế |
+| `reasoning_knowledge.py` | `expand_query`, `mode_to_tool`, `select_retrieval_mode`, `normalize_tool_call` | **R** | Pure helpers (no IO) — Reasoning Plane |
+
+E = Execution, R = Reasoning. `knowledge_service.py` còn lại từ trước S4; dùng cho code cũ, đừng mở rộng.
 
 ---
 
-## `LLMGateway`
+## ServiceContainer (S4)
 
-Điểm duy nhất để gọi LLM trong toàn hệ thống. Hỗ trợ task-based routing (gọi model khác nhau tùy task) và cost tracking.
+Singleton entry — lazy. Cấu trúc:
 
 ```python
-answer, latency_ms = await gateway.json_response(
-    system_prompt=..., user_prompt=..., task="answer"
+from src.agentrag.services.container import get_container
+
+container = get_container()
+hits = await container.retrieval.search(query=q, mode="hybrid")
+vec  = (await container.embedding.embed([q]))[0]
+route = await container.domain_router.classify(q)
+```
+
+| Property | Lazy class |
+|---|---|
+| `.llm` | `LLMGateway` |
+| `.embedding` | `EmbeddingService` |
+| `.vision` | `VisionService` |
+| `.storage` | `StorageService` |
+| `.retrieval` | `RetrievalService` |
+| `.domain_router` | `DomainRouter` (Reasoning, instanced here for singleton sharing) |
+
+Test pattern:
+
+```python
+from src.agentrag.services.container import ServiceContainer
+c = ServiceContainer()
+c.override(retrieval=mock_retrieval, embedding=mock_embed)
+```
+
+---
+
+## EmbeddingService (S3 cache)
+
+Wrap `build_embedding_provider()`. Per-text vectors cached in
+`TTLCache(maxsize=2048, ttl=600s)`, keyed by SHA-256(text). Bypass when
+batch size > `cache_max_batch` (default 8) — ingestion paths không bị
+giam vào cache.
+
+```python
+svc = container.embedding
+vecs = await svc.embed(["query a", "query b"])
+print(svc.cache_stats)        # {"hits": …, "misses": …, "skips": …, "size": …, "hit_rate": …}
+```
+
+Hot paths benefit:
+
+- HyDE rewrite + dense kNN call same text in different modes
+- Repeated sub-queries during agent decide loop
+- ES `_RESULT_CACHE` miss but query-text identical
+
+---
+
+## VisionService
+
+```python
+if container.vision.enabled:
+    desc = await container.vision.describe(image_bytes, mime="image/jpeg")
+```
+
+Khi `VISION_PROVIDER` chưa set → `enabled=False`, gọi `describe()` raises.
+
+---
+
+## StorageService
+
+Read-mostly facade — write CRUD vẫn đi qua `PostgresStore` / `ElasticsearchStore`
+trực tiếp trong ingestion pipeline.
+
+| Method | Mô tả |
+|---|---|
+| `get_chunks_by_hashes(hashes)` | ES bulk lookup |
+| `list_documents(limit=20)` | PG document index |
+| `get_document_by_title(title)` | PG document lookup |
+
+---
+
+## RetrievalService
+
+Reasoning Plane gọi đây để search. Router/reranker là quyền Reasoning —
+service này filter-only.
+
+```python
+hits = await container.retrieval.search(
+    query=q,
+    mode="hybrid_kg",
+    top_k=8,
+    filters={"systems": ["tim_mach"]},        # generic
+    # OR
+    system_override="tim_mach",                # explicit
+    specialty_override=["noi"],
 )
 ```
 
-| Method | Mô tả |
-|---|---|
-| `json_response(system, user, task)` | Gọi LLM, parse JSON, đo latency |
-| `vision_response(system, text, image_bytes, mime_type, task)` | Multimodal call (text + image) — dùng cho ImageParser. Provider lấy từ `VISION_PROVIDER` / `VISION_MODEL`, fallback `EXTRACTION_*`. Hỗ trợ `openai`, `gemini`, `ollama` (llava qua OpenAI-compat). |
-| `_resolve_client(task)` | Trả về `AgentLLM` instance đúng model cho task |
-| `cost_summary()` | Tổng token + chi phí ước tính (khi `LLM_COST_TRACKING_ENABLED=true`) |
-
-**Task routing** (`LLM_TASK_MODEL_MAP`): map JSON `{"classify": "model-a", "answer": "model-b"}` — task không có trong map dùng default model.
+Nội bộ wrap `FederatedRetriever(base=ElasticsearchRetriever, router=None)`.
+DomainRouter chạy ngoài (Reasoning code) rồi forward kết quả qua override.
 
 ---
 
-## `KnowledgeService`
+## LLMGateway
 
-Facade giữa agent và retrieval. Quản lý tool registry, normalize input, và dedup calls.
-
-| Method | Mô tả |
-|---|---|
-| `bootstrap_search(query, document_title, intent)` | Warm retrieval đầu tiên — expand query nếu có intent |
-| `execute_tool(tool_name, tool_input, question, document_title)` | Dispatch đến retriever với đúng params |
-| `normalize_tool_call(tool_name, tool_input, question, document_title)` | Chuẩn hóa tool name + input trước khi execute |
-| `fingerprint_call(tool_name, tool_input)` | SHA256 hash để dedup tool calls |
-| `describe_tools()` | Mô tả tools dạng text cho LLM _decide prompt |
-
----
-
-## `SecurityService`
-
-Access control ở query time. Hoạt động theo document_title scope.
+Điểm duy nhất gọi LLM. Hỗ trợ task-based routing + cost tracking.
 
 | Method | Mô tả |
 |---|---|
-| `validate_chat_request(question, document_title)` | Kiểm tra request hợp lệ trước khi xử lý |
-| `filter_tool_results(tool_output, document_title)` | Xóa kết quả không thuộc document_title (nếu có scope) |
+| `json_response(system, user, task)` | LLM → parse JSON → đo latency, record cost |
+| `vision_response(system, text, image_bytes, mime, task)` | Multimodal (text + image) cho `ImageParser` |
+| `_resolve_client(task)` | Trả `AgentLLM` đúng model cho task |
+
+Task routing (`LLM_TASK_MODEL_MAP`): `{"classify": "model-a", "answer": "model-b"}`.
 
 ---
 
-## `ContextAssemblyService`
+## Cost tracking (S1)
 
-Assemble + dedup + rank + trim kết quả từ nhiều tool calls thành packed context.
+Ledger ở `src/agentrag/observability/cost.py`:
+
+- Mỗi call record `(id, timestamp, task, model, latency_ms, in_tokens, out_tokens, usd, usage_source)`.
+- Ring buffer 5000 calls — clear on restart.
+- USD: provider `usage.*` khi có, else char-density heuristic.
+- Pricing: Gemini 2.5 / 1.5 + OpenAI 4o/4o-mini. Unknown → Gemini 2.5 Flash.
+
+API:
+
+```
+GET  /on/api/metrics/cost              total + per-task + per-model (avg, p50, p95, USD)
+GET  /on/api/metrics/cost/recent       newest-first feed, ?limit=&since=
+POST /on/api/metrics/cost/reset
+```
+
+UI dashboard: `/cost` page (S1, auto-refresh 5s).
+
+---
+
+## SecurityService
 
 | Method | Mô tả |
 |---|---|
-| `assemble(question, tool_outputs)` | Merge, dedup theo content_hash, rank theo score + source boost, trim theo token budget (hoặc chunk-count fallback), reorder lost-in-middle |
-
-Source boost: `structmem +0.08`, `synthesis +0.07`, `hybrid +0.06`, `sparse +0.03`
-
-**Trim strategy:** when `AGENT_MAX_CONTEXT_TOKENS > 0`, keep adding ranked
-chunks until accumulated content tokens (char-density estimate) exceed the
-budget. Falls back to `AGENT_MAX_CONTEXT_CHUNKS` cap when budget is 0.
-
-**Reorder (Liu 2023 — lost in the middle):** when
-`AGENT_LOST_IN_MIDDLE_REORDER=true`, ranked list `[r1, r2, r3, r4, r5]`
-becomes `[r1, r3, r5, r4, r2]` — best at start AND end, weaker in the middle.
-Empirically improves LLM attention on long contexts.
+| `validate_chat_request(question, document_title)` | Kiểm tra request hợp lệ |
+| `filter_tool_results(tool_output, document_title)` | Lọc kết quả ngoài scope |
 
 ---
 
-## Tương tác
+## ContextAssemblyService
 
-| Module | Vai trò |
+Merge + dedup theo `content_hash` + rank theo score + source boost + trim
+theo token budget + lost-in-middle reorder.
+
+Source boost: `structmem +0.08`, `synthesis +0.07`, `hybrid +0.06`, `sparse +0.03`.
+
+Trim: `AGENT_MAX_CONTEXT_TOKENS` (token-aware) — fallback `AGENT_MAX_CONTEXT_CHUNKS`.
+
+Reorder (Liu 2023): khi `AGENT_LOST_IN_MIDDLE_REORDER=true`, `[r1,r2,r3,r4,r5]` → `[r1,r3,r5,r4,r2]`.
+
+---
+
+## reasoning_knowledge.py (R)
+
+Pure Reasoning helpers — không IO, không LLM:
+
+| Function | Mô tả |
 |---|---|
-| `agent.AgentService` | Gọi KnowledgeService, SecurityService, ContextAssemblyService, LLMGateway |
-| `structured.*` | Gọi LLMGateway cho classify/extract/synthesize |
-| `retrieval.ElasticsearchRetriever` | KnowledgeService gọi để thực hiện search |
-| `main.py` | Expose `LLMGateway.cost_summary()` qua `/metrics` |
+| `expand_query(query, intent)` | Rule-based keyword expansion từ classified intent |
+| `select_retrieval_mode(intent)` | Intent → `hybrid_kg` / `hybrid` |
+| `mode_to_tool(mode)` | Mode → AgentTools tool name |
+| `normalize_tool_call(name, input, question, document_title, valid_tools)` | Fallback `search_hybrid_kg` khi LLM emit unknown tool |
 
 ---
 
@@ -99,31 +202,16 @@ Empirically improves LLM attention on long contexts.
 
 | Key | Default | Mô tả |
 |---|---|---|
-| `LLM_ROUTING_ENABLED` | `false` | Bật task-based model routing |
-| `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model name. Tasks: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary` |
-| `LLM_COST_TRACKING_ENABLED` | `false` | Bật cost tracking (`GET /on/api/metrics/cost`) |
-| `LLM_LARGE_CONTEXT_MODEL` | `None` | Auto-override khi prompt > threshold (open-notebook pattern). Bỏ trống = disabled |
-| `LLM_LARGE_CONTEXT_THRESHOLD` | `100000` | Token cutoff để switch sang large-context model |
-| `VISION_TIMEOUT_SECONDS` | `180` | Timeout cho vision LLM calls (llava cold-start có thể >60s) |
-| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy chunk-count cap (used when token budget = 0) |
-| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware packed-context budget |
-| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Best chunks at start + end of packed context |
-| `VISION_PROVIDER` | `None` | Provider cho `vision_response()`: `openai` / `gemini` / `ollama` |
-| `VISION_MODEL` | `None` | Model cho vision calls (gpt-4o / gemini-1.5-flash / llava:13b) |
-| `VISION_BASE_URL` | `None` | Override endpoint (chủ yếu cho Ollama) |
-
-## Cost tracking
-
-Process-global LLM ledger lives in `src/agentrag/observability/cost.py`.
-Every call from `AgentLLM` (json/text/stream) and `LLMGateway.vision_response`
-auto-records `(task, model, latency_ms, in_tokens, out_tokens, usd)` when
-`LLM_COST_TRACKING_ENABLED=true`.
-
-- Token counts: prefer provider `usage.prompt_tokens` / `completion_tokens` when
-  the OpenAI-compat response surfaces them; otherwise char-density heuristic.
-- USD estimate: per-model price table (Gemini 2.5 / 1.5 family, OpenAI 4o/4o-mini).
-  Unknown models default to `gemini-2.5-flash` pricing.
-- In-memory ring buffer of 5000 last calls. Cleared on process restart.
-
-`LLMGateway.cost_summary()` aggregates by task + by model. Surfaced via
-`GET /on/api/metrics/cost`; reset via `POST /on/api/metrics/cost/reset`.
+| `LLM_ROUTING_ENABLED` | `false` | Task-based model routing |
+| `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model. Tasks: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `domain_router` |
+| `LLM_COST_TRACKING_ENABLED` | `false` | Bật ledger + `/metrics/cost` |
+| `LLM_LARGE_CONTEXT_MODEL` / `_THRESHOLD` | `None` / `100000` | Auto-switch khi prompt vượt threshold |
+| `VISION_PROVIDER` / `VISION_MODEL` / `VISION_BASE_URL` | `None` | Vision multimodal |
+| `VISION_TIMEOUT_SECONDS` | `180` | Llava cold-start tolerance |
+| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Packed-context budget |
+| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy fallback when token budget=0 |
+| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Best chunks at start + end |
+| `TAGGING_ENABLED` | `true` | S5 — SectionTagger trong ingest pipeline |
+| `DOMAIN_FILTER_ENABLED` | `true` | S5 — Federated filter active |
+| `DOMAIN_ROUTER_CONFIDENCE_THRESHOLD` | `0.7` | S5 — top-1 vs top-K |
+| `DOMAIN_ROUTER_TOP_K` | `3` | S5 — broadened federation |

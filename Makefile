@@ -1,20 +1,42 @@
 # AgentRag — one-stop developer Makefile
 #
-# Quick start:
-#   make install        # docker compose up + uv sync + npm install + migrate
-#   make dev            # run api + worker + frontend in parallel (foreground)
-#   make api            # just the FastAPI server
-#   make frontend       # just the Next.js dev server
-#   make worker         # one ARQ worker
-#   make scaler         # auto-scaling ARQ worker pool
-#   make migrate        # alembic upgrade head
-#   make reset          # nuke + rebuild docker volumes
-#   make clean          # remove cached artifacts (no docker)
-#   make stop           # stop background dev servers started by `make up-bg`
+# QUICK START
+#   make install            docker up + uv sync + npm install + alembic migrate
+#   make seed-ontology      seed medical taxonomy + backfill ES tags  (S5)
+#   make dev                api + worker + frontend  (foreground, Ctrl+C all)
+#   make health             curl /config/validate + /on/api/auth/status
 #
-# Background variants:
-#   make api-bg | make frontend-bg | make worker-bg
-#   make logs           # tail logs from background servers
+# RUN A SINGLE COMPONENT
+#   make api                FastAPI dev server   (reload)
+#   make api-prod           gunicorn + uvicorn workers
+#   make frontend           Next.js dev server
+#   make worker             single ARQ worker
+#   make scaler             auto-scaling ARQ worker pool
+#   make cli                interactive chat CLI
+#
+# BACKGROUND
+#   make up-bg              start api + worker + frontend in background
+#   make logs               tail .run/*.log
+#   make stop               kill background servers
+#
+# S1 — COST & TOKEN DASHBOARD
+#   make cost-reset         clear in-memory LLM cost ledger
+#   make dashboard-open     open http://localhost:3000/cost in browser
+#
+# S5 — ONTOLOGY / DOMAIN PARTITION
+#   make seed-ontology      run scripts/seed_ontology.py + backfill_tags
+#   make backfill-tags      re-tag ES segments only (no seed)
+#
+# OPS
+#   make migrate            alembic upgrade head
+#   make reset              nuke + rebuild docker volumes (keeps .env)
+#   make reset-data         + wipes extracted images and ingested data
+#   make nuke               + wipes deps (.venv, node_modules, .next, etc)
+#   make clean              remove cached artifacts only (no docker)
+#
+# TESTS
+#   make test               full pytest suite (needs Postgres + ES up)
+#   make test-fast          unit-ish suite — skips infra-dependent tests
 #
 # All commands assume this repo's root as cwd.
 
@@ -133,6 +155,27 @@ vision-pull:
 .PHONY: migrate
 migrate:
 	uv run alembic upgrade head
+
+# ── S5: Ontology seed + tag backfill ──────────────────────────────────────────
+# Idempotent. Safe to re-run; upserts by (canonical_norm, source).
+.PHONY: seed-ontology
+seed-ontology: backfill-tags-prepare
+	uv run python scripts/seed_ontology.py \
+	  --yaml data/ontology/custom_terms.yaml \
+	  $$([ -f data/ontology/icd10_vn.csv ] && echo "--icd10 data/ontology/icd10_vn.csv")
+	$(MAKE) -s backfill-tags
+
+.PHONY: backfill-tags-prepare
+backfill-tags-prepare:
+	@echo "  (assumes Postgres + ES are up and pg_trgm migration applied)"
+
+.PHONY: backfill-tags
+backfill-tags:
+	uv run python scripts/backfill_tags.py
+
+.PHONY: backfill-tags-dry
+backfill-tags-dry:
+	uv run python scripts/backfill_tags.py --dry-run
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
@@ -278,6 +321,25 @@ health:
 .PHONY: test
 test:
 	uv run pytest -q
+
+# Skips ontology/* + ingestion/* (need Postgres). Use after `make install`
+# but before docker stack is fully wired.
+.PHONY: test-fast
+test-fast:
+	uv run pytest -q --ignore=tests/ontology --ignore=tests/ingestion
+
+# ── S1: Cost dashboard helpers ────────────────────────────────────────────────
+.PHONY: cost-reset
+cost-reset:
+	@curl -fsS -X POST http://127.0.0.1:$(API_PORT)/on/api/metrics/cost/reset \
+	  -H "Authorization: Bearer $${OPEN_NOTEBOOK_PASSWORD:-demo}" | jq . 2>/dev/null \
+	  || echo "  (api not reachable or jq missing)"
+
+.PHONY: dashboard-open
+dashboard-open:
+	@command -v xdg-open >/dev/null && xdg-open http://localhost:$(FRONTEND_PORT)/cost \
+	  || command -v open >/dev/null && open http://localhost:$(FRONTEND_PORT)/cost \
+	  || echo "Open http://localhost:$(FRONTEND_PORT)/cost"
 
 .PHONY: bench-ingest
 bench-ingest:

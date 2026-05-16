@@ -13,9 +13,11 @@ import remarkGfm from 'remark-gfm'
 import {
   SourceChatMessage,
   SourceChatContextIndicator,
-  BaseChatSession
+  BaseChatSession,
+  DomainFilterValue
 } from '@/lib/types/api'
 import { ModelSelector } from './ModelSelector'
+import { DomainFilter } from './DomainFilter'
 import { ContextIndicator } from '@/components/common/ContextIndicator'
 import { SessionManager } from '@/components/source/SessionManager'
 import { MessageActions } from '@/components/source/MessageActions'
@@ -37,7 +39,11 @@ interface ChatPanelProps {
   messages: SourceChatMessage[]
   isStreaming: boolean
   contextIndicators: SourceChatContextIndicator | null
-  onSendMessage: (message: string, modelOverride?: string) => void
+  onSendMessage: (
+    message: string,
+    modelOverride?: string,
+    domainFilter?: DomainFilterValue | null
+  ) => void
   modelOverride?: string
   onModelChange?: (model?: string) => void
   // Session management props
@@ -80,6 +86,7 @@ export function ChatPanel({
   const chatInputId = useId()
   const [input, setInput] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
+  const [domainFilter, setDomainFilter] = useState<DomainFilterValue | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { openModal } = useModalManager()
@@ -104,7 +111,7 @@ export function ChatPanel({
 
   const handleSend = () => {
     if (input.trim() && !isStreaming) {
-      onSendMessage(input.trim(), modelOverride)
+      onSendMessage(input.trim(), modelOverride, contextType === 'notebook' ? domainFilter : undefined)
       setInput('')
     }
   }
@@ -281,15 +288,28 @@ export function ChatPanel({
 
         {/* Input Area */}
         <div className="flex-shrink-0 p-4 space-y-3 border-t">
-          {/* Model selector */}
-          {onModelChange && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">{t('chat.model')}</span>
-              <ModelSelector
-                currentModel={modelOverride}
-                onModelChange={onModelChange}
-                disabled={isStreaming}
-              />
+          {/* Model selector + Domain filter (notebook only) */}
+          {(onModelChange || contextType === 'notebook') && (
+            <div className="flex items-center justify-between gap-2">
+              {onModelChange ? (
+                <>
+                  <span className="text-xs text-muted-foreground">{t('chat.model')}</span>
+                  <ModelSelector
+                    currentModel={modelOverride}
+                    onModelChange={onModelChange}
+                    disabled={isStreaming}
+                  />
+                </>
+              ) : (
+                <span />
+              )}
+              {contextType === 'notebook' && (
+                <DomainFilter
+                  value={domainFilter}
+                  onChange={setDomainFilter}
+                  disabled={isStreaming}
+                />
+              )}
             </div>
           )}
 

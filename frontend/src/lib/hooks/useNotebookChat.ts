@@ -12,7 +12,8 @@ import {
   CreateNotebookChatSessionRequest,
   UpdateNotebookChatSessionRequest,
   SourceListResponse,
-  NoteResponse
+  NoteResponse,
+  DomainFilterValue
 } from '@/lib/types/api'
 import { ContextSelections } from '@/app/(dashboard)/notebooks/[id]/page'
 
@@ -173,7 +174,11 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
   }, [notebookId, sources, notes, contextSelections])
 
   // Send message (synchronous, no streaming)
-  const sendMessage = useCallback(async (message: string, modelOverride?: string) => {
+  const sendMessage = useCallback(async (
+    message: string,
+    modelOverride?: string,
+    domainFilter?: DomainFilterValue | null
+  ) => {
     let sessionId = currentSessionId
 
     // Auto-create session if none exists
@@ -215,11 +220,23 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     try {
       // Build context and send message
       const context = await buildContext()
+      // Strip out empty fields so backend treats unset = no filter
+      const hasSystem = !!domainFilter?.system
+      const hasSpecialties = Array.isArray(domainFilter?.specialties) && (domainFilter?.specialties?.length ?? 0) > 0
+      const normalizedDomainFilter: DomainFilterValue | undefined =
+        hasSystem || hasSpecialties
+          ? {
+              ...(hasSystem ? { system: domainFilter!.system } : {}),
+              ...(hasSpecialties ? { specialties: domainFilter!.specialties } : {})
+            }
+          : undefined
+
       const response = await chatApi.sendMessage({
         session_id: sessionId,
         message,
         context,
-        model_override: modelOverride ?? (currentSession?.model_override ?? undefined)
+        model_override: modelOverride ?? (currentSession?.model_override ?? undefined),
+        domain_filter: normalizedDomainFilter
       })
 
       // Update messages with API response
@@ -245,7 +262,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     refetchCurrentSession,
     queryClient,
     t
-  ])
+  ]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch session
   const switchSession = useCallback((sessionId: string) => {

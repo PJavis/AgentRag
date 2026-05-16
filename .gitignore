@@ -3,8 +3,9 @@
 .cache
 .run/
 data/
+!data/ontology/
+!data/ontology/**
 # Finetune artifacts (large)
 models/
 data/finetune/
 vendor/llama.cpp/
-!data/ontology/

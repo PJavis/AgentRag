@@ -213,6 +213,11 @@ export interface UpdateNotebookChatSessionRequest {
   model_override?: string | null
 }
 
+export interface DomainFilterValue {
+  system?: string | null
+  specialties?: string[] | null
+}
+
 export interface SendNotebookChatMessageRequest {
   session_id: string
   message: string
@@ -221,6 +226,7 @@ export interface SendNotebookChatMessageRequest {
     notes: Array<Record<string, unknown>>
   }
   model_override?: string
+  domain_filter?: DomainFilterValue | null
 }
 
 export interface BuildContextRequest {

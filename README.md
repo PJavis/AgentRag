@@ -598,7 +598,20 @@ LLM_LARGE_CONTEXT_MODEL=
 LLM_LARGE_CONTEXT_THRESHOLD=100000
 ```
 
-Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `transformation`
+Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `transformation`, `domain_router` (S5), `followup` (S7).
+
+> **Speed tuning (Phase C).** The default `LLM_TASK_MODEL_MAP` routes
+> the fast tasks (`decide` / `classify` / `domain_router` / `followup`)
+> to a cheap small model (`llama3.2:3b`) and reserves the finetuned
+> `qwen-agentrag` (or its fallback `qwen2.5:7b-instruct`) for the
+> `answer` step only. Pair this with `AGENT_MAX_STEPS=2` and
+> `AGENT_PLAN_TRIGGER_MIN_CHARS=120` to cut the decide-loop overhead
+> from ~30s → ~10s on local Ollama. Pull both tags up front:
+>
+> ```bash
+> docker exec agentrag-ollama ollama pull llama3.2:3b
+> docker exec agentrag-ollama ollama pull qwen2.5:7b-instruct
+> ```
 
 When cost tracking is on, every LLM call is logged in a process-local ring
 buffer (last 5000 calls) with estimated USD via public Gemini / OpenAI pricing.

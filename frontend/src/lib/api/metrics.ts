@@ -6,6 +6,8 @@ export interface CostBucket {
   out_tokens: number
   total_latency_ms: number
   avg_latency_ms: number
+  p50_latency_ms?: number
+  p95_latency_ms?: number
   usd: number
 }
 

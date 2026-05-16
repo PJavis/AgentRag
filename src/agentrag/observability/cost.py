@@ -100,16 +100,35 @@ def record_llm_call(
         _LEDGER.append(entry)
 
 
+def _percentile(values: list[float], p: float) -> float:
+    """Linear-interp percentile. p in [0, 100]. Empty → 0."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    if len(s) == 1:
+        return s[0]
+    k = (len(s) - 1) * (p / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, len(s) - 1)
+    frac = k - lo
+    return s[lo] + (s[hi] - s[lo]) * frac
+
+
 def cost_summary() -> dict[str, Any]:
     with _LOCK:
         entries = list(_LEDGER)
 
     per_task: dict[str, dict[str, Any]] = {}
     per_model: dict[str, dict[str, Any]] = {}
+    per_task_lat: dict[str, list[float]] = {}
+    per_model_lat: dict[str, list[float]] = {}
     total_in = total_out = 0
     total_usd = 0.0
     for e in entries:
-        for bucket, key in ((per_task, e["task"]), (per_model, e["model"])):
+        for bucket, lat_bucket, key in (
+            (per_task, per_task_lat, e["task"]),
+            (per_model, per_model_lat, e["model"]),
+        ):
             s = bucket.setdefault(key, {
                 "calls": 0, "in_tokens": 0, "out_tokens": 0,
                 "total_latency_ms": 0.0, "usd": 0.0,
@@ -119,14 +138,19 @@ def cost_summary() -> dict[str, Any]:
             s["out_tokens"] += e["out_tokens"]
             s["total_latency_ms"] += e["latency_ms"]
             s["usd"] += e["usd"]
+            lat_bucket.setdefault(key, []).append(float(e["latency_ms"]))
         total_in += e["in_tokens"]
         total_out += e["out_tokens"]
         total_usd += e["usd"]
-    for bucket in (per_task, per_model):
-        for s in bucket.values():
+    for bucket, lat_bucket in ((per_task, per_task_lat), (per_model, per_model_lat)):
+        for k, s in bucket.items():
             s["avg_latency_ms"] = round(s["total_latency_ms"] / s["calls"], 1) if s["calls"] else 0.0
             s["total_latency_ms"] = round(s["total_latency_ms"], 1)
             s["usd"] = round(s["usd"], 6)
+            # S3: p50/p95 — surface tail latency on the dashboard
+            samples = lat_bucket.get(k, [])
+            s["p50_latency_ms"] = round(_percentile(samples, 50), 1)
+            s["p95_latency_ms"] = round(_percentile(samples, 95), 1)
     return {
         "total_calls": len(entries),
         "total_in_tokens": total_in,

@@ -338,7 +338,15 @@ export function ChatPanel({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`${t('chat.sendPlaceholder')} (${t('chat.pressToSend').replace('{key}', keyHint)})`}
+              placeholder={(() => {
+                // Defensive: t() may return null/undefined before i18n is
+                // initialised. Template literal would render the string
+                // "null" inside the input — guard explicitly.
+                const main = t('chat.sendPlaceholder') || 'Ask anything…'
+                const press = t('chat.pressToSend') || 'Press {key} to send'
+                const hint = (typeof press === 'string' ? press : 'Press {key} to send').replace('{key}', keyHint)
+                return `${main} (${hint})`
+              })()}
               disabled={isStreaming}
               className="flex-1 min-h-[40px] max-h-[100px] resize-none py-2 px-3 min-w-0"
               rows={1}

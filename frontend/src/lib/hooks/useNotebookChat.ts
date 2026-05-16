@@ -239,8 +239,14 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
         domain_filter: normalizedDomainFilter
       })
 
-      // Update messages with API response
-      setMessages(response.messages)
+      // Only replace local messages when server returns the expected shape.
+      // If server returns fewer messages than we already have locally (e.g.
+      // stale list_messages cache, transient race), don't wipe the user
+      // bubble — the next refetch will fix it.
+      const serverMessages = response?.messages
+      if (Array.isArray(serverMessages) && serverMessages.length >= 2) {
+        setMessages(serverMessages)
+      }
 
       // Refetch current session to get updated data
       await refetchCurrentSession()
@@ -248,10 +254,9 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       const error = err as { response?: { data?: { detail?: string } }, message?: string };
       console.error('Error sending message:', error)
       toast.error(getApiErrorMessage(error.response?.data?.detail || error.message, (key) => t(key), 'apiErrors.failedToSendMessage'))
-      // Backend persists the user message before agent.chat() runs, so on
-      // error refetch the session — DB still has the user turn even though
-      // the assistant turn failed. Don't filter out the optimistic temp
-      // bubble until we have server state to replace it with.
+      // Keep the optimistic user bubble visible. Backend persists the user
+      // turn before agent.chat() runs, so refetch will reconcile when the
+      // session DB write lands.
       try {
         await refetchCurrentSession()
       } catch {

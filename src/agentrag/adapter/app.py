@@ -20,6 +20,7 @@ from src.agentrag.adapter.routers.stubs import router as stubs_router
 from src.agentrag.adapter.routers.transformations import router as transformations_router
 from src.agentrag.adapter.routers.insights import router as insights_router
 from src.agentrag.adapter.routers.models import router as models_router
+from src.agentrag.adapter.routers.ontology import router as ontology_router
 
 adapter = FastAPI(title="AgentRag — open-notebook adapter", docs_url="/adapter/docs")
 
@@ -48,6 +49,7 @@ adapter.include_router(search_router, prefix="/api")
 adapter.include_router(transformations_router, prefix="/api")
 adapter.include_router(insights_router, prefix="/api")
 adapter.include_router(models_router, prefix="/api")
+adapter.include_router(ontology_router, prefix="/api")
 adapter.include_router(stubs_router, prefix="/api")
 
 # Stored image bytes (extracted from PDFs + standalone uploads) served under

@@ -26,6 +26,7 @@ _PUBLIC_PREFIXES = (
     "/api/auth/google/callback",
     "/api/health",
     "/api/images",
+    "/api/ontology",
     "/health",
     "/docs",
     "/openapi.json",

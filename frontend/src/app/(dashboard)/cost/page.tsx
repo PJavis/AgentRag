@@ -82,13 +82,15 @@ function BucketTable({
                 <th className="text-right px-4 py-2 font-medium">In tok</th>
                 <th className="text-right px-4 py-2 font-medium">Out tok</th>
                 <th className="text-right px-4 py-2 font-medium">Avg ms</th>
+                <th className="text-right px-4 py-2 font-medium">p50</th>
+                <th className="text-right px-4 py-2 font-medium">p95</th>
                 <th className="text-right px-4 py-2 font-medium">USD</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-muted-foreground py-6">
+                  <td colSpan={8} className="text-center text-muted-foreground py-6">
                     No data
                   </td>
                 </tr>
@@ -100,6 +102,8 @@ function BucketTable({
                     <td className="text-right tabular-nums px-4 py-2">{fmtInt(r.in_tokens)}</td>
                     <td className="text-right tabular-nums px-4 py-2">{fmtInt(r.out_tokens)}</td>
                     <td className="text-right tabular-nums px-4 py-2">{r.avg_latency_ms}</td>
+                    <td className="text-right tabular-nums px-4 py-2 text-muted-foreground">{r.p50_latency_ms ?? '—'}</td>
+                    <td className="text-right tabular-nums px-4 py-2 text-muted-foreground">{r.p95_latency_ms ?? '—'}</td>
                     <td className="text-right tabular-nums px-4 py-2 font-medium">{fmtUsd(r.usd)}</td>
                   </tr>
                 ))

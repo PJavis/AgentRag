@@ -13,7 +13,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
-from src.agentrag.adapter.auth import is_admin
+from src.agentrag.adapter.auth import get_identity, is_admin
+from src.agentrag.observability.activity import record_event
 from src.agentrag.adapter.db import adapter_notebook_sources
 from src.agentrag.adapter.models import (
     ChatMessage,
@@ -103,10 +104,12 @@ async def list_sessions(notebook_id: str):
 
 
 @notebook_router.post("/sessions")
-async def create_session(body: CreateSessionRequest):
+async def create_session(body: CreateSessionRequest, request: Request):
     store = ConversationStore()
+    identity = get_identity(request)
     conv = await store.create_conversation(
         title=body.title,
+        user_id=identity.user_id if identity else None,
         extra_metadata={
             "notebook_id": body.notebook_id,
             "model_override": body.model_override,
@@ -174,7 +177,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         domain_filter=body.domain_filter,
     )
 
-    await store.append_message(
+    appended = await store.append_message(
         body.session_id,
         role="assistant",
         content=result.get("answer", ""),
@@ -185,6 +188,24 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
             "reasoning_path": result.get("reasoning_path"),
             "plan_subqueries": result.get("plan_subqueries") or [],
             "sql_query": result.get("sql_query"),
+        },
+    )
+
+    # S6 — record chat_turn event for the activity feed
+    identity = get_identity(request)
+    timings = result.get("timings_ms") or {}
+    await record_event(
+        user_id=identity.user_id if identity else None,
+        event_type="chat_turn",
+        target_kind="conversation",
+        target_id=body.session_id,
+        payload={
+            "message": body.message[:200],
+            "message_id": appended.get("message_id") if isinstance(appended, dict) else None,
+            "tokens_in": timings.get("tokens_in"),
+            "tokens_out": timings.get("tokens_out"),
+            "latency_ms": timings.get("total"),
+            "reasoning_path": result.get("reasoning_path"),
         },
     )
 
@@ -206,11 +227,13 @@ source_router = APIRouter()
 
 
 @source_router.post("/sources/{source_id}/chat/sessions")
-async def create_source_session(source_id: str, body: CreateSourceChatSessionRequest):
+async def create_source_session(source_id: str, body: CreateSourceChatSessionRequest, request: Request):
     store = ConversationStore()
     doc_title = await _get_document_title(source_id)
+    identity = get_identity(request)
     conv = await store.create_conversation(
         title=body.title or doc_title,
+        user_id=identity.user_id if identity else None,
         extra_metadata={
             "source_id": source_id,
             "document_title": doc_title,
@@ -329,12 +352,25 @@ async def send_message(
             yield json.dumps({"type": "ai", "content": chunk}) + "\n"
             await asyncio.sleep(0)  # yield control
 
-        await store.append_message(
+        appended = await store.append_message(
             session_id,
             role="assistant",
             content=answer,
             citations=citations,
             tool_trace=tool_trace,
+        )
+        # S6 — activity event for source chat turn
+        identity_src = get_identity(request)
+        await record_event(
+            user_id=identity_src.user_id if identity_src else None,
+            event_type="chat_turn",
+            target_kind="conversation",
+            target_id=session_id,
+            payload={
+                "message": body.message[:200],
+                "message_id": appended.get("message_id") if isinstance(appended, dict) else None,
+                "source_id": source_id,
+            },
         )
 
         on_sources = [

@@ -246,6 +246,52 @@ export interface UpdateNotebookChatSessionRequest {
   model_override?: string | null
 }
 
+// S6 — Activity panel
+export type ActivityEventType =
+  | 'chat_turn'
+  | 'source_uploaded'
+  | 'ingest_done'
+  | 'ingest_failed'
+  | 'search'
+
+export interface ActivityEvent {
+  id: string
+  user_id: string | null
+  event_type: ActivityEventType | string
+  target_kind: string | null
+  target_id: string | null
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface ActivityCounts {
+  chat_turn?: number
+  source_uploaded?: number
+  ingest_done?: number
+  ingest_failed?: number
+  search?: number
+}
+
+export interface ActivityHeatmapCell {
+  date: string
+  count: number
+}
+
+export interface ActivitySummary {
+  counts: ActivityCounts
+  tokens_total: number
+  usd_estimate: number
+  heatmap: ActivityHeatmapCell[]
+}
+
+export interface AdminUserEntry {
+  user_id: string | null
+  email: string | null
+  name: string | null
+  event_count: number
+  last_seen: string | null
+}
+
 export interface DomainFilterValue {
   system?: string | null
   specialties?: string[] | null

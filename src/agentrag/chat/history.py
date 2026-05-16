@@ -65,10 +65,18 @@ class ConversationStore:
         self,
         title: str | None = None,
         extra_metadata: dict[str, Any] | None = None,
+        user_id: str | uuid.UUID | None = None,
     ) -> dict[str, Any]:
+        uid: uuid.UUID | None = None
+        if user_id and user_id != "anonymous":
+            try:
+                uid = uuid.UUID(str(user_id))
+            except (ValueError, TypeError):
+                uid = None
         async with AsyncSessionLocal() as session:
             conversation = Conversation(
                 title=title,
+                user_id=uid,
                 extra_metadata=extra_metadata,
             )
             session.add(conversation)
@@ -77,6 +85,7 @@ class ConversationStore:
             return {
                 "conversation_id": str(conversation.id),
                 "title": conversation.title,
+                "user_id": str(conversation.user_id) if conversation.user_id else None,
                 "extra_metadata": conversation.extra_metadata or {},
                 "created_at": conversation.created_at.isoformat() if conversation.created_at else None,
                 "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else "",

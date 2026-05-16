@@ -212,17 +212,25 @@ async def _run_ingest_background(
 ) -> None:
     """Run ingest_folder in background, then link notebooks + cleanup tmp dir."""
     import logging
+    import time
+    from src.agentrag.observability.activity import record_event as _record_event
     logger = logging.getLogger(__name__)
     sem = _user_upload_semaphore(user_id)
     parent_dir = os.path.dirname(file_path)
+    started = time.perf_counter()
+    doc_id: str | None = None
+    segment_count: int | None = None
+    error_msg: str | None = None
     try:
         async with sem:
             result = await ingest_folder(parent_dir)
         docs = result.get("documents", [])
         if not docs:
             logger.error("Background ingest returned no documents for %s", file_path)
+            error_msg = "no documents produced"
             return
         doc_id = docs[0].get("document_id")
+        segment_count = docs[0].get("segments_indexed") or docs[0].get("chunks")
         if not doc_id:
             return
         async with AsyncSessionLocal() as session:
@@ -233,10 +241,27 @@ async def _run_ingest_background(
                 doc.content_hash = content_hash
             await _link_to_notebooks(session, doc.id, notebook_ids)
             await session.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception("Background ingest failed for %s", file_path)
+        error_msg = str(exc)[:500]
     finally:
         shutil.rmtree(parent_dir, ignore_errors=True)
+        # S6 — record ingest_done / ingest_failed event
+        duration_ms = round((time.perf_counter() - started) * 1000.0, 1)
+        try:
+            await _record_event(
+                user_id=user_id,
+                event_type="ingest_failed" if error_msg else "ingest_done",
+                target_kind="document",
+                target_id=doc_id,
+                payload={
+                    "duration_ms": duration_ms,
+                    "segment_count": segment_count,
+                    "error": error_msg,
+                },
+            )
+        except Exception:
+            pass  # never break the worker on telemetry failure
 
 
 @router.post("")
@@ -328,8 +353,16 @@ async def create_source(
             proj = Project(name="Default Project", description="Auto created")
             session.add(proj)
             await session.flush()
+        # S6 — owner tagging (NULL for anonymous bucket)
+        owner_uuid: uuid.UUID | None = None
+        if user_id and user_id != "anonymous":
+            try:
+                owner_uuid = uuid.UUID(str(user_id))
+            except (ValueError, TypeError):
+                owner_uuid = None
         skeleton = Document(
             project_id=proj.id,
+            user_id=owner_uuid,
             title=doc_title,
             source_type=ext,
             source_id=filename,            # matches FolderConnector.source_id
@@ -343,6 +376,21 @@ async def create_source(
         await _link_to_notebooks(session, skeleton.id, all_notebooks)
         await session.commit()
         payload = await _doc_to_source(session, skeleton, all_notebooks)
+
+    # S6 — record activity event for the upload
+    from src.agentrag.observability.activity import record_event as _record_event
+    await _record_event(
+        user_id=user_id,
+        event_type="source_uploaded",
+        target_kind="document",
+        target_id=skeleton.id,
+        payload={
+            "filename": filename,
+            "size_bytes": len(raw),
+            "content_hash": content_hash,
+            "source_type": ext,
+        },
+    )
 
     # Persist the raw bytes under data/originals/<doc_id>.<ext> so the user can
     # re-download or open the original in a native viewer. Mirrors the temp file

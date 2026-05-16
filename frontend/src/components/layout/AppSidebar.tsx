@@ -42,6 +42,7 @@ import {
   Wrench,
   Command,
   DollarSign,
+  Activity,
 } from 'lucide-react'
 
 const getNavigation = (t: TFunction) => [
@@ -70,6 +71,7 @@ const getNavigation = (t: TFunction) => [
       { name: t('navigation.models'), href: '/settings/api-keys', icon: Bot },
       { name: t('navigation.transformations'), href: '/transformations', icon: Shuffle },
       { name: t('navigation.cost') || 'Cost & Tokens', href: '/cost', icon: DollarSign },
+      { name: t('navigation.activity') || 'Activity', href: '/activity', icon: Activity },
       { name: t('navigation.settings'), href: '/settings', icon: Settings },
       { name: t('navigation.advanced'), href: '/advanced', icon: Wrench },
     ],

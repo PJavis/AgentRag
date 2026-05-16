@@ -42,6 +42,7 @@ class Document(Base):
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id = Column(PG_UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     source_type = Column(String, nullable=False)  # markdown, google_doc, google_sheet...
     source_id = Column(String)
     title = Column(String, nullable=False)
@@ -92,6 +93,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     title = Column(String, nullable=True)
     extra_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -114,3 +116,16 @@ class ChatMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class EventLog(Base):
+    """S6 — per-user activity feed event."""
+    __tablename__ = "event_log"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    event_type = Column(String(32), nullable=False)
+    target_kind = Column(String(32), nullable=True)
+    target_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    payload = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -185,3 +185,42 @@ class AskRequest(BaseModel):
     strategy_model: str | None = None
     answer_model: str | None = None
     final_answer_model: str | None = None
+
+
+# ── S6: Activity panel ────────────────────────────────────────────────────────
+class ActivityEvent(BaseModel):
+    id: str
+    user_id: str | None = None
+    event_type: str
+    target_kind: str | None = None
+    target_id: str | None = None
+    payload: dict[str, Any]
+    created_at: str
+
+
+class ActivityCounts(BaseModel):
+    chat_turn: int = 0
+    source_uploaded: int = 0
+    ingest_done: int = 0
+    ingest_failed: int = 0
+    search: int = 0
+
+
+class ActivityHeatmapCell(BaseModel):
+    date: str
+    count: int
+
+
+class ActivitySummary(BaseModel):
+    counts: ActivityCounts
+    tokens_total: int = 0
+    usd_estimate: float = 0.0
+    heatmap: list[ActivityHeatmapCell] = []
+
+
+class AdminUserEntry(BaseModel):
+    user_id: str | None
+    email: str | None = None
+    name: str | None = None
+    event_count: int = 0
+    last_seen: str | None = None

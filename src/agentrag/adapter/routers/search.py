@@ -29,12 +29,32 @@ def _hit_to_result(hit: dict) -> dict:
 
 
 @router.post("")
-async def search(body: SearchRequest):
+async def search(body: SearchRequest, request: Request):
+    import time
+    from src.agentrag.adapter.auth import get_identity
+    from src.agentrag.observability.activity import record_event
+
     retriever = ElasticsearchRetriever()
     mode = "hybrid" if body.type == "vector" else "sparse"
+    started = time.perf_counter()
     result = await retriever.search(query=body.query, mode=mode, top_k=body.limit)
+    latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
     hits = result.get("results", [])
     filtered = [h for h in hits if float(h.get("score") or 0.0) >= body.minimum_score]
+
+    # S6 — activity event
+    identity = get_identity(request)
+    await record_event(
+        user_id=identity.user_id if identity else None,
+        event_type="search",
+        payload={
+            "query": (body.query or "")[:200],
+            "mode": mode,
+            "top_k": body.limit,
+            "hit_count": len(filtered),
+            "latency_ms": latency_ms,
+        },
+    )
     return SearchResponse(
         results=[_hit_to_result(h) for h in filtered],
         total_count=len(filtered),

@@ -221,6 +221,7 @@ class Settings(BaseSettings):
     # ── User auth (JWT) ────────────────────────────────────────────────────────
     AUTH_ENABLED: bool = True                   # require login if true (else open access)
     AUTH_ALLOW_SIGNUP: bool = True              # allow public signup
+    ADMIN_EMAILS: str = ""                      # comma-separated; matching emails auto-promoted on signup/login
     JWT_SECRET: str | None = None               # signing secret; auto-derived in dev
     JWT_TTL_DAYS: int = 7
 

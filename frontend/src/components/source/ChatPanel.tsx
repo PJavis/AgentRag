@@ -18,6 +18,8 @@ import {
 } from '@/lib/types/api'
 import { ModelSelector } from './ModelSelector'
 import { DomainFilter } from './DomainFilter'
+import { TraceDialog } from './TraceDialog'
+import { Network } from 'lucide-react'
 import { ContextIndicator } from '@/components/common/ContextIndicator'
 import { SessionManager } from '@/components/source/SessionManager'
 import { MessageActions } from '@/components/source/MessageActions'
@@ -87,6 +89,7 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
   const [domainFilter, setDomainFilter] = useState<DomainFilterValue | null>(null)
+  const [traceMessage, setTraceMessage] = useState<SourceChatMessage | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { openModal } = useModalManager()
@@ -211,10 +214,24 @@ export function ChatPanel({
                     </div>
                     {message.type === 'ai' && (
                       <div className="flex items-center justify-between gap-2">
-                        <MessageActions
-                          content={message.content}
-                          notebookId={notebookId}
-                        />
+                        <div className="flex items-center gap-1">
+                          <MessageActions
+                            content={message.content}
+                            notebookId={notebookId}
+                          />
+                          {(message.tool_trace?.length || message.timings_ms) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 gap-1 text-xs"
+                              onClick={() => setTraceMessage(message)}
+                              title={t('chat.viewTrace') || 'View reasoning trace'}
+                            >
+                              <Network className="h-3.5 w-3.5" />
+                              <span>{t('chat.trace') || 'Trace'}</span>
+                            </Button>
+                          )}
+                        </div>
                         <FeedbackButtons
                           turnId={message.id}
                           sessionId={currentSessionId ?? undefined}
@@ -342,7 +359,11 @@ export function ChatPanel({
         </div>
       </CardContent>
     </Card>
-
+    <TraceDialog
+      open={!!traceMessage}
+      onOpenChange={(v) => { if (!v) setTraceMessage(null) }}
+      message={traceMessage as never}
+    />
     </>
   )
 }

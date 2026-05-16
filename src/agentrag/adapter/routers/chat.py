@@ -62,6 +62,7 @@ def _msg_to_chat(msg: dict) -> dict:
         seed = f"{msg.get('role','')}|{msg.get('content','')[:120]}|{msg.get('created_at','')}"
         mid = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
     role = msg["role"]
+    extra = msg.get("extra_metadata") or {}
     return ChatMessage(
         id=mid,
         type=_ROLE_TO_TYPE.get(role, "ai"),
@@ -69,6 +70,10 @@ def _msg_to_chat(msg: dict) -> dict:
         content=msg["content"],
         citations=msg.get("citations"),
         tool_trace=msg.get("tool_trace"),
+        timings_ms=msg.get("timings_ms"),
+        reasoning_path=extra.get("reasoning_path"),
+        plan_subqueries=extra.get("plan_subqueries"),
+        sql_query=extra.get("sql_query"),
         timestamp=msg.get("created_at"),
     ).model_dump()
 
@@ -175,6 +180,12 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         content=result.get("answer", ""),
         citations=result.get("citations", []),
         tool_trace=result.get("tool_trace", []),
+        timings_ms=result.get("timings_ms", {}),
+        extra_metadata={
+            "reasoning_path": result.get("reasoning_path"),
+            "plan_subqueries": result.get("plan_subqueries") or [],
+            "sql_query": result.get("sql_query"),
+        },
     )
 
     msgs = await store.list_messages(body.session_id, limit=1000)

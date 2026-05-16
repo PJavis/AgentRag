@@ -10,3 +10,4 @@ models/
 data/finetune/
 vendor/llama.cpp/
 .superpowers/
+image.png

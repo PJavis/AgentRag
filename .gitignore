@@ -9,3 +9,4 @@ data/
 models/
 data/finetune/
 vendor/llama.cpp/
+.superpowers/

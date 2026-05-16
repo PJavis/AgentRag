@@ -149,6 +149,12 @@ export interface SourceChatMessage {
   type: 'human' | 'ai'
   content: string
   timestamp?: string
+  citations?: Array<Record<string, unknown>>
+  tool_trace?: ToolTraceEntry[]
+  reasoning_path?: string | null
+  timings_ms?: ChatTimings
+  plan_subqueries?: unknown[]
+  sql_query?: string | null
 }
 
 export interface SourceChatContextIndicator {
@@ -191,11 +197,38 @@ export interface NotebookChatSession extends BaseChatSession {
   notebook_id: string
 }
 
+export interface ToolTraceEntry {
+  tool_name?: string
+  tool_input?: Record<string, unknown>
+  tool_output?: Record<string, unknown>
+  decision_latency_ms?: number
+  tool_latency_ms?: number
+  sub_query?: string
+  [key: string]: unknown
+}
+
+export interface ChatTimings {
+  total?: number
+  plan?: number
+  decide?: number
+  tool?: number
+  assemble?: number
+  answer?: number
+  critique?: number
+  [stage: string]: number | undefined
+}
+
 export interface NotebookChatMessage {
   id: string
   type: 'human' | 'ai'
   content: string
   timestamp?: string
+  citations?: Array<Record<string, unknown>>
+  tool_trace?: ToolTraceEntry[]
+  reasoning_path?: string | null
+  timings_ms?: ChatTimings
+  plan_subqueries?: unknown[]
+  sql_query?: string | null
 }
 
 export interface NotebookChatSessionWithMessages extends NotebookChatSession {

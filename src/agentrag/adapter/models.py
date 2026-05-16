@@ -115,6 +115,11 @@ class ChatMessage(BaseModel):
     content: str
     citations: list[Any] | None = None
     tool_trace: list[Any] | None = None
+    # S2: reasoning trace surface for /trace dialog
+    reasoning_path: str | None = None
+    timings_ms: dict[str, Any] | None = None
+    plan_subqueries: list[Any] | None = None
+    sql_query: str | None = None
     timestamp: str | None = None
 
 

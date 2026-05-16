@@ -179,6 +179,7 @@ class ConversationStore:
                 "citations": item.citations or [],
                 "tool_trace": item.tool_trace or [],
                 "timings_ms": item.timings_ms or {},
+                "extra_metadata": item.extra_metadata or {},
                 "created_at": item.created_at.isoformat() if item.created_at else None,
             }
             for item in messages

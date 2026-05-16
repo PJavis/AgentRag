@@ -45,6 +45,45 @@ class ElasticsearchRetriever:
         dense_query: str | None = None,
         filters: dict | None = None,
     ) -> dict:
+        """Public entrypoint. Runs `_search_impl` once with the supplied
+        filters; if that returns zero hits AND filters were applied, retries
+        unfiltered so the agent still has something to ground the answer on
+        (fixes the 'empty retrieval → hallucination' path when domain tags
+        haven't been backfilled on existing chunks)."""
+        payload = await self._search_impl(
+            query=query,
+            mode=mode,
+            top_k=top_k,
+            document_title=document_title,
+            rerank=rerank,
+            dense_query=dense_query,
+            filters=filters,
+        )
+        if filters and not payload.get("results"):
+            fallback = await self._search_impl(
+                query=query,
+                mode=mode,
+                top_k=top_k,
+                document_title=document_title,
+                rerank=rerank,
+                dense_query=dense_query,
+                filters=None,
+            )
+            fallback["domain_filter_fallback"] = True
+            fallback["domain_filter_attempted"] = filters
+            return fallback
+        return payload
+
+    async def _search_impl(
+        self,
+        query: str,
+        mode: str = "hybrid_kg",
+        top_k: int | None = None,
+        document_title: str | None = None,
+        rerank: bool | None = None,
+        dense_query: str | None = None,
+        filters: dict | None = None,
+    ) -> dict:
         """`query` drives BM25 + rerank + intent ranking (kept clean for keyword match).
         `dense_query` is embedded for kNN — pass HyDE-augmented text here. Falls back to `query` when None.
         `filters` carries S5 domain filters: {"systems": [...], "specialties": [...]}.

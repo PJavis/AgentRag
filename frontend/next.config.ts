@@ -10,6 +10,11 @@ const nextConfig: NextConfig = {
     // Increase proxy body size limit for file uploads (default is 10MB)
     // This allows larger files to be uploaded through the /api/* rewrite proxy to FastAPI
     proxyClientMaxBodySize: '100mb',
+    // Increase rewrite/proxy timeout. Default ~30s is too short for the
+    // agent loop (multi-step decide → tool → answer) on local Ollama
+    // where each LLM call can take 5–10s. Set to 10 minutes; backend
+    // still bounds total work via its own timeouts.
+    proxyTimeout: 600_000,
   } as NextConfig['experimental'],
 
   // API Rewrites: Proxy /api/* requests to FastAPI backend

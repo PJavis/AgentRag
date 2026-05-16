@@ -1,8 +1,16 @@
-# Module: `agent` — Semantic Reasoning Loop
+# Module: `agent` — Semantic Reasoning Loop (Reasoning Plane)
 
 **Vị trí:** `src/agentrag/agent/`
 
+> S4 — Reasoning Plane. `AgentService.__init__` fetch services qua
+> `ServiceContainer.get_container()` (không tự `new ElasticsearchRetriever()`).
+> Đọc `ARCHITECTURE.md` cho luật chia plane.
+
 Vòng lặp suy luận ngữ nghĩa chính. Nhận câu hỏi, tự chọn tool retrieval cần gọi, tích lũy context qua nhiều bước, rồi sinh câu trả lời cuối. Hỗ trợ cả blocking (`chat`) và streaming SSE (`chat_stream`).
+
+Output chat response bao gồm `tool_trace`, `timings_ms`, `reasoning_path`,
+`plan_subqueries`, `sql_query` — adapter persist trên assistant message để
+UI `TraceDialog` (S2) hiển thị.
 
 ---
 

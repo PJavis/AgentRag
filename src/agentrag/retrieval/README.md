@@ -1,6 +1,11 @@
-# Module: `retrieval` — Hybrid Search Engine
+# Module: `retrieval` — Hybrid Search Engine (Execution Plane)
 
 **Vị trí:** `src/agentrag/retrieval/`
+
+> S4 — Execution Plane. Reasoning code KHÔNG instantiate `ElasticsearchRetriever`
+> trực tiếp; gọi qua `ServiceContainer.retrieval` (`RetrievalService` facade).
+> `FederatedRetriever` filter-only — `DomainRouter` chạy ở Reasoning, kết quả
+> truyền vào qua `system_override` / `specialty_override`.
 
 Hybrid search engine kết hợp BM25 (sparse), vector KNN (dense), và StructMem knowledge entries. Hỗ trợ reranking bằng LLM hoặc local cross-encoder.
 
@@ -10,8 +15,11 @@ Hybrid search engine kết hợp BM25 (sparse), vector KNN (dense), và StructMe
 
 | File | Class | Mô tả |
 |---|---|---|
-| `elasticsearch_retriever.py` | `ElasticsearchRetriever` | Orchestrator chính — 4 search modes, RRF fusion |
+| `elasticsearch_retriever.py` | `ElasticsearchRetriever` | Orchestrator chính — 4 search modes, RRF fusion, 60s `_RESULT_CACHE` |
+| `federated.py` | `FederatedRetriever` | (S5) Wrap base + filter forwarding. Router opt-in (default `None` — Reasoning drives routing) |
 | `reranker.py` | `LLMReranker` | Reranking với LLM chat hoặc `sentence-transformers` |
+| `query_rewriter.py` | `QueryRewriter` | HyDE + multi-hop decompose |
+| `context.py` | `set_domain_filter / get_domain_filter` | ContextVar (S5) — async-safe per-turn filter |
 
 ---
 

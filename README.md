@@ -1,25 +1,42 @@
 # AgentRag
 
-Nền tảng RAG (Retrieval-Augmented Generation) cho học liệu, đặc biệt phục vụ sinh viên y khoa. Hai luồng suy luận song song, bộ nhớ phân cấp, CLI tương tác, và UI tương thích open-notebook.
+Nền tảng RAG cho học liệu y khoa Việt Nam. Hai luồng suy luận song song, bộ
+nhớ phân cấp, CLI tương tác, UI Next.js tương thích open-notebook, có
+domain-aware retrieval + reasoning trace + cost dashboard.
 
-- **Semantic path** — Hybrid retrieval (BM25 + vector + StructMem entries) + LLM synthesis
-- **Structured path** — SQL reasoning trên dữ liệu trích xuất từ văn bản
-- **Chat StructMem** — Bộ nhớ hội thoại semantic thay thế sliding-window history
-- **Page-aware citations** — Trích dẫn chỉ rõ số trang (NotebookLM-style) cho tài liệu PDF
-- **Vision LLM** — Mô tả ảnh y tế (giải phẫu, X-quang, ECG…) trong PDF + ảnh standalone
-- **Mindmap & Summary** — Sinh sơ đồ tư duy Mermaid + tóm tắt cấu trúc theo template y khoa
-- **Open-notebook adapter** — Mount UI Next.js qua `/on`; admin panel reasoning trace tại `/admin`
+### Tính năng
+
+- **Reasoning Plane / Execution Plane** (S4) — Layered architecture với
+  `ServiceContainer` DI; reasoning fetch service qua Protocol, không tự
+  instantiate. Xem [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+- **Domain partition** (S5) — KB chia theo `hệ cơ quan × chuyên khoa` (15×14).
+  Shared ontology + `pg_trgm` fuzzy + `DomainRouter` SLM + UI override dropdown
+  trên ChatPanel. Xem `src/agentrag/ontology/README.md`.
+- **Cost & token dashboard** (S1) — `/cost` page, per-task / per-model summary
+  với p50/p95 latency, recent-calls feed.
+- **Reasoning trace** (S2) — Nút "Trace" trên mỗi AI bubble → LangGraph-style
+  node graph (`plan → decide → tool → assemble → answer → critique`) +
+  expandable tool I/O + plan sub-queries + SQL.
+- **Embedding cache** (S3) — TTL 600s cho query path; ES result cache 60s đã có.
+- **Semantic + Structured paths** — Hybrid (BM25 + kNN + RRF + KG) hoặc SQL
+  reasoning trên rows trích xuất.
+- **Chat StructMem** — Semantic conversation memory thay sliding-window.
+- **Page-aware citations** — Số trang chính xác cho PDF (NotebookLM-style).
+- **Vision LLM** — Mô tả ảnh y tế trong PDF + ảnh standalone.
+- **Mindmap & Summary** — Mermaid mindmap + cấu trúc tóm tắt y khoa.
 
 ---
 
 ## Mục lục
 
-1. [Kiến trúc tổng quan](#1-kiến-trúc-tổng-quan)
+> **TL;DR**: §3 → §4 → §5.10 (S5 seed). Dashboard ở §5.x cost / §16 adapter.
+
+1. [Kiến trúc tổng quan](#1-kiến-trúc-tổng-quan) — bao gồm S4 plane split
 2. [Storage Layer](#2-storage-layer)
 3. [Yêu cầu hệ thống](#3-yêu-cầu-hệ-thống)
-4. [Cài đặt & Khởi động](#4-cài-đặt--khởi-động)
-5. [Cấu hình `.env`](#5-cấu-hình-env)
-6. [API Reference](#6-api-reference)
+4. [Cài đặt & Khởi động](#4-cài-đặt--khởi-động) — quick start 5 lệnh
+5. [Cấu hình `.env`](#5-cấu-hình-env) — bao gồm §5.10 Ontology & Domain Routing (S5)
+6. [API Reference](#6-api-reference) — bao gồm `/metrics/cost` (S1), `/ontology/*` (S5)
 7. [CLI](#7-cli)
 8. [StructMem — Knowledge Extraction](#8-structmem--knowledge-extraction)
 9. [Chat StructMem — Bộ nhớ hội thoại](#9-chat-structmem--bộ-nhớ-hội-thoại)
@@ -29,13 +46,13 @@ Nền tảng RAG (Retrieval-Augmented Generation) cho học liệu, đặc biệ
 13. [MCP Server](#13-mcp-server)
 14. [Page-Aware Citations & Vision](#14-page-aware-citations--vision)
 15. [Mindmap & Structured Summary](#15-mindmap--structured-summary)
-16. [Open-Notebook Adapter & Admin Panel](#16-open-notebook-adapter--admin-panel)
+16. [Open-Notebook Adapter & Admin Panel](#16-open-notebook-adapter--admin-panel) — bao gồm Cost dashboard (S1) + Trace dialog (S2)
 17. [Authentication (JWT + Google OAuth)](#17-authentication-jwt--google-oauth)
 18. [Security Policy](#18-security-policy)
 19. [Benchmark & Kiểm thử](#19-benchmark--kiểm-thử)
 20. [Reset môi trường](#20-reset-môi-trường)
 21. [Cấu trúc thư mục](#21-cấu-trúc-thư-mục)
-22. [Module READMEs](#22-module-readmes)
+22. [Module READMEs](#22-module-readmes) — bao gồm tag map sub-projects
 
 ---
 
@@ -139,14 +156,42 @@ GET /admin
 
 ## 4. Cài đặt & Khởi động
 
-### Quick start (Makefile)
+### Quick start (5 lệnh)
 
 ```bash
-make install        # docker up + uv sync + npm install + alembic upgrade
-make dev            # api + worker + frontend song song (Ctrl+C tắt tất cả)
+# 1. Clone + cd
+git clone <repo> && cd AgentRag
+
+# 2. One-shot install: docker compose up + uv sync + npm install + alembic migrate
+make install
+
+# 3. (S5) Seed medical ontology + backfill ES tags — chỉ cần lần đầu
+make seed-ontology
+
+# 4. Review .env (set OPENAI_API_KEY / GEMINI_API_KEY hoặc bật Ollama)
+$EDITOR .env
+
+# 5. Run everything
+make dev                  # api + worker + frontend foreground (Ctrl+C all)
 ```
 
-UI mở tại http://localhost:3000, API tại http://localhost:8000.
+| URL | Mô tả |
+|---|---|
+| http://localhost:3000 | Next.js UI |
+| http://localhost:3000/cost | **S1 — Cost & token dashboard** |
+| http://localhost:3000/notebooks | Notebook chat (Trace button per AI turn — **S2**) |
+| http://localhost:8000 | FastAPI root |
+| http://localhost:8000/docs | Swagger UI |
+| http://localhost:8000/admin | Admin reasoning panel |
+
+### Verify install
+
+```bash
+make health                                          # /config/validate + /on/api/auth/status
+make test-fast                                       # tests độc lập với Postgres
+curl http://localhost:8000/on/api/ontology/systems   # S5 — 15 medical systems
+curl http://localhost:8000/on/api/metrics/cost       # S1 — ledger
+```
 
 ### Make targets
 
@@ -161,6 +206,9 @@ UI mở tại http://localhost:3000, API tại http://localhost:8000.
 | `make uv-sync` | Cài Python deps qua uv |
 | `make frontend-install` | `npm install` trong `frontend/` |
 | `make migrate` | `alembic upgrade head` |
+| `make seed-ontology` | **S5** — `scripts/seed_ontology.py` + `backfill_tags`. Idempotent |
+| `make backfill-tags` | **S5** — re-tag ES segments only (no seed) |
+| `make backfill-tags-dry` | Preview backfill changes |
 
 #### Docker infra
 
@@ -220,8 +268,11 @@ VISION_BASE_URL=http://127.0.0.1:11434/v1/
 | Target | Mô tả |
 |---|---|
 | `make health` | Probe `/config/validate` + `/on/api/auth/status` |
-| `make test` | `pytest -q` |
+| `make test` | `pytest -q` (full — cần Postgres + ES) |
+| `make test-fast` | `pytest` minus `tests/ontology` + `tests/ingestion` (no Postgres) |
 | `make bench-ingest` | Benchmark ingest pipeline |
+| `make cost-reset` | **S1** — clear in-memory LLM cost ledger |
+| `make dashboard-open` | **S1** — open `/cost` dashboard in browser |
 | `make clean` | Xoá `.cache`, `__pycache__`, `.next` |
 | `make deepclean` | `clean` + `node_modules` + `.venv` |
 
@@ -1187,6 +1238,42 @@ LangGraph-style HTML inspector. Sidebar list conversations, main hiển thị:
 
 Bảo vệ bằng `ADAPTER_ADMIN_TOKEN` (nhập trong UI), độc lập với `OPEN_NOTEBOOK_PASSWORD`.
 
+### S1 — Cost & Token Dashboard (`/cost`)
+
+Frontend page tổng hợp LLM ledger. Auto-refresh 5s.
+
+| Khu vực | Nội dung |
+|---|---|
+| Summary cards | Total calls / input tokens / output tokens / estimated USD |
+| Per-task tab | calls, in tok, out tok, avg ms, **p50, p95**, USD |
+| Per-model tab | giống per-task nhưng group by model |
+| Recent tab | Newest-first list (20/50/100/200 toggle) — time, task, model, latency, tokens, USD, source |
+| Reset button | `POST /on/api/metrics/cost/reset` |
+
+Cần bật `LLM_COST_TRACKING_ENABLED=true` trong `.env`.
+
+### S2 — Reasoning Trace per AI bubble
+
+Mỗi assistant message trong notebook chat hiện nút **"Trace"** (nếu có
+`tool_trace` / `timings_ms`). Click mở dialog gồm:
+
+- Pipeline graph: `plan → decide → tool → assemble → answer → critique`
+  với latency mỗi stage
+- Sub-queries từ planner
+- Generated SQL (structured path)
+- Tool calls list (expandable): input + truncated output JSON
+- Citations list
+
+Trace lấy từ `ChatMessage` model — `reasoning_path`, `timings_ms`,
+`tool_trace`, `plan_subqueries`, `sql_query` đều persist trên assistant turn.
+
+### S5 — Domain Filter dropdown
+
+Trên ChatPanel có nút **"Lĩnh vực"** (Filter icon) — popover chọn
+`Hệ cơ quan` × `Chuyên khoa`. Khi user pick, request gắn
+`domain_filter: {system, specialties}` → backend bỏ qua DomainRouter, lọc
+trực tiếp. Để trống → router chạy bình thường.
+
 Xem [adapter README](src/agentrag/adapter/README.md).
 
 ---
@@ -1455,18 +1542,33 @@ AgentRag/
 
 ## 22. Module READMEs
 
-| Module | README |
+Architecture overview: [`ARCHITECTURE.md`](./ARCHITECTURE.md) (S4 plane split).
+
+| Module | Plane | README |
+|---|---|---|
+| Services (Execution Plane) | E | [src/agentrag/services/README.md](src/agentrag/services/README.md) |
+| Ontology / Domain partition (S5) | mixed | [src/agentrag/ontology/README.md](src/agentrag/ontology/README.md) |
+| Agent (Semantic Loop) | R | [src/agentrag/agent/README.md](src/agentrag/agent/README.md) |
+| Structured SQL Reasoning | R | [src/agentrag/structured/README.md](src/agentrag/structured/README.md) |
+| Retrieval | E | [src/agentrag/retrieval/README.md](src/agentrag/retrieval/README.md) |
+| Ingestion Pipeline | E | [src/agentrag/ingestion/README.md](src/agentrag/ingestion/README.md) |
+| StructMem (doc) | E | [src/agentrag/graph/README.md](src/agentrag/graph/README.md) |
+| Chat & Chat StructMem | mixed | [src/agentrag/chat/README.md](src/agentrag/chat/README.md) |
+| Generation (Mindmap/Summary) | R | [src/agentrag/generation/README.md](src/agentrag/generation/README.md) |
+| Open-Notebook Adapter & Admin | — | [src/agentrag/adapter/README.md](src/agentrag/adapter/README.md) |
+| Background Worker (ARQ jobs) | E | [src/agentrag/worker/README.md](src/agentrag/worker/README.md) |
+| CLI | — | [src/agentrag/cli/README.md](src/agentrag/cli/README.md) |
+| MCP Server | — | [src/agentrag/mcp/README.md](src/agentrag/mcp/README.md) |
+| Common Utilities | — | [src/agentrag/common/README.md](src/agentrag/common/README.md) |
+
+R = Reasoning Plane, E = Execution Plane.
+
+### Tag map (sub-projects)
+
+| Tag | Sub-project |
 |---|---|
-| Ingestion Pipeline | [src/agentrag/ingestion/README.md](src/agentrag/ingestion/README.md) |
-| StructMem (doc) | [src/agentrag/graph/README.md](src/agentrag/graph/README.md) |
-| Chat & StructMem | [src/agentrag/chat/README.md](src/agentrag/chat/README.md) |
-| Retrieval | [src/agentrag/retrieval/README.md](src/agentrag/retrieval/README.md) |
-| Agent (Semantic Loop) | [src/agentrag/agent/README.md](src/agentrag/agent/README.md) |
-| Structured SQL | [src/agentrag/structured/README.md](src/agentrag/structured/README.md) |
-| Services | [src/agentrag/services/README.md](src/agentrag/services/README.md) |
-| Generation (Mindmap/Summary) | [src/agentrag/generation/README.md](src/agentrag/generation/README.md) |
-| Open-Notebook Adapter & Admin | [src/agentrag/adapter/README.md](src/agentrag/adapter/README.md) |
-| Background Worker | [src/agentrag/worker/README.md](src/agentrag/worker/README.md) |
-| CLI | [src/agentrag/cli/README.md](src/agentrag/cli/README.md) |
-| MCP Server | [src/agentrag/mcp/README.md](src/agentrag/mcp/README.md) |
-| Common Utilities | [src/agentrag/common/README.md](src/agentrag/common/README.md) |
+| `s5-complete` | Medical KB domain partition (ontology + federated retrieval + UI override) |
+| `s4-complete` | Reasoning / Execution Plane split + ServiceContainer + Protocols |
+| `s1-complete` | LLM cost & token dashboard |
+| `s2-complete` | Per-turn LangGraph-style reasoning trace UI |
+| `s3-complete` | Embedding cache + p50/p95 latency surface |

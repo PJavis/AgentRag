@@ -168,13 +168,31 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     history = await store.list_messages(body.session_id, limit=20)
     await store.append_message(body.session_id, role="user", content=body.message)
 
+    # S5: auto domain detection when caller didn't pick a domain manually.
+    # Reasoning plane drives routing — call DomainRouter then forward picks
+    # to the retriever via domain_filter. UI override still wins.
+    effective_domain_filter = body.domain_filter
+    if not effective_domain_filter:
+        from src.agentrag.config import settings as _settings
+        if _settings.DOMAIN_FILTER_ENABLED:
+            try:
+                from src.agentrag.services.container import get_container
+                route = await get_container().domain_router.classify(body.message)
+                if route.systems or route.specialties:
+                    effective_domain_filter = {
+                        **({"system": route.systems[0]} if route.systems else {}),
+                        **({"specialties": route.specialties} if route.specialties else {}),
+                    }
+            except Exception:
+                effective_domain_filter = None  # router failure → no filter
+
     agent = get_agent_service()
     result = await agent.chat(
         question=body.message,
         document_title=document_title,
         chat_history=history,
         conversation_id=body.session_id,
-        domain_filter=body.domain_filter,
+        domain_filter=effective_domain_filter,
     )
 
     appended = await store.append_message(

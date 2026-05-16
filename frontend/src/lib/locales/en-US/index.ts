@@ -1,6 +1,8 @@
 export const enUS = {
   common: {
     search: "Search...",
+    any: "Any",
+    clear: "Clear",
     create: "New",
     new: "New",
     cancel: "Cancel",
@@ -212,6 +214,8 @@ export const enUS = {
     transformation: "Transformation",
     settings: "Settings",
     advanced: "Advanced",
+    cost: "Cost & Tokens",
+    activity: "Activity",
     nav: "Navigation",
     language: "Toggle language",
     theme: "Theme",
@@ -437,6 +441,11 @@ export const enUS = {
     sessionCreated: "Chat session created",
     sessionUpdated: "Session updated",
     sessionDeleted: "Session deleted",
+    trace: "Trace",
+    viewTrace: "View reasoning trace",
+    domainFilter: "Domain",
+    domainSystem: "Body system",
+    domainSpecialty: "Specialty",
   },
   searchPage: {
     askAndSearch: "Ask and Search",

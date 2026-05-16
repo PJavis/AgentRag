@@ -127,6 +127,8 @@ class ExecuteChatRequest(BaseModel):
     message: str
     context: Any = None  # string (built context text) or dict — ignored, we do our own RAG
     model_override: str | None = None
+    # S5 — UI dropdown override. {"system": "tim_mach", "specialties": [...]}
+    domain_filter: dict[str, Any] | None = None
 
 
 class ExecuteChatResponse(BaseModel):

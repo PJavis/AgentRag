@@ -166,6 +166,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         document_title=document_title,
         chat_history=history,
         conversation_id=body.session_id,
+        domain_filter=body.domain_filter,
     )
 
     await store.append_message(

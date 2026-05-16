@@ -429,6 +429,7 @@ class GraphAgentService:
         document_title: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        domain_filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         initial: ChatState = {
             "question": question,
@@ -436,6 +437,10 @@ class GraphAgentService:
             "chat_history": chat_history or [],
             "conversation_id": conversation_id,
         }
+        # S5 — propagate domain_filter via ContextVar so AgentTools.search_*
+        # picks it up downstream (same mechanism as loop backend).
+        from src.agentrag.retrieval.context import set_domain_filter
+        set_domain_filter(domain_filter)
         config = {"configurable": {"thread_id": conversation_id or f"anon-{id(initial)}"}}
         state = await _GRAPH.ainvoke(initial, config=config)
         return {

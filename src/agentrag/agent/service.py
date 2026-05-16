@@ -128,10 +128,15 @@ class AgentService:
         document_title: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        domain_filter: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         total_started = time.perf_counter()
         self.security.validate_chat_request(question=question, document_title=document_title)
         memory_context = await self._retrieve_memory(conversation_id, question)
+        # S5 — propagate domain_filter via ContextVar (async-safe, picked up
+        # downstream by KnowledgeService → FederatedRetriever).
+        from src.agentrag.retrieval.context import set_domain_filter
+        _df_token = set_domain_filter(domain_filter)
 
         # ── Chit-chat fast-path ──────────────────────────────────────────────
         if _is_chitchat(question):

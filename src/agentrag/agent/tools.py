@@ -96,6 +96,21 @@ class AgentTools:
             raise ValueError(f"Unknown tool: {tool_name}")
         return await self.tools[tool_name](tool_input)
 
+    def _current_filters(self) -> dict[str, Any] | None:
+        """Read S5 domain_filter from per-turn ContextVar; build retriever filters dict."""
+        from src.agentrag.retrieval.context import get_domain_filter
+        df = get_domain_filter() or {}
+        if not df:
+            return None
+        out: dict[str, list[str]] = {}
+        system = df.get("system")
+        if system:
+            out["systems"] = [system]
+        specs = df.get("specialties") or []
+        if specs:
+            out["specialties"] = list(specs)
+        return out or None
+
     async def search_sparse(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         return await self.retriever.search(
             query=tool_input["query"],
@@ -103,6 +118,7 @@ class AgentTools:
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
             dense_query=tool_input.get("dense_query"),
+            filters=self._current_filters(),
         )
 
     async def search_dense(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -112,6 +128,7 @@ class AgentTools:
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
             dense_query=tool_input.get("dense_query"),
+            filters=self._current_filters(),
         )
 
     async def search_hybrid(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -121,6 +138,7 @@ class AgentTools:
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
             dense_query=tool_input.get("dense_query"),
+            filters=self._current_filters(),
         )
 
     async def search_hybrid_kg(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +148,7 @@ class AgentTools:
             top_k=tool_input.get("top_k") or settings.AGENT_TOOL_TOP_K,
             document_title=tool_input.get("document_title"),
             dense_query=tool_input.get("dense_query"),
+            filters=self._current_filters(),
         )
 
     async def compare_retrieval_modes(self, tool_input: dict[str, Any]) -> dict[str, Any]:

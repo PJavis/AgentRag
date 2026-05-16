@@ -180,11 +180,29 @@ class LLMGateway:
             },
         ]
         started = time.perf_counter()
-        response = await client.chat.completions.create(
-            model=model,
-            temperature=0.0,
-            messages=messages,
-        )
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                temperature=0.0,
+                messages=messages,
+            )
+        except Exception as exc:
+            from src.agentrag.agent.llm import _is_model_missing
+            fallback = (settings.LLM_FALLBACK_MODEL or "").strip()
+            if _is_model_missing(exc) and fallback and fallback != model:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "vision_response: model %r not found, falling back to %r",
+                    model, fallback,
+                )
+                response = await client.chat.completions.create(
+                    model=fallback,
+                    temperature=0.0,
+                    messages=messages,
+                )
+                model = fallback
+            else:
+                raise
         latency_ms = (time.perf_counter() - started) * 1000
         text = (response.choices[0].message.content or "").strip()
         # image bytes also bill tokens; pad in_text proxy by image size.

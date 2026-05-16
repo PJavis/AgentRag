@@ -222,6 +222,11 @@ class Settings(BaseSettings):
     AUTH_ENABLED: bool = True                   # require login if true (else open access)
     AUTH_ALLOW_SIGNUP: bool = True              # allow public signup
     ADMIN_EMAILS: str = ""                      # comma-separated; matching emails auto-promoted on signup/login
+    # Fallback model when AGENT_MODEL / EXTRACTION_MODEL returns "model not
+    # found" at runtime (e.g. qwen-agentrag absent because finetune never
+    # ran). Set blank to disable. Default = qwen2.5:7b-instruct, the base
+    # the project finetunes from.
+    LLM_FALLBACK_MODEL: str = "qwen2.5:7b-instruct"
     JWT_SECRET: str | None = None               # signing secret; auto-derived in dev
     JWT_TTL_DAYS: int = 7
 

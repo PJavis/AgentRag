@@ -172,6 +172,9 @@ class Settings(BaseSettings):
     # as the trim signal: keep adding ranked chunks until total tokens exceed
     # this budget. Keeps chunk count flexible (short chunks → more, long → fewer).
     AGENT_MAX_CONTEXT_TOKENS: int = 6000
+    # S8 — per-call output ceiling. 128K = let model self-cap. Lower
+    # (e.g. 8192) for fast local Ollama on small models.
+    AGENT_MAX_OUTPUT_TOKENS: int = 131072
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

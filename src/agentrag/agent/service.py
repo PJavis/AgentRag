@@ -101,7 +101,11 @@ def _find_answer_field(obj: Any, max_depth: int = 6) -> str | None:
 
 class AgentService:
     def __init__(self):
-        self.llm_gateway = LLMGateway()
+        # S4: fetch execution-plane services through the container so that
+        # all Reasoning-Plane code shares one set of clients per process.
+        from src.agentrag.services.container import get_container
+        self._container = get_container()
+        self.llm_gateway = self._container.llm
         self.knowledge = KnowledgeService(llm_gateway=self.llm_gateway)
         self.context = ContextAssemblyService()
         self.security = SecurityService()

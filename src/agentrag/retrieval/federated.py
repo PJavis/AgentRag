@@ -1,11 +1,18 @@
-"""Wraps ElasticsearchRetriever with domain-aware filtering.
+"""Federated retriever — filter-only wrapper over ElasticsearchRetriever (S4).
+
+This is Execution Plane: no decision logic. The Reasoning Plane is
+responsible for invoking `DomainRouter` and translating its output into
+`system_override` / `specialty_override` kwargs.
 
 Resolution order:
-  1. UI override (system_override / specialty_override) → use directly.
-  2. Else consult DomainRouter (SLM) → pass picks as filter clauses.
-  3. If DOMAIN_FILTER_ENABLED=false, behave identical to base retriever.
+  1. Explicit override (`system_override` / `specialty_override`) →
+     forwarded as filter clauses.
+  2. No override → no domain filter applied. Reasoning Plane is expected
+     to call `DomainRouter.classify` upstream and pass the picks here.
+  3. `DOMAIN_FILTER_ENABLED=false` → all filters dropped, base behavior.
 
-Returns the base payload + `domain_route` key when the router was consulted.
+S5 backward-compat: pass a `router=DomainRouter()` to opt back into the
+old auto-routing path (used by tests + legacy entry points).
 """
 from __future__ import annotations
 
@@ -22,8 +29,9 @@ class FederatedRetriever:
         base: ElasticsearchRetriever | None = None,
         router: DomainRouter | None = None,
     ) -> None:
+        # S4: router is now opt-in (None = no auto routing).
         self._base = base or ElasticsearchRetriever()
-        self._router = router or DomainRouter()
+        self._router = router
 
     async def search(
         self,
@@ -53,7 +61,10 @@ class FederatedRetriever:
             filters["systems"] = [system_override]
         if specialty_override:
             filters["specialties"] = list(specialty_override)
-        if not filters:
+        if not filters and self._router is not None:
+            # Legacy auto-routing path — only when an explicit router was
+            # injected (S5 callers). S4 reasoning code calls DomainRouter
+            # before passing overrides here, so this branch stays cold.
             route = await self._router.classify(query)
             if route.systems:
                 filters["systems"] = route.systems

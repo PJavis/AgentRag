@@ -11,7 +11,9 @@ back to a char-density heuristic so the dashboard still has signal.
 """
 from __future__ import annotations
 
+import itertools
 import threading
+import time
 from collections import deque
 from typing import Any
 
@@ -19,6 +21,7 @@ from src.agentrag.config import settings
 
 _LOCK = threading.Lock()
 _LEDGER: deque[dict[str, Any]] = deque(maxlen=5000)  # keep last 5k calls
+_ID_SEQ = itertools.count(1)
 
 # USD per 1M tokens (input, output). Adjust when provider pricing changes.
 _PRICE_PER_1M = {
@@ -80,7 +83,11 @@ def record_llm_call(
     in_price, out_price = _price_for(model)
     usd = (in_tokens * in_price + out_tokens * out_price) / 1_000_000.0
 
+    with _LOCK:
+        entry_id = next(_ID_SEQ)
     entry = {
+        "id": entry_id,
+        "timestamp": time.time(),  # epoch seconds
         "task": task,
         "model": model,
         "latency_ms": round(latency_ms, 2),
@@ -129,6 +136,24 @@ def cost_summary() -> dict[str, Any]:
         "per_model": per_model,
         "note": "USD = char-density estimate OR provider usage when available; pricing per 1M tokens; in-memory, cleared on restart.",
     }
+
+
+def recent_calls(limit: int = 50, since: float | None = None) -> list[dict[str, Any]]:
+    """Most-recent calls, newest first. Optional `since` filters by epoch seconds."""
+    limit = max(1, min(limit, 500))
+    with _LOCK:
+        entries = list(_LEDGER)
+    if since is not None:
+        entries = [e for e in entries if e.get("timestamp", 0) >= since]
+    entries.reverse()
+    return [
+        {
+            **e,
+            "usd": round(e["usd"], 6),
+            "latency_ms": round(e["latency_ms"], 1),
+        }
+        for e in entries[:limit]
+    ]
 
 
 def reset_ledger() -> None:

@@ -53,6 +53,13 @@ async def metrics_cost():
     return cost_summary()
 
 
+@router.get("/metrics/cost/recent")
+async def metrics_cost_recent(limit: int = 50, since: float | None = None):
+    """Newest-first list of recent LLM calls for the dashboard feed."""
+    from src.agentrag.observability.cost import recent_calls
+    return {"entries": recent_calls(limit=limit, since=since)}
+
+
 @router.post("/metrics/cost/reset")
 async def metrics_cost_reset():
     from src.agentrag.observability.cost import reset_ledger

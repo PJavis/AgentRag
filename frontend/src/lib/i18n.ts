@@ -9,6 +9,11 @@ i18n
   .init({
     resources,
     fallbackLng: 'en-US',
+    // Never return `null` for missing keys — template literals interpolate
+    // it as the literal string "null" (S6 fix for the placeholder bug).
+    returnNull: false,
+    returnEmptyString: false,
+    parseMissingKeyHandler: (key) => key,
     interpolation: {
       escapeValue: false, // react already safes from xss
     },

@@ -248,8 +248,15 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       const error = err as { response?: { data?: { detail?: string } }, message?: string };
       console.error('Error sending message:', error)
       toast.error(getApiErrorMessage(error.response?.data?.detail || error.message, (key) => t(key), 'apiErrors.failedToSendMessage'))
-      // Remove optimistic message on error
-      setMessages(prev => prev.filter(msg => !msg.id.startsWith('temp-')))
+      // Backend persists the user message before agent.chat() runs, so on
+      // error refetch the session — DB still has the user turn even though
+      // the assistant turn failed. Don't filter out the optimistic temp
+      // bubble until we have server state to replace it with.
+      try {
+        await refetchCurrentSession()
+      } catch {
+        // refetch fail → at least keep the optimistic user turn visible.
+      }
     } finally {
       setIsSending(false)
     }

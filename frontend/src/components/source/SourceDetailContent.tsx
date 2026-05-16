@@ -70,6 +70,19 @@ import { toast } from 'sonner'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { SourceInsightDialog } from '@/components/source/SourceInsightDialog'
 import { NotebookAssociations } from '@/components/source/NotebookAssociations'
+import { RawFileViewer, isInlineRawSupported } from '@/components/source/RawFileViewer'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { ChevronDown } from 'lucide-react'
+
+function _extFromAsset(s: SourceDetailResponse): string {
+  const p = s.asset?.file_path || ''
+  const m = p.toLowerCase().match(/\.([a-z0-9]+)$/)
+  return m ? m[1] : ''
+}
 
 interface SourceDetailContentProps {
   sourceId: string
@@ -530,6 +543,18 @@ export function SourceDetailContent({
                 )}
               </CardHeader>
               <CardContent>
+                {/* S6: render RAW original first when we have an uploaded file.
+                    Parsed text becomes a collapsible secondary view — useful
+                    only for search/RAG debugging, not for reading. */}
+                {source.asset?.file_path && fileAvailable !== false && (() => {
+                  const ext = _extFromAsset(source)
+                  if (!isInlineRawSupported(ext)) return null
+                  return (
+                    <div className="mb-6 space-y-2">
+                      <RawFileViewer sourceId={source.id} ext={ext} />
+                    </div>
+                  )
+                })()}
                 {isYouTubeUrl && youTubeVideoId && (
                   <div className="mb-6">
                     <div className="aspect-video rounded-lg overflow-hidden bg-black">
@@ -556,6 +581,9 @@ export function SourceDetailContent({
                     )}
                   </div>
                 )}
+                {(() => {
+                  const hideParsedByDefault = !!source.asset?.file_path && isInlineRawSupported(_extFromAsset(source))
+                  const parsedNode = (
                 <div className="prose prose-base prose-neutral dark:prose-invert max-w-none prose-headings:font-semibold prose-a:text-blue-600 prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2 prose-img:rounded-md prose-img:border prose-img:border-border">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
@@ -620,6 +648,26 @@ export function SourceDetailContent({
                     {source.full_text || t('sources.noContent')}
                   </ReactMarkdown>
                 </div>
+                  )
+                  if (!hideParsedByDefault) return parsedNode
+                  return (
+                    <Collapsible className="mt-4">
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 text-xs text-muted-foreground"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                          Show parsed text (for search debugging)
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="mt-3 border-t pt-3">
+                        {parsedNode}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )
+                })()}
               </CardContent>
             </Card>
           </TabsContent>

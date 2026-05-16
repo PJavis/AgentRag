@@ -152,12 +152,17 @@ export function useSourceChat(sourceId: string) {
         const text = decoder.decode(value)
         const lines = text.split('\n')
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
+        for (const rawLine of lines) {
+          // Backend yields newline-delimited JSON (no `data: ` prefix).
+          // Accept both bare JSON and standard `data: …` SSE for safety.
+          const line = rawLine.startsWith('data: ') ? rawLine.slice(6) : rawLine
+          if (line.trim().startsWith('{')) {
             try {
-              const data = JSON.parse(line.slice(6))
+              const data = JSON.parse(line)
               
-              if (data.type === 'ai_message') {
+              // Backend emits either `ai_message` (canonical) or `ai` (legacy).
+              // Treat both as streaming-chunk events.
+              if (data.type === 'ai_message' || data.type === 'ai') {
                 // Create AI message on first content chunk to avoid empty bubble
                 if (!aiMessage) {
                   aiMessage = {
@@ -176,6 +181,9 @@ export function useSourceChat(sourceId: string) {
                     )
                   )
                 }
+              } else if (data.type === 'user') {
+                // Backend echoes the user message; we already added it
+                // optimistically — nothing to do here.
               } else if (data.type === 'context_indicators') {
                 setContextIndicators(data.data)
               } else if (data.type === 'error') {

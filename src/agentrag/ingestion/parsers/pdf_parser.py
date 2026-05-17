@@ -192,21 +192,21 @@ class PDFParser:
 
 
 def _ocr_via_vision_llm(image_bytes: bytes) -> str:
-    """Vision LLM as OCR fallback. Reuses VISION_PROVIDER; returns '' on fail/disabled."""
+    """Vision LLM as OCR fallback. Reuses VISION_PROVIDER; returns '' on
+    fail/disabled. PDFParser.parse is sync but may be called from an async
+    context (FastAPI / ARQ worker) — running the vision coroutine in a
+    fresh thread + its own event loop avoids 'event loop is already
+    running'."""
     if not settings.VISION_PROVIDER:
         return ""
     try:
         import asyncio
+        import concurrent.futures
+
         from src.agentrag.services.container import get_container
         vision = get_container().vision
         if not vision.enabled:
             return ""
-        # Run the async vision call from this sync context
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
         prompt_ctx = (
             "Transcribe ALL Vietnamese / English text visible on this page "
             "verbatim. Preserve line breaks and bullet structure. Do NOT "
@@ -214,8 +214,14 @@ def _ocr_via_vision_llm(image_bytes: bytes) -> str:
             "transcribe text exactly as it appears. If no readable text, "
             "return an empty string."
         )
-        coro = vision.describe(image_bytes, mime="image/png", context=prompt_ctx)
-        text = loop.run_until_complete(coro)
+
+        def _runner() -> str:
+            return asyncio.run(
+                vision.describe(image_bytes, mime="image/png", context=prompt_ctx)
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            text = ex.submit(_runner).result(timeout=120)
         return (text or "").strip()
     except Exception as exc:
         logger.warning("Vision OCR fallback failed: %s", exc)

@@ -120,6 +120,7 @@ class ElasticsearchRetriever:
                 should_rerank=should_rerank,
             )
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
+            hits = self._balance_segment_types(hits, size)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
             payload = {
@@ -151,6 +152,7 @@ class ElasticsearchRetriever:
                 should_rerank=should_rerank,
             )
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
+            hits = self._balance_segment_types(hits, size)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
             payload = {
@@ -200,6 +202,7 @@ class ElasticsearchRetriever:
             should_rerank=should_rerank,
         )
         hits = self._apply_query_intent_ranking(query=query, hits=hits)
+        hits = self._balance_segment_types(hits, size)
         hits = self._finalize_ranks(hits)
         rerank_reason = self._last_rerank_reason
         payload = {
@@ -383,6 +386,51 @@ class ElasticsearchRetriever:
                 hit["retrieval_rank"] = hit["rank"]
             hit["rank"] = idx
         return hits
+
+    @staticmethod
+    def _balance_segment_types(
+        hits: list[dict[str, Any]],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Cap the image-segment fraction inside the top_k window.
+
+        Scanned-PDF docs often produce vision descriptions whose English-rich
+        text out-matches the source Vietnamese chunks on dense kNN. The
+        answer LLM then summarises figure captions instead of body text.
+        Demote excess images by swapping them with the next text hit from
+        the tail, preserving relative order otherwise.
+        """
+        if not hits or top_k <= 0:
+            return hits
+        max_ratio = getattr(settings, "RETRIEVAL_MAX_IMAGE_RATIO", 0.3)
+        max_images = max(0, int(top_k * max_ratio))
+        head = hits[:top_k]
+        tail = hits[top_k:]
+        image_idxs_in_head = [
+            i for i, h in enumerate(head)
+            if h.get("segment_type") == "image"
+        ]
+        if len(image_idxs_in_head) <= max_images:
+            return hits
+        text_idxs_in_tail = [
+            i for i, h in enumerate(tail)
+            if h.get("segment_type") != "image"
+        ]
+        if not text_idxs_in_tail:
+            return hits
+        # Demote the worst-ranked excess images (head's later positions first).
+        excess = len(image_idxs_in_head) - max_images
+        # Take the `excess` worst-ranked image slots in head, then pair each
+        # with text in head-rank order so the strongest text lands at the
+        # earliest demoted slot.
+        worst_image_slots = sorted(image_idxs_in_head, reverse=True)[:excess]
+        worst_image_slots.sort()  # ascending → swap from earliest first
+        to_promote = text_idxs_in_tail[: len(worst_image_slots)]
+        if len(to_promote) < len(worst_image_slots):
+            worst_image_slots = worst_image_slots[: len(to_promote)]
+        for demote_i, promote_j in zip(worst_image_slots, to_promote, strict=True):
+            head[demote_i], tail[promote_j] = tail[promote_j], head[demote_i]
+        return head + tail
 
     def _rewrite_query(self, query: str) -> str:
         if not self._is_features_query(query):

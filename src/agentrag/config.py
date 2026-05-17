@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     # S8 — per-call output ceiling. 128K = let model self-cap. Lower
     # (e.g. 8192) for fast local Ollama on small models.
     AGENT_MAX_OUTPUT_TOKENS: int = 131072
+    # S10 — cap image-segment fraction in top_k. Vision-described images
+    # often dominate dense retrieval on scanned PDFs (their English-rich
+    # descriptions match better than original Vietnamese text). Force a
+    # mix by demoting excess images when text candidates exist.
+    RETRIEVAL_MAX_IMAGE_RATIO: float = 0.3
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

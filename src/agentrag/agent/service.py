@@ -859,6 +859,13 @@ class AgentService:
             "Answer in clear, natural sentences and avoid broken wording. "
             "Only cite claims directly supported by the provided context. "
             "Do NOT add examples, field names, or details not explicitly present in the context. "
+            # Image-segment context: treat vision LLM descriptions as primary
+            # evidence when no text segments are available (scanned PDFs).
+            "If the context contains segments with segment_type='image', the 'content' "
+            "field of each such segment is the vision-LLM transcription of a slide/figure "
+            "from the source PDF. Treat it as legitimate textual evidence and ground your "
+            "answer in it — do NOT say the document has no information just because the "
+            "evidence comes from image descriptions. Translate to Vietnamese when needed. "
             "You MAY perform simple arithmetic (×, ÷, +, −) on numeric values explicitly stated in the context; "
             "show the calculation briefly (e.g. '10 × 3000 = 30,000 gold')."
         )

@@ -51,6 +51,7 @@ dependencies = [
     "langchain-core>=0.3.20",
     # YAML ontology seeder + tests
     "pyyaml>=6.0",
+    "pytesseract>=0.3.13",
 ]
 
 [project.optional-dependencies]

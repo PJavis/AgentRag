@@ -180,6 +180,17 @@ class Settings(BaseSettings):
     # descriptions match better than original Vietnamese text). Force a
     # mix by demoting excess images when text candidates exist.
     RETRIEVAL_MAX_IMAGE_RATIO: float = 0.3
+    # PDF OCR fallback (scanned / image-only PDFs).
+    # When PyMuPDF.get_text returns < PDF_OCR_MIN_TEXT_CHARS, render the
+    # page → Tesseract (lang=PDF_OCR_LANG). If Tesseract output is still
+    # too short and PDF_OCR_VISION_FALLBACK is on, send the page image
+    # through VISION_PROVIDER as a final fallback.
+    PDF_OCR_FALLBACK_ENABLED: bool = True
+    PDF_OCR_LANG: str = "vie+eng"
+    PDF_OCR_MIN_TEXT_CHARS: int = 50
+    PDF_OCR_DPI: int = 300
+    PDF_OCR_VISION_FALLBACK: bool = True
+    PDF_OCR_VISION_THRESHOLD: int = 30
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

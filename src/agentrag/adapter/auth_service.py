@@ -79,6 +79,37 @@ def decode_token(token: str) -> dict[str, Any] | None:
         return None
 
 
+async def ensure_user_row(user_id: str, email: str | None, name: str | None, is_admin: bool) -> None:
+    """Self-heal after `make reset-data` — JWTs survive a wiped users
+    table. Recreate the row on first authenticated request when missing.
+    No-op when the row already exists. Best-effort: failures logged + swallowed.
+    """
+    try:
+        uid = uuid.UUID(str(user_id))
+    except (ValueError, TypeError):
+        return
+    if not email:
+        # Need at least an email to satisfy NOT NULL. Synthesize from id.
+        email = f"{uid}@unknown.local"
+    try:
+        async with AsyncSessionLocal() as session:
+            existing = await session.get(User, uid)
+            if existing is not None:
+                return
+            session.add(User(
+                id=uid,
+                email=email.lower(),
+                name=name,
+                is_admin=is_admin,
+            ))
+            await session.commit()
+    except Exception:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "ensure_user_row failed for %s", user_id, exc_info=True
+        )
+
+
 async def get_user_by_email(email: str) -> User | None:
     async with AsyncSessionLocal() as session:
         row = await session.execute(select(User).where(User.email == email.lower()))

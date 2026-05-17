@@ -14,6 +14,7 @@ from src.agentrag.adapter.auth_service import (
     AuthIdentity,
     LEGACY_PASSWORD_USER_ID,
     decode_token,
+    ensure_user_row,
 )
 from src.agentrag.config import settings
 
@@ -99,6 +100,17 @@ class OpenNotebookAuthMiddleware(BaseHTTPMiddleware):
         identity = _identity_from_token(auth[7:])
         if identity is None:
             return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+
+        # Self-heal: JWT survived a `make reset-data` that wiped the users
+        # table. Recreate the user row idempotently so FK constraints
+        # (documents.user_id, conversations.user_id) keep working.
+        if not identity.is_legacy and identity.user_id != "anonymous":
+            await ensure_user_row(
+                user_id=identity.user_id,
+                email=identity.email,
+                name=identity.name,
+                is_admin=identity.is_admin,
+            )
 
         request.state.auth_identity = identity
         return await call_next(request)

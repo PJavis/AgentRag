@@ -68,14 +68,38 @@ class PDFParser:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         doc = fitz.open(str(path))
-        parts: list[str] = []
-        page_data: list[dict[str, Any]] = []
+        backend = (settings.PDF_PARSER_BACKEND or "hybrid").lower()
         ocr_enabled = settings.PDF_OCR_FALLBACK_ENABLED
         ocr_min = settings.PDF_OCR_MIN_TEXT_CHARS
         ocr_dpi = settings.PDF_OCR_DPI
         ocr_lang = settings.PDF_OCR_LANG
         vision_fallback = settings.PDF_OCR_VISION_FALLBACK
         vision_threshold = settings.PDF_OCR_VISION_THRESHOLD
+
+        # MinerU backend: if any page's text layer is below threshold,
+        # hand the whole PDF off to MinerU in one call (it does layout +
+        # OCR + formula + table in one pass) and skip per-page Tesseract.
+        if backend == "mineru" and ocr_enabled:
+            needs_mineru = any(
+                len((p.get_text("text", sort=True) or "").strip()) < ocr_min
+                for p in doc
+            )
+            if needs_mineru:
+                doc.close()
+                try:
+                    from src.agentrag.ingestion.parsers import mineru_parser
+                    result = mineru_parser.parse_pdf(str(path))
+                except Exception as exc:
+                    logger.warning("mineru_parser raised: %s — falling back", exc)
+                    result = None
+                if result is not None:
+                    return result
+                # MinerU unavailable / failed → fall through to hybrid path.
+                doc = fitz.open(str(path))
+                logger.info("MinerU failed; falling back to Tesseract+vision path")
+
+        parts: list[str] = []
+        page_data: list[dict[str, Any]] = []
 
         for page_num, page in enumerate(doc, start=1):
             source = "text"
@@ -119,7 +143,7 @@ class PDFParser:
         full_content = "\n\n".join(parts)
         summary = {
             s: sum(1 for p in page_data if p["source"] == s)
-            for s in ("text", "ocr", "vision")
+            for s in ("text", "ocr", "vision", "mineru")
         }
         logger.info(
             "PDFParser: %d pages from %s — sources=%s",

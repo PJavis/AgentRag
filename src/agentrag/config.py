@@ -191,6 +191,13 @@ class Settings(BaseSettings):
     PDF_OCR_DPI: int = 300
     PDF_OCR_VISION_FALLBACK: bool = True
     PDF_OCR_VISION_THRESHOLD: int = 30
+    # PDF parser backend escalation when PyMuPDF text-layer is thin:
+    #   hybrid (default) → Tesseract → vision LLM
+    #   mineru           → MinerU (layout + OCR + formula + table) replaces tiers 2+3
+    PDF_PARSER_BACKEND: str = "hybrid"
+    MINERU_DEVICE: str = "cpu"             # cpu | cuda
+    MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
+    MINERU_LANG: str = "vie"               # mineru lang (paddleocr code)
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

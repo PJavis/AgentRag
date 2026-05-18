@@ -198,6 +198,10 @@ class Settings(BaseSettings):
     MINERU_DEVICE: str = "cpu"             # cpu | cuda
     MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
     MINERU_LANG: str = "vie"               # mineru lang (paddleocr code)
+    # Route PPTX through libreoffice → PDF → MinerU (preserves slide
+    # layout + extracts formulas/tables). Requires libreoffice on PATH.
+    # Falls back to MarkItDown when off or libreoffice/mineru missing.
+    INGEST_USE_MINERU_FOR_PPTX: bool = False
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

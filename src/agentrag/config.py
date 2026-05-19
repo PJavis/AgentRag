@@ -195,9 +195,19 @@ class Settings(BaseSettings):
     #   hybrid (default) → Tesseract → vision LLM
     #   mineru           → MinerU (layout + OCR + formula + table) replaces tiers 2+3
     PDF_PARSER_BACKEND: str = "hybrid"
-    MINERU_DEVICE: str = "cpu"             # cpu | cuda
+    # MinerU CLI backend (auto-detects GPU when local engine selected):
+    #   pipeline           — classic, lightweight
+    #   vlm-auto-engine    — VLM accuracy via local compute
+    #   hybrid-auto-engine — DEFAULT; next-gen high accuracy + local GPU
+    #   *-http-client      — remote OpenAI-compatible VLM (set MINERU_URL)
+    MINERU_BACKEND: str = "hybrid-auto-engine"
     MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
-    MINERU_LANG: str = "vie"               # mineru lang (paddleocr code)
+    # MinerU lang (newer CLI vocab). Vietnamese → 'latin'.
+    # Allowed: ch | en | korean | japan | chinese_cht | latin | arabic | …
+    MINERU_LANG: str = "latin"
+    # Legacy field kept for back-compat; ignored by the new CLI (which
+    # picks device automatically via backend).
+    MINERU_DEVICE: str = "cuda"
     # Route PPTX through libreoffice → PDF → MinerU (preserves slide
     # layout + extracts formulas/tables). Requires libreoffice on PATH.
     # Falls back to MarkItDown when off or libreoffice/mineru missing.

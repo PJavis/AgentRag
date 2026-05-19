@@ -50,6 +50,20 @@ def parse_pdf(file_path: str) -> dict[str, Any] | None:
     out_root = Path(settings.MINERU_OUTPUT_DIR).expanduser().resolve()
     out_root.mkdir(parents=True, exist_ok=True)
 
+    # Map legacy/short lang codes to the new mineru CLI vocab.
+    # Newer mineru (≥0.x) accepts only: ch|en|korean|japan|chinese_cht|
+    # ta|te|ka|th|el|latin|arabic|east_slavic|cyrillic|devanagari.
+    # Vietnamese uses Latin script → fall back to 'latin'.
+    _LANG_ALIASES = {
+        "vie": "latin",
+        "vi": "latin",
+        "vi-vn": "latin",
+        "vn": "latin",
+    }
+    lang = (settings.MINERU_LANG or "").strip().lower()
+    lang = _LANG_ALIASES.get(lang, lang or "ch")
+    backend = (getattr(settings, "MINERU_BACKEND", "hybrid-auto-engine") or "hybrid-auto-engine").strip()
+
     # Use a per-call workdir so concurrent ingests don't clash.
     with tempfile.TemporaryDirectory(dir=out_root, prefix="mineru_") as tmp:
         tmp_dir = Path(tmp)
@@ -57,8 +71,8 @@ def parse_pdf(file_path: str) -> dict[str, Any] | None:
             "mineru",
             "-p", str(src),
             "-o", str(tmp_dir),
-            "-l", settings.MINERU_LANG,
-            "-d", settings.MINERU_DEVICE,
+            "-l", lang,
+            "-b", backend,
         ]
         try:
             proc = subprocess.run(

@@ -196,11 +196,14 @@ class Settings(BaseSettings):
     #   mineru           → MinerU (layout + OCR + formula + table) replaces tiers 2+3
     PDF_PARSER_BACKEND: str = "hybrid"
     # MinerU CLI backend (auto-detects GPU when local engine selected):
-    #   pipeline           — classic, lightweight
-    #   vlm-auto-engine    — VLM accuracy via local compute
-    #   hybrid-auto-engine — DEFAULT; next-gen high accuracy + local GPU
+    #   pipeline           — classic, lightweight, no VLM
+    #   vlm-auto-engine    — DEFAULT; Qwen2-VL multilingual, preserves Vietnamese
+    #                        diacritics natively (no OCR fallback to 'latin')
+    #   hybrid-auto-engine — faster but uses paddleocr 'latin' for some pages →
+    #                        DROPS Vietnamese diacritics. Pick if corpus is
+    #                        English/CJK and latency matters more than accents.
     #   *-http-client      — remote OpenAI-compatible VLM (set MINERU_URL)
-    MINERU_BACKEND: str = "hybrid-auto-engine"
+    MINERU_BACKEND: str = "vlm-auto-engine"
     MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
     # MinerU lang (newer CLI vocab). Vietnamese → 'latin'.
     # Allowed: ch | en | korean | japan | chinese_cht | latin | arabic | …

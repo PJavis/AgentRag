@@ -1,11 +1,15 @@
 """MindmapService: generate a Mermaid mindmap from document chunks via LLM."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import time
 from typing import Any
 
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+from src.agentrag.config import settings
 from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
 from src.agentrag.services.llm_gateway import LLMGateway
 
@@ -33,15 +37,66 @@ Return valid JSON with exactly these keys:
 Return ONLY the JSON object, no markdown fences.
 """
 
+_CACHE_PREFIX = "agentrag:mindmap:v1:"
+_CACHE_TTL_SECONDS = 86400  # 24h
+
 
 class MindmapService:
-    # Simple in-process TTL cache: key → (timestamp, result)
-    _cache: dict[str, tuple[float, dict[str, Any]]] = {}
-    _TTL = 86400.0  # 24 hours
+    """Valkey-backed cache survives restarts and is shared across workers."""
+
+    _valkey: Redis | None = None
+    _valkey_disabled: bool = False
 
     def __init__(self) -> None:
         self._es = ElasticsearchStore()
         self._llm = LLMGateway()
+
+    @classmethod
+    def _client(cls) -> Redis | None:
+        if cls._valkey_disabled:
+            return None
+        if cls._valkey is None and settings.REDIS_URL:
+            cls._valkey = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        return cls._valkey
+
+    @staticmethod
+    def _cache_key(document_title: str, focus_topic: str | None, max_depth: int) -> str:
+        raw = f"{document_title}|{focus_topic or ''}|{max_depth}".encode("utf-8")
+        return _CACHE_PREFIX + hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def _doc_index_key(document_title: str) -> str:
+        digest = hashlib.sha256(document_title.encode("utf-8")).hexdigest()
+        return f"{_CACHE_PREFIX}doc:{digest}"
+
+    async def _cache_get(self, key: str) -> dict[str, Any] | None:
+        client = self._client()
+        if client is None:
+            return None
+        try:
+            raw = await client.get(key)
+        except RedisError:
+            type(self)._valkey_disabled = True
+            return None
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+
+    async def _cache_set(self, key: str, value: dict[str, Any], doc_index_key: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+        try:
+            pipe = client.pipeline()
+            pipe.set(key, json.dumps(value, ensure_ascii=False), ex=_CACHE_TTL_SECONDS)
+            pipe.sadd(doc_index_key, key)
+            pipe.expire(doc_index_key, _CACHE_TTL_SECONDS)
+            await pipe.execute()
+        except RedisError:
+            type(self)._valkey_disabled = True
 
     async def generate(
         self,
@@ -49,10 +104,10 @@ class MindmapService:
         focus_topic: str | None = None,
         max_depth: int = 3,
     ) -> dict[str, Any]:
-        cache_key = f"{document_title}|{focus_topic or ''}|{max_depth}"
-        cached = self._cache.get(cache_key)
-        if cached and (time.time() - cached[0]) < self._TTL:
-            return {**cached[1], "cached": True}
+        cache_key = self._cache_key(document_title, focus_topic, max_depth)
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            return {**cached, "cached": True}
 
         chunks = await self._fetch_chunks(document_title, focus_topic)
         if not chunks:
@@ -84,13 +139,21 @@ class MindmapService:
             "concepts": result.get("concepts", []),
             "cached": False,
         }
-        self._cache[cache_key] = (time.time(), output)
+        await self._cache_set(cache_key, output, self._doc_index_key(document_title))
         return output
 
-    def invalidate(self, document_title: str) -> None:
-        self._cache = {
-            k: v for k, v in self._cache.items() if not k.startswith(document_title)
-        }
+    async def invalidate(self, document_title: str) -> None:
+        client = self._client()
+        if client is None:
+            return
+        index_key = self._doc_index_key(document_title)
+        try:
+            members = await client.smembers(index_key)
+            if members:
+                await client.delete(*members)
+            await client.delete(index_key)
+        except RedisError:
+            type(self)._valkey_disabled = True
 
     async def _fetch_chunks(
         self, document_title: str, focus_topic: str | None

@@ -148,12 +148,10 @@ Wrapper `AsyncOpenAI`. Tự resolve backend từ `AGENT_PROVIDER` / `EXTRACTION_
 | `AGENT_PROVIDER` | (fallback EXTRACTION_PROVIDER) | LLM provider cho agent |
 | `AGENT_MODEL` | (fallback EXTRACTION_MODEL) | LLM model cho agent |
 | `AGENT_TEMPERATURE` | (fallback EXTRACTION_TEMPERATURE) | Temperature cho agent calls |
-| `AGENT_BACKEND` | `loop` | `loop` = legacy `AgentService.chat()`; `langgraph` = `GraphAgentService` (13-node StateGraph w/ checkpoint+replay) |
 
-## Backends
+## Orchestrator
 
-- **`loop` (default)** — `service.AgentService.chat()`, hand-rolled. Battle-tested.
-- **`langgraph`** — `graph_service.GraphAgentService`, wraps existing node helpers in a `StateGraph` with `InMemorySaver`. Same logic, exposes per-node state for resume / inspection. Select via `agent.factory.get_agent_service()`.
+Single backend: `graph_service.GraphAgentService` (13-node LangGraph `StateGraph` w/ `InMemorySaver` checkpoint, resumable per `thread_id = conversation_id`). `service.AgentService` is the helper container (security, knowledge, classifier, structured pipeline, `_decide`/`_answer`/`_plan_subqueries`, streaming) — its public surface is consumed by graph nodes. Self-critique pass from the deleted loop backend is not yet ported to the graph; track follow-up if needed.
 
 ## Chit-chat fast-path
 

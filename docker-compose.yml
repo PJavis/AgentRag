@@ -39,16 +39,17 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: agentrag-redis
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: agentrag-valkey
     restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -114,13 +115,13 @@ services:
     environment:
       POSTGRES_HOST: postgres
       ELASTICSEARCH_URL: http://elasticsearch:9200
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://valkey:6379/0
     depends_on:
       postgres:
         condition: service_healthy
       elasticsearch:
         condition: service_healthy
-      redis:
+      valkey:
         condition: service_healthy
     ports:
       - "8000:8000"
@@ -143,7 +144,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       ELASTICSEARCH_URL: http://elasticsearch:9200
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: redis://valkey:6379/0
     depends_on:
       api:
         condition: service_healthy
@@ -184,6 +185,6 @@ services:
 volumes:
   postgres_data:
   es_data:
-  redis_data:
+  valkey_data:
   ollama_data:
   images_data:

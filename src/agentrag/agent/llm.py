@@ -57,6 +57,7 @@ class AgentLLM:
         self,
         system_prompt: str,
         user_prompt: str,
+        task: str = "json",
     ) -> dict[str, Any]:
         started = time.perf_counter()
         response = await self._create(
@@ -72,7 +73,7 @@ class AgentLLM:
         latency_ms = (time.perf_counter() - started) * 1000
         raw = response.choices[0].message.content or "{}"
         record_llm_call(
-            task="json", model=self.model, latency_ms=latency_ms,
+            task=task, model=self.model, latency_ms=latency_ms,
             in_text=system_prompt + user_prompt, out_text=raw,
             usage=getattr(response, "usage", None),
         )
@@ -109,6 +110,7 @@ class AgentLLM:
         self,
         system_prompt: str,
         user_prompt: str,
+        task: str = "text",
     ) -> str:
         """Plain text response — no JSON enforcement. Used by transformations."""
         started = time.perf_counter()
@@ -124,7 +126,7 @@ class AgentLLM:
         latency_ms = (time.perf_counter() - started) * 1000
         raw = response.choices[0].message.content or ""
         record_llm_call(
-            task="text", model=self.model, latency_ms=latency_ms,
+            task=task, model=self.model, latency_ms=latency_ms,
             in_text=system_prompt + user_prompt, out_text=raw,
             usage=getattr(response, "usage", None),
         )
@@ -135,6 +137,7 @@ class AgentLLM:
         self,
         system_prompt: str,
         user_prompt: str,
+        task: str = "stream",
     ) -> AsyncIterator[str]:
         """Stream raw text tokens từ LLM (không ép JSON)."""
         started = time.perf_counter()
@@ -156,7 +159,7 @@ class AgentLLM:
                 yield delta
         latency_ms = (time.perf_counter() - started) * 1000
         record_llm_call(
-            task="stream", model=self.model, latency_ms=latency_ms,
+            task=task, model=self.model, latency_ms=latency_ms,
             in_text=system_prompt + user_prompt, out_text="".join(buf),
         )
 

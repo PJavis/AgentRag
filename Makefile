@@ -84,6 +84,25 @@ env:
 	  echo "✓ frontend/.env.local already exists"; \
 	fi
 
+.PHONY: use-preset
+use-preset:
+	@if [ -z "$(TIER)" ]; then \
+	  echo "Usage: make use-preset TIER=<1|2|3a|3b|4|5>"; \
+	  echo "Available:"; ls presets/tier-*.env | sed 's|.*tier-|  - |;s|\.env$$||'; \
+	  exit 1; \
+	fi
+	@if [ ! -f presets/tier-$(TIER).env ]; then \
+	  echo "❌ presets/tier-$(TIER).env not found"; exit 1; \
+	fi
+	@if [ -f .env ]; then \
+	  ts=$$(date +%Y%m%d-%H%M%S); \
+	  cp .env .env.bak-$$ts && \
+	  echo "💾 Backed up existing .env → .env.bak-$$ts"; \
+	fi
+	cp presets/tier-$(TIER).env .env
+	@echo "✅ Applied tier-$(TIER) preset → .env"
+	@echo "   Add secrets (OPENAI_API_KEY, GEMINI_API_KEY, …) if needed."
+
 .PHONY: uv-sync
 uv-sync:
 	uv sync
@@ -280,7 +299,7 @@ stop:
 
 .PHONY: reset
 reset:
-	@echo "🧹 Resetting databases (postgres + ES + redis + ollama volumes)..."
+	@echo "🧹 Resetting databases (postgres + ES + valkey + ollama volumes)..."
 	$(MAKE) -s stop || true
 	docker compose --profile app --profile edge down -v --remove-orphans
 	rm -rf .cache/agentrag

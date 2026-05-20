@@ -103,8 +103,8 @@ POST /ingest/folder
     └── ARQ: enqueue graph_ingest job
             ├── StructMemService.sync_chunks()
             │       └── Per chunk: asyncio.gather(factual_call, relational_call)
-            ├── index_structmem_views() → agentrag_entries
-            └── [if chunks ≥ threshold] ARQ: enqueue consolidate job → agentrag_synthesis
+            ├── index_structmem_views() → agentrag_memory_doc (kind=entry)
+            └── [if chunks ≥ threshold] ARQ: enqueue consolidate job → agentrag_memory_doc (kind=synthesis)
 
 POST /generate/mindmap | /generate/summary
     │
@@ -129,7 +129,7 @@ GET /admin
 | Store | Vai trò | Indices / Tables |
 |---|---|---|
 | **PostgreSQL** | Source of truth: documents, segments, conversations + adapter notebooks/notes | `documents`, `segments`, `conversations`, `chat_messages`, `adapter_notebooks`, `adapter_notes`, `adapter_notebook_sources` |
-| **Elasticsearch** | BM25 + kNN hybrid search + StructMem knowledge | `agentrag_segments` (có `page_start`, `page_end`, `segment_type`), `agentrag_entries`, `agentrag_synthesis`, `agentrag_chat_entries`, `agentrag_chat_synthesis` |
+| **Elasticsearch** | BM25 + kNN hybrid search + StructMem knowledge | `agentrag_segments` (có `page_start`, `page_end`, `segment_type`), `agentrag_memory_doc` (doc entries + synthesis, `kind` discriminator), `agentrag_memory_chat` (chat entries + synthesis, `kind` discriminator) |
 | **Redis** | Chat history cache (TTL) + ARQ job queue | key-value + sorted sets |
 | **Filesystem** | Ảnh extract từ PDF + ảnh standalone | `IMAGE_STORAGE_DIR` (mặc định `data/images/`), serve qua `/images/*` static mount |
 
@@ -138,10 +138,8 @@ GET /admin
 | Index | Nội dung | Dùng cho |
 |---|---|---|
 | `agentrag_segments` | Chunks gốc từ tài liệu | Hybrid search (BM25 + kNN) |
-| `agentrag_entries` | Factual + relational entries (doc StructMem) | Knowledge retrieval |
-| `agentrag_synthesis` | Cross-chunk synthesis hypotheses | Multi-hop reasoning |
-| `agentrag_chat_entries` | Factual + relational entries từ chat turns | Chat memory retrieval |
-| `agentrag_chat_synthesis` | Cross-turn synthesis hypotheses | Long-context conversation |
+| `agentrag_memory_doc` | Doc memory — `kind=entry` (factual + relational) AND `kind=synthesis` (cross-chunk hypotheses) | Knowledge retrieval + multi-hop reasoning |
+| `agentrag_memory_chat` | Chat memory — `kind=entry` (per-turn) AND `kind=synthesis` (cross-turn) | Chat memory retrieval |
 
 ---
 
@@ -418,117 +416,27 @@ curl http://127.0.0.1:8000/ingest/queue
 
 ## 5. Cấu hình `.env`
 
-### Tier 1 — CPU Only (RAM ≥ 16 GB)
+### Tier presets (one-shot)
 
-```env
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
-EXTRACTION_PROVIDER=ollama
-EXTRACTION_MODEL=llama3.2:3b
-RETRIEVAL_RERANK_ENABLED=false
-STRUCTURED_REASONING_ENABLED=false
-STRUCTMEM_MAX_CONCURRENCY=1
+Tier-specific overlays sống tại [`presets/`](./presets/). Áp dụng:
+
+```bash
+make use-preset TIER=3a       # tier-1 | tier-2 | tier-3a | tier-3b | tier-4 | tier-5
+# Backup .env hiện tại tự động (.env.bak-YYYYMMDD-HHMMSS)
 ```
 
-### Tier 2 — GPU 6–8 GB VRAM
+| Tier | Phù hợp | File |
+|---|---|---|
+| 1 | CPU only, RAM ≥ 16 GB | `presets/tier-1.env` |
+| 2 | GPU 6–8 GB VRAM | `presets/tier-2.env` |
+| 3a | GPU 16 GB (full feature, qwen 7B + vision) — *recommended laptop/workstation* | `presets/tier-3a.env` |
+| 3b | GPU 24 GB (qwen 14B/32B) | `presets/tier-3b.env` |
+| 4 | Cloud API (OpenAI/Gemini) | `presets/tier-4.env` |
+| 5 | 6 GB VRAM laptop + Gemini cloud | `presets/tier-5.env` |
 
-```env
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
-EXTRACTION_PROVIDER=ollama
-EXTRACTION_MODEL=qwen2.5:7b-instruct
-RETRIEVAL_RERANK_ENABLED=true
-RETRIEVAL_RERANK_BACKEND=local_cross_encoder
-RETRIEVAL_RERANK_MODEL=dengcao/bge-reranker-v2-m3
-STRUCTURED_REASONING_ENABLED=true
-LLM_ROUTING_ENABLED=true
-LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","answer":"qwen2.5:7b-instruct"}
-STRUCTMEM_MAX_CONCURRENCY=2
-```
-
-### Tier 3a — GPU 16 GB VRAM (full feature set, qwen 7B + vision)
-
-Recommended for laptop/workstation users who want every feature on (vision,
-StructMem, mindmap, summary, transformations) without OOM. Concurrent loaded:
-qwen2.5:7b (~5GB) + llava:7b (~4.5GB) + llama3.2:3b (~2GB) + mxbai-embed-large (~0.7GB).
-
-```env
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=mxbai-embed-large
-EXTRACTION_PROVIDER=ollama
-EXTRACTION_MODEL=qwen2.5:7b-instruct
-AGENT_PROVIDER=ollama
-AGENT_MODEL=qwen2.5:7b-instruct
-VISION_PROVIDER=ollama
-VISION_MODEL=llava:7b
-VISION_INGEST_MODE=async                 # vital — vision blocks ingest otherwise
-RETRIEVAL_RERANK_ENABLED=true
-RETRIEVAL_RERANK_BACKEND=local_cross_encoder
-STRUCTURED_REASONING_ENABLED=true
-LLM_ROUTING_ENABLED=true
-LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","schema_discovery":"qwen2.5:7b-instruct","sql_compile":"qwen2.5:7b-instruct","answer":"qwen2.5:7b-instruct","mindmap":"qwen2.5:7b-instruct","summary":"qwen2.5:7b-instruct"}
-STRUCTMEM_MAX_CONCURRENCY=2
-```
-
-Also bump `OLLAMA_MAX_LOADED_MODELS=3` in `docker-compose.yml` so 3 LLMs stay
-hot together.
-
-### Tier 3b — GPU 24 GB VRAM (qwen 14B/32B)
-
-```env
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=mxbai-embed-large
-EXTRACTION_PROVIDER=ollama
-EXTRACTION_MODEL=qwen2.5:14b-instruct
-AGENT_PROVIDER=ollama
-AGENT_MODEL=qwen2.5:32b-instruct
-RETRIEVAL_RERANK_ENABLED=true
-RETRIEVAL_RERANK_BACKEND=local_cross_encoder
-STRUCTURED_REASONING_ENABLED=true
-LLM_ROUTING_ENABLED=true
-LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","schema_discovery":"qwen2.5:14b-instruct","sql_compile":"qwen2.5:14b-instruct","answer":"qwen2.5:32b-instruct"}
-STRUCTMEM_MAX_CONCURRENCY=4
-```
-
-### Tier 4 — Cloud API (OpenAI / Gemini)
-
-```env
-OPENAI_API_KEY=sk-...
-EMBEDDING_PROVIDER=openai
-EMBEDDING_MODEL=text-embedding-3-small
-EXTRACTION_PROVIDER=openai
-EXTRACTION_MODEL=gpt-4o-mini
-AGENT_PROVIDER=openai
-AGENT_MODEL=gpt-4o
-RETRIEVAL_RERANK_ENABLED=true
-RETRIEVAL_RERANK_BACKEND=llm_chat
-LLM_ROUTING_ENABLED=true
-LLM_TASK_MODEL_MAP={"classify":"gpt-4o-mini","decide":"gpt-4o-mini","answer":"gpt-4o"}
-```
-
-### Tier 5 — 6 GB VRAM (laptop) + Gemini cloud
-
-Embedding stays local on Ollama (`nomic-embed-text` ≈ 300 MB VRAM). Everything
-else routes to Gemini. Tested on Windows/WSL2 with 6 GB GPU.
-
-```env
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
-EXTRACTION_PROVIDER=gemini
-EXTRACTION_MODEL=gemini-2.5-flash
-AGENT_PROVIDER=gemini
-AGENT_MODEL=gemini-2.5-pro
-VISION_PROVIDER=gemini
-VISION_MODEL=gemini-2.5-flash
-RETRIEVAL_RERANK_ENABLED=true
-RETRIEVAL_RERANK_PROVIDER=gemini
-RETRIEVAL_RERANK_MODEL=gemini-2.5-flash-lite
-LLM_ROUTING_ENABLED=true
-LLM_TASK_MODEL_MAP={"classify":"gemini-2.5-flash-lite","decide":"gemini-2.5-flash-lite","schema_discovery":"gemini-2.5-flash","sql_compile":"gemini-2.5-flash","synthesize":"gemini-2.5-pro","answer":"gemini-2.5-pro"}
-LLM_COST_TRACKING_ENABLED=true
-# Free Gemini tier: 10 RPM for 2.5-flash; bump to 1000 on paid tier.
-VISION_MAX_RPM=10
-```
+Tier 3a cũng cần `OLLAMA_MAX_LOADED_MODELS=3` trong `docker-compose.yml` để
+giữ 3 LLM hot cùng lúc. Sau khi `make use-preset`, append secrets vào `.env`
+(`OPENAI_API_KEY`, `GEMINI_API_KEY`, …).
 
 ### 5.1 API Keys
 
@@ -569,7 +477,7 @@ STRUCTMEM_CACHE_DIR=.cache/agentrag/extract
 ### 5.4 Chat StructMem
 
 ```env
-CHAT_STRUCTMEM_ENABLED=false         # true để bật bộ nhớ hội thoại semantic
+CHAT_STRUCTMEM_ENABLED=true          # default; replaces sliding-window history (false → fall back to last-N turns)
 CHAT_MEMORY_CONSOLIDATION_THRESHOLD=10   # số turns trước khi consolidate
 CHAT_MEMORY_TOP_K=8
 ```
@@ -627,29 +535,20 @@ AGENT_MAX_CONTEXT_TOKENS=6000
 # Lost-in-the-middle reorder: best chunks at start + end of packed context
 AGENT_LOST_IN_MIDDLE_REORDER=true
 
-# Self-critique 2nd pass — verifies draft against context. Fires only when
-# retrieval is thin (top RRF < threshold). +1 LLM call/turn.
-AGENT_SELF_CRITIQUE_ENABLED=false
-AGENT_SELF_CRITIQUE_RRF_THRESHOLD=0.05
-
 # Plan-then-execute: planner decomposes multi-hop questions into sub-queries,
 # parallel retrieval, then single answer pass. Skipped for short questions.
 AGENT_PLAN_THEN_EXECUTE_ENABLED=true
 AGENT_PLAN_TRIGGER_MIN_CHARS=60
 AGENT_PLAN_MAX_SUBQUERIES=4
-
-# Orchestrator backend:
-#   loop      = hand-rolled chat() loop (battle-tested)
-#   langgraph = StateGraph with 13 nodes (checkpoint + replay)
-AGENT_BACKEND=loop
 ```
 
-**LangGraph backend** (`AGENT_BACKEND=langgraph`): same nodes as legacy loop
-(validate → memory → chitchat_check → classify → structured/semantic →
-plan → bootstrap → decide ⇄ tool_exec → assemble → answer → ground) but
-orchestrated as a `StateGraph` with `InMemorySaver` checkpointer. Each
-turn's state is persisted by `thread_id = conversation_id` → resume from
-any node, inspect state via `_GRAPH.aget_state(config)`.
+**Orchestrator** — single backend: `GraphAgentService` (LangGraph `StateGraph`,
+13 nodes: validate → memory → chitchat_check → classify → structured/semantic →
+plan → bootstrap → decide ⇄ tool_exec → assemble → answer → ground) with
+`InMemorySaver` checkpoint. Each turn's state is persisted by
+`thread_id = conversation_id` → resume from any node, inspect state via
+`_GRAPH.aget_state(config)`. (Self-critique pass from the deleted hand-rolled
+loop is not currently ported — re-introduce as a graph node if needed.)
 
 **Chit-chat fast-path**: short messages with greeting/thanks tokens
 (`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...) skip retrieval and
@@ -976,7 +875,7 @@ Trigger tự động khi `total_chunks >= STRUCTMEM_CONSOLIDATION_THRESHOLD`:
 unconsolidated entries
   ├──▶ embed → cosine search → top-K historical seeds
   ├──▶ LLM synthesis → cross-chunk hypotheses
-  ├──▶ index vào agentrag_synthesis
+  ├──▶ index vào agentrag_memory_doc (kind=synthesis)
   └──▶ mark entries consolidated=true
 ```
 
@@ -994,13 +893,13 @@ User turn → assistant response
   └──▶ [ARQ async] ChatMemoryService.process_turn()
           ├── factual_call()    → facts từ lượt hội thoại
           ├── relational_call() → topic connections, user intent
-          ├── embed + index → agentrag_chat_entries
-          └── [if count ≥ threshold] consolidate() → agentrag_chat_synthesis
+          ├── embed + index → agentrag_memory_chat (kind=entry)
+          └── [if count ≥ threshold] consolidate() → agentrag_memory_chat (kind=synthesis)
 
 Next question
   └──▶ ChatMemoryService.retrieve(conversation_id, question)
-          ├── KNN search trên agentrag_chat_entries
-          ├── KNN search trên agentrag_chat_synthesis
+          ├── KNN search trên agentrag_memory_chat (filter kind=entry)
+          ├── KNN search trên agentrag_memory_chat (filter kind=synthesis)
           └── inject conversation_memory vào _decide() + _answer() prompts
 ```
 
@@ -1443,7 +1342,7 @@ make dev
 | `ARQ pool not initialized` | Chạy app trước khi Redis sẵn sàng | Đảm bảo Redis đang chạy |
 | `unsupported value: NaN` | Embedding không ổn định | Đổi sang `nomic-embed-text` |
 | Structured path luôn fallback | Model quá nhỏ | Dùng model ≥7B |
-| `agentrag_entries` rỗng | `STRUCTMEM_ENABLED=false` hoặc worker chưa chạy | Chạy `arq worker` hoặc `python scaler.py` |
+| `agentrag_memory_doc` rỗng (kind=entry) | `STRUCTMEM_ENABLED=false` hoặc worker chưa chạy | Chạy `arq worker` hoặc `python scaler.py` |
 
 ---
 

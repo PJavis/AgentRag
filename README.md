@@ -130,7 +130,7 @@ GET /admin
 |---|---|---|
 | **PostgreSQL** | Source of truth: documents, segments, conversations + adapter notebooks/notes | `documents`, `segments`, `conversations`, `chat_messages`, `adapter_notebooks`, `adapter_notes`, `adapter_notebook_sources` |
 | **Elasticsearch** | BM25 + kNN hybrid search + StructMem knowledge | `agentrag_segments` (có `page_start`, `page_end`, `segment_type`), `agentrag_memory_doc` (doc entries + synthesis, `kind` discriminator), `agentrag_memory_chat` (chat entries + synthesis, `kind` discriminator) |
-| **Redis** | Chat history cache (TTL) + ARQ job queue | key-value + sorted sets |
+| **Valkey** | Chat history cache (TTL) + ARQ job queue + cost ledger stream + mindmap cache | key-value, sorted sets, streams (RESP — Redis client compatible) |
 | **Filesystem** | Ảnh extract từ PDF + ảnh standalone | `IMAGE_STORAGE_DIR` (mặc định `data/images/`), serve qua `/images/*` static mount |
 
 **ES Indices:**
@@ -212,7 +212,7 @@ curl http://localhost:8000/on/api/metrics/cost       # S1 — ledger
 
 | Target | Mô tả |
 |---|---|
-| `make docker-up` | Start postgres + elasticsearch + redis (default services) |
+| `make docker-up` | Start postgres + elasticsearch + valkey (default services) |
 | `make docker-down` | Stop infra services |
 | `make docker-up-llm` | + Ollama container (GPU profile), pull every model referenced in `.env` (`EMBEDDING_MODEL`, `EXTRACTION_MODEL`, `AGENT_MODEL`, `RETRIEVAL_RERANK_MODEL`, `VISION_MODEL` when provider=ollama, plus `OLLAMA_EXTRA_MODELS`) |
 | `make ollama-pull` | Pull models from `.env` without restarting compose |
@@ -278,7 +278,7 @@ VISION_BASE_URL=http://127.0.0.1:11434/v1/
 
 | Mức | Target | Xoá những gì | Giữ lại |
 |---|---|---|---|
-| 🟡 **Soft** | `make reset` | DB volumes (postgres + ES + redis + ollama), `.cache/agentrag`. Restart infra + migrate. | Code, deps, `.venv`, `node_modules`, ảnh đã extract, logs |
+| 🟡 **Soft** | `make reset` | DB volumes (postgres + ES + valkey + ollama), `.cache/agentrag`. Restart infra + migrate. | Code, deps, `.venv`, `node_modules`, ảnh đã extract, logs |
 | 🟠 **Data** | `make reset-data` | Tất cả của Soft + `data/images/*` + `.run/` (logs) | Code, deps, `.venv`, `node_modules` |
 | 🔴 **Nuke** | `make nuke` | Tất cả của Data + `.venv` + `frontend/node_modules` + `.next` + tất cả docker containers (kể cả Ollama) | `.env` |
 
@@ -913,7 +913,7 @@ Next question
 
 ## 10. Background Workers & Auto-scaler
 
-Jobs chạy nền qua **ARQ** (Redis-backed task queue) — survive process restart, scalable.
+Jobs chạy nền qua **ARQ** (Valkey/Redis-backed task queue, RESP protocol) — survive process restart, scalable.
 
 ### Chạy worker
 
@@ -1249,7 +1249,7 @@ Khi `RATE_LIMIT_ENABLED=true`:
 - `UPLOAD_MAX_BYTES=104857600` (100 MB)
 - `UPLOAD_DEDUPE_BY_HASH=true` — skip re-ingest nếu đã thấy bytes
 
-Implementation: `src/agentrag/adapter/rate_limit.py` + `upload_dedupe.py` (Redis INCR + EXPIRE 60s).
+Implementation: `src/agentrag/adapter/rate_limit.py` + `upload_dedupe.py` (Valkey INCR + EXPIRE 60s).
 
 ### Legacy shared password
 
@@ -1339,7 +1339,7 @@ make dev
 | Lỗi | Nguyên nhân | Xử lý |
 |---|---|---|
 | `Connection refused :9200` | Elasticsearch chưa sẵn sàng | Chờ 30s sau `docker compose up` |
-| `ARQ pool not initialized` | Chạy app trước khi Redis sẵn sàng | Đảm bảo Redis đang chạy |
+| `ARQ pool not initialized` | Chạy app trước khi Valkey sẵn sàng | Đảm bảo Valkey đang chạy |
 | `unsupported value: NaN` | Embedding không ổn định | Đổi sang `nomic-embed-text` |
 | Structured path luôn fallback | Model quá nhỏ | Dùng model ≥7B |
 | `agentrag_memory_doc` rỗng (kind=entry) | `STRUCTMEM_ENABLED=false` hoặc worker chưa chạy | Chạy `arq worker` hoặc `python scaler.py` |
@@ -1353,7 +1353,7 @@ AgentRag/
 ├── main.py                              # FastAPI app + lifespan (ARQ pool)
 ├── cli.py                               # CLI entry point
 ├── scaler.py                            # ARQ worker auto-scaler
-├── docker-compose.yml                   # PostgreSQL, Elasticsearch, Redis, Ollama
+├── docker-compose.yml                   # PostgreSQL, Elasticsearch, Valkey, Ollama
 ├── pyproject.toml
 ├── migrations/                          # Alembic
 ├── data/
@@ -1375,7 +1375,7 @@ AgentRag/
     │   └── report_agent.py
     │
     ├── chat/                            # Conversation + Chat StructMem
-    │   ├── history.py                   # ConversationStore (Redis + PG)
+    │   ├── history.py                   # ConversationStore (Valkey + PG)
     │   ├── structmem.py                 # ChatMemoryService (dual-perspective)
     │   └── memory_jobs.py               # ChatMemoryJob dataclass
     │

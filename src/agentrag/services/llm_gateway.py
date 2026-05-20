@@ -50,19 +50,6 @@ def _price_for(model: str) -> tuple[float, float]:
     return _PRICE_PER_1M["gemini-2.5-flash"]
 
 
-def _relabel_last(model: str, generic_task: str, target_task: str) -> None:
-    """AgentLLM records calls with generic 'json'/'text'/'stream' task labels.
-    LLMGateway knows the real semantic task ('answer','decide',...). After
-    each call, rewrite the last matching ledger entry so dashboards roll up
-    per-task instead of per-method."""
-    from src.agentrag.observability.cost import _LEDGER, _LOCK
-    with _LOCK:
-        for entry in reversed(_LEDGER):
-            if entry["model"] == model and entry["task"] == generic_task:
-                entry["task"] = target_task
-                return
-
-
 class LLMGateway:
     """
     LLM routing + cost tracking (Phase C).
@@ -84,13 +71,10 @@ class LLMGateway:
         user_prompt: str,
         task: str = "general",
     ) -> tuple[dict[str, Any], float]:
-        """AgentLLM records the call internally; we just override the task label."""
         client = self._resolve_client(task, content=system_prompt + user_prompt)
         started = time.perf_counter()
-        payload = await client.json_response(system_prompt, user_prompt)
+        payload = await client.json_response(system_prompt, user_prompt, task=task)
         latency_ms = (time.perf_counter() - started) * 1000
-        # Relabel last entry from generic "json" → the task tag we know.
-        _relabel_last(client.model, "json", task)
         return payload, latency_ms
 
     async def text_response(
@@ -99,11 +83,8 @@ class LLMGateway:
         user_prompt: str,
         task: str = "general",
     ) -> str:
-        """Plain-text completion (no JSON enforcement)."""
         client = self._resolve_client(task, content=system_prompt + user_prompt)
-        text = await client.text_response(system_prompt, user_prompt)
-        _relabel_last(client.model, "text", task)
-        return text
+        return await client.text_response(system_prompt, user_prompt, task=task)
 
     def cost_summary(self) -> dict[str, Any]:
         return _cost.cost_summary()

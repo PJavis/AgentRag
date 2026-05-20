@@ -1,29 +1,50 @@
-"""Process-global LLM cost ledger.
+"""LLM cost ledger backed by a Valkey stream.
 
-Every successful LLM call in the API + worker processes pushes one entry
-through :func:`record_llm_call`. The ledger is in-memory only (cleared on
-process restart) — fine for development visibility. For long-lived multi-
-process tracking, swap the deque for a Redis/SQL backend.
+Every successful LLM call in the API + worker pushes one entry through
+:func:`record_llm_call`. Entries land in the Valkey/Redis stream
+``agentrag:llm:calls:v1`` (capped via ``MAXLEN ~ 5000`` so it auto-trims).
+Survives process restart, aggregates across multi-worker.
 
-USD estimates use public Gemini / OpenAI pricing tables. When the provider
-returns a `usage` object we prefer those token counts; otherwise we fall
-back to a char-density heuristic so the dashboard still has signal.
+Falls back to a process-local deque when Valkey is unreachable (or when
+``REDIS_URL`` is not configured) so tests and offline dev still work. The
+fallback is per-process and will not aggregate across workers; if you see
+the dashboard reporting partial data, check Valkey connectivity.
+
+USD estimates use public Gemini / OpenAI pricing. When the provider returns
+a ``usage`` object we prefer those token counts; otherwise we fall back to a
+char-density heuristic so the dashboard still has signal.
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
+import json
+import logging
 import threading
 import time
 from collections import deque
 from typing import Any
 
+from redis.exceptions import RedisError
+
 from src.agentrag.config import settings
 
+logger = logging.getLogger(__name__)
+
+# ── Stream config ────────────────────────────────────────────────────────────
+_STREAM_KEY = "agentrag:llm:calls:v1"
+_STREAM_MAXLEN = 5000
+
+# ── Sync/async ledger state ──────────────────────────────────────────────────
 _LOCK = threading.Lock()
-_LEDGER: deque[dict[str, Any]] = deque(maxlen=5000)  # keep last 5k calls
+_LEDGER: deque[dict[str, Any]] = deque(maxlen=_STREAM_MAXLEN)  # fallback + tests
 _ID_SEQ = itertools.count(1)
 
-# USD per 1M tokens (input, output). Adjust when provider pricing changes.
+# ── Valkey clients (lazily created; one per loop is fine for our load) ───────
+_ASYNC_CLIENT = None
+_SYNC_CLIENT = None
+_VALKEY_DISABLED = False  # latched true after first failure
+
 _PRICE_PER_1M = {
     "gemini-2.5-pro":          (1.25, 10.00),
     "gemini-2.5-flash":        (0.075, 0.30),
@@ -56,6 +77,83 @@ def _price_for(model: str) -> tuple[float, float]:
     return _PRICE_PER_1M["gemini-2.5-flash"]
 
 
+def _sync_client():
+    """Sync Redis/Valkey client for blocking contexts (e.g. tests)."""
+    global _SYNC_CLIENT, _VALKEY_DISABLED
+    if _VALKEY_DISABLED or not settings.REDIS_URL:
+        return None
+    if _SYNC_CLIENT is None:
+        try:
+            from redis import Redis  # sync client
+            _SYNC_CLIENT = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        except Exception as exc:  # pragma: no cover — import-only guard
+            logger.debug("cost: sync redis init failed (%s); using fallback", exc)
+            _VALKEY_DISABLED = True
+            return None
+    return _SYNC_CLIENT
+
+
+def _async_client():
+    global _ASYNC_CLIENT, _VALKEY_DISABLED
+    if _VALKEY_DISABLED or not settings.REDIS_URL:
+        return None
+    if _ASYNC_CLIENT is None:
+        try:
+            from redis.asyncio import Redis as AsyncRedis
+            _ASYNC_CLIENT = AsyncRedis.from_url(settings.REDIS_URL, decode_responses=True)
+        except Exception as exc:  # pragma: no cover
+            logger.debug("cost: async redis init failed (%s); using fallback", exc)
+            _VALKEY_DISABLED = True
+            return None
+    return _ASYNC_CLIENT
+
+
+def _coerce_entry(fields: dict[str, str], entry_id: str | None = None) -> dict[str, Any]:
+    """Stream entries store strings; coerce back to typed dict."""
+    return {
+        "id": int(fields.get("id", 0)) if fields.get("id", "").isdigit() else fields.get("id", entry_id),
+        "timestamp": float(fields.get("timestamp", 0.0) or 0.0),
+        "task": fields.get("task", ""),
+        "model": fields.get("model", ""),
+        "latency_ms": float(fields.get("latency_ms", 0.0) or 0.0),
+        "in_tokens": int(fields.get("in_tokens", 0) or 0),
+        "out_tokens": int(fields.get("out_tokens", 0) or 0),
+        "usd": float(fields.get("usd", 0.0) or 0.0),
+        "usage_source": fields.get("usage_source", "estimate"),
+    }
+
+
+def _stream_xadd_sync(entry: dict[str, Any]) -> bool:
+    """Push entry to Valkey stream synchronously. Returns False on failure."""
+    global _VALKEY_DISABLED
+    client = _sync_client()
+    if client is None:
+        return False
+    try:
+        fields = {k: str(v) for k, v in entry.items()}
+        client.xadd(_STREAM_KEY, fields, maxlen=_STREAM_MAXLEN, approximate=True)
+        return True
+    except RedisError as exc:
+        logger.warning("cost: stream XADD failed (%s); disabling Valkey ledger", exc)
+        _VALKEY_DISABLED = True
+        return False
+
+
+async def _stream_xadd_async(entry: dict[str, Any]) -> bool:
+    global _VALKEY_DISABLED
+    client = _async_client()
+    if client is None:
+        return False
+    try:
+        fields = {k: str(v) for k, v in entry.items()}
+        await client.xadd(_STREAM_KEY, fields, maxlen=_STREAM_MAXLEN, approximate=True)
+        return True
+    except RedisError as exc:
+        logger.warning("cost: async XADD failed (%s); disabling Valkey ledger", exc)
+        _VALKEY_DISABLED = True
+        return False
+
+
 def record_llm_call(
     *,
     task: str,
@@ -65,14 +163,18 @@ def record_llm_call(
     out_text: str = "",
     usage: Any = None,
 ) -> None:
-    """Append one call to the in-memory ledger. No-op when cost tracking off."""
+    """Append one call to the Valkey-backed ledger. No-op when tracking off.
+
+    Always writes to the in-process deque so introspection still works under
+    the fallback path. When Valkey is reachable, also writes the entry to the
+    stream (XADD).
+    """
     if not settings.LLM_COST_TRACKING_ENABLED:
         return
 
     in_tokens: int | None = None
     out_tokens: int | None = None
     if usage is not None:
-        # OpenAI-compat clients return CompletionUsage with these attrs.
         in_tokens = getattr(usage, "prompt_tokens", None)
         out_tokens = getattr(usage, "completion_tokens", None)
     if in_tokens is None:
@@ -87,7 +189,7 @@ def record_llm_call(
         entry_id = next(_ID_SEQ)
     entry = {
         "id": entry_id,
-        "timestamp": time.time(),  # epoch seconds
+        "timestamp": time.time(),
         "task": task,
         "model": model,
         "latency_ms": round(latency_ms, 2),
@@ -99,9 +201,31 @@ def record_llm_call(
     with _LOCK:
         _LEDGER.append(entry)
 
+    # Best-effort Valkey persist — try async if we're in a loop, else sync.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        loop.create_task(_stream_xadd_async(entry))
+    else:
+        _stream_xadd_sync(entry)
+
+
+def _read_entries() -> list[dict[str, Any]]:
+    """Read full ledger (Valkey stream if available, else deque)."""
+    client = _sync_client()
+    if client is not None:
+        try:
+            raw = client.xrange(_STREAM_KEY, min="-", max="+", count=_STREAM_MAXLEN)
+            return [_coerce_entry(fields, entry_id) for entry_id, fields in raw]
+        except RedisError as exc:
+            logger.warning("cost: XRANGE failed (%s); falling back to in-process ledger", exc)
+    with _LOCK:
+        return list(_LEDGER)
+
 
 def _percentile(values: list[float], p: float) -> float:
-    """Linear-interp percentile. p in [0, 100]. Empty → 0."""
     if not values:
         return 0.0
     s = sorted(values)
@@ -115,9 +239,7 @@ def _percentile(values: list[float], p: float) -> float:
 
 
 def cost_summary() -> dict[str, Any]:
-    with _LOCK:
-        entries = list(_LEDGER)
-
+    entries = _read_entries()
     per_task: dict[str, dict[str, Any]] = {}
     per_model: dict[str, dict[str, Any]] = {}
     per_task_lat: dict[str, list[float]] = {}
@@ -147,10 +269,10 @@ def cost_summary() -> dict[str, Any]:
             s["avg_latency_ms"] = round(s["total_latency_ms"] / s["calls"], 1) if s["calls"] else 0.0
             s["total_latency_ms"] = round(s["total_latency_ms"], 1)
             s["usd"] = round(s["usd"], 6)
-            # S3: p50/p95 — surface tail latency on the dashboard
             samples = lat_bucket.get(k, [])
             s["p50_latency_ms"] = round(_percentile(samples, 50), 1)
             s["p95_latency_ms"] = round(_percentile(samples, 95), 1)
+    backend = "valkey" if (_sync_client() is not None and not _VALKEY_DISABLED) else "in-process"
     return {
         "total_calls": len(entries),
         "total_in_tokens": total_in,
@@ -158,15 +280,15 @@ def cost_summary() -> dict[str, Any]:
         "total_usd": round(total_usd, 6),
         "per_task": per_task,
         "per_model": per_model,
-        "note": "USD = char-density estimate OR provider usage when available; pricing per 1M tokens; in-memory, cleared on restart.",
+        "backend": backend,
+        "note": f"USD = char-density estimate OR provider usage when available; pricing per 1M tokens; backend={backend}, MAXLEN~{_STREAM_MAXLEN}.",
     }
 
 
 def recent_calls(limit: int = 50, since: float | None = None) -> list[dict[str, Any]]:
     """Most-recent calls, newest first. Optional `since` filters by epoch seconds."""
     limit = max(1, min(limit, 500))
-    with _LOCK:
-        entries = list(_LEDGER)
+    entries = _read_entries()
     if since is not None:
         entries = [e for e in entries if e.get("timestamp", 0) >= since]
     entries.reverse()
@@ -181,5 +303,12 @@ def recent_calls(limit: int = 50, since: float | None = None) -> list[dict[str, 
 
 
 def reset_ledger() -> None:
+    """Clear both Valkey stream and in-process fallback."""
     with _LOCK:
         _LEDGER.clear()
+    client = _sync_client()
+    if client is not None:
+        try:
+            client.delete(_STREAM_KEY)
+        except RedisError as exc:
+            logger.warning("cost: reset DELETE failed (%s)", exc)

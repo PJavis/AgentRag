@@ -88,12 +88,12 @@ class ChatMemoryService:
 
     def __init__(self) -> None:
         self._es = AsyncElasticsearch([settings.ELASTICSEARCH_URL])
-        self._entries_idx = settings.CHAT_MEMORY_INDEX
-        self._synthesis_idx = settings.CHAT_MEMORY_SYNTHESIS_INDEX
+        # R4: single index, kind ∈ {entry, synthesis}.
+        self._index = settings.CHAT_MEMORY_INDEX
         self._embedder = build_embedding_provider(settings)
         self._llm = self._build_llm_client()
         self._model = settings.EXTRACTION_MODEL
-        self._indices_ready = False
+        self._index_ready = False
 
     # ── LLM backend (reuse EXTRACTION_* settings) ────────────────────────────
 
@@ -123,54 +123,41 @@ class ChatMemoryService:
     # ── ES index management ──────────────────────────────────────────────────
 
     async def _ensure_indices(self, dims: int) -> None:
-        if self._indices_ready:
+        if self._index_ready:
             return
-        entry_mapping = {
+        mapping = {
             "mappings": {
                 "properties": {
+                    "kind": {"type": "keyword"},
                     "conversation_id": {"type": "keyword"},
+                    "content": {"type": "text"},
+                    "confidence": {"type": "keyword"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": dims,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    # Entry-only.
                     "turn_id": {"type": "keyword"},
                     "turn_timestamp": {"type": "date"},
                     "entry_type": {"type": "keyword"},
-                    "content": {"type": "text"},
                     "subject": {"type": "keyword"},
                     "source_entity": {"type": "keyword"},
                     "target_entity": {"type": "keyword"},
                     "relation_type": {"type": "keyword"},
-                    "confidence": {"type": "keyword"},
                     "consolidated": {"type": "boolean"},
-                    "embedding": {
-                        "type": "dense_vector",
-                        "dims": dims,
-                        "index": True,
-                        "similarity": "cosine",
-                    },
-                }
-            }
-        }
-        synth_mapping = {
-            "mappings": {
-                "properties": {
-                    "conversation_id": {"type": "keyword"},
-                    "content": {"type": "text"},
+                    # Synthesis-only.
                     "hypothesis_type": {"type": "keyword"},
                     "supporting_entry_ids": {"type": "keyword"},
-                    "confidence": {"type": "keyword"},
                     "reasoning": {"type": "text"},
                     "created_at": {"type": "date"},
-                    "embedding": {
-                        "type": "dense_vector",
-                        "dims": dims,
-                        "index": True,
-                        "similarity": "cosine",
-                    },
                 }
             }
         }
-        for idx, body in [(self._entries_idx, entry_mapping), (self._synthesis_idx, synth_mapping)]:
-            if not await self._es.indices.exists(index=idx):
-                await self._es.indices.create(index=idx, body=body)
-        self._indices_ready = True
+        if not await self._es.indices.exists(index=self._index):
+            await self._es.indices.create(index=self._index, body=mapping)
+        self._index_ready = True
 
     # ── LLM helper ───────────────────────────────────────────────────────────
 
@@ -225,6 +212,7 @@ class ChatMemoryService:
             if not entry.get("content"):
                 continue
             docs.append({
+                "kind": "entry",
                 "conversation_id": conversation_id,
                 "turn_id": turn_id,
                 "turn_timestamp": turn_timestamp,
@@ -240,6 +228,7 @@ class ChatMemoryService:
             if not entry.get("content"):
                 continue
             docs.append({
+                "kind": "entry",
                 "conversation_id": conversation_id,
                 "turn_id": turn_id,
                 "turn_timestamp": turn_timestamp,
@@ -254,7 +243,7 @@ class ChatMemoryService:
             })
 
         for doc in docs:
-            await self._es.index(index=self._entries_idx, body=doc)
+            await self._es.index(index=self._index, body=doc)
 
         logger.debug("ChatMemory: indexed %d entries for turn %s", len(docs), turn_id)
 
@@ -270,19 +259,26 @@ class ChatMemoryService:
         """
         k = top_k or settings.CHAT_MEMORY_TOP_K
         try:
-            if not await self._es.indices.exists(index=self._entries_idx):
+            if not await self._es.indices.exists(index=self._index):
                 return []
             query_emb = (await self._embedder.embed([query]))[0]
 
             entry_resp = await self._es.search(
-                index=self._entries_idx,
+                index=self._index,
                 body={
                     "knn": {
                         "field": "embedding",
                         "query_vector": query_emb,
                         "k": k,
                         "num_candidates": k * 5,
-                        "filter": {"term": {"conversation_id": conversation_id}},
+                        "filter": {
+                            "bool": {
+                                "must": [
+                                    {"term": {"conversation_id": conversation_id}},
+                                    {"term": {"kind": "entry"}},
+                                ]
+                            }
+                        },
                     },
                     "size": k,
                 },
@@ -298,30 +294,35 @@ class ChatMemoryService:
                     "score": hit.get("_score", 0.0),
                 })
 
-            # Synthesis entries (top 3)
-            if await self._es.indices.exists(index=self._synthesis_idx):
-                synth_resp = await self._es.search(
-                    index=self._synthesis_idx,
-                    body={
-                        "knn": {
-                            "field": "embedding",
-                            "query_vector": query_emb,
-                            "k": 3,
-                            "num_candidates": 20,
-                            "filter": {"term": {"conversation_id": conversation_id}},
+            synth_resp = await self._es.search(
+                index=self._index,
+                body={
+                    "knn": {
+                        "field": "embedding",
+                        "query_vector": query_emb,
+                        "k": 3,
+                        "num_candidates": 20,
+                        "filter": {
+                            "bool": {
+                                "must": [
+                                    {"term": {"conversation_id": conversation_id}},
+                                    {"term": {"kind": "synthesis"}},
+                                ]
+                            }
                         },
-                        "size": 3,
                     },
-                )
-                for hit in synth_resp["hits"]["hits"]:
-                    src = hit["_source"]
-                    results.append({
-                        "content": src.get("content", ""),
-                        "entry_type": "synthesis",
-                        "turn_timestamp": src.get("created_at", ""),
-                        "confidence": src.get("confidence", ""),
-                        "score": hit.get("_score", 0.0),
-                    })
+                    "size": 3,
+                },
+            )
+            for hit in synth_resp["hits"]["hits"]:
+                src = hit["_source"]
+                results.append({
+                    "content": src.get("content", ""),
+                    "entry_type": "synthesis",
+                    "turn_timestamp": src.get("created_at", ""),
+                    "confidence": src.get("confidence", ""),
+                    "score": hit.get("_score", 0.0),
+                })
 
             results.sort(key=lambda x: x["score"], reverse=True)
             return results[:k]
@@ -332,14 +333,15 @@ class ChatMemoryService:
 
     async def count_unconsolidated(self, conversation_id: str) -> int:
         try:
-            if not await self._es.indices.exists(index=self._entries_idx):
+            if not await self._es.indices.exists(index=self._index):
                 return 0
             resp = await self._es.count(
-                index=self._entries_idx,
+                index=self._index,
                 body={
                     "query": {
                         "bool": {
                             "must": [
+                                {"term": {"kind": "entry"}},
                                 {"term": {"conversation_id": conversation_id}},
                                 {"term": {"consolidated": False}},
                             ]
@@ -354,16 +356,17 @@ class ChatMemoryService:
     async def consolidate(self, conversation_id: str) -> None:
         """Cross-turn consolidation: tổng hợp entries thành higher-level hypotheses."""
         try:
-            if not await self._es.indices.exists(index=self._entries_idx):
+            if not await self._es.indices.exists(index=self._index):
                 return
 
             # 1. Lấy buffer (unconsolidated entries)
             buf_resp = await self._es.search(
-                index=self._entries_idx,
+                index=self._index,
                 body={
                     "query": {
                         "bool": {
                             "must": [
+                                {"term": {"kind": "entry"}},
                                 {"term": {"conversation_id": conversation_id}},
                                 {"term": {"consolidated": False}},
                             ]
@@ -385,14 +388,21 @@ class ChatMemoryService:
 
             agg = [sum(v[i] for v in embs) / len(embs) for i in range(dims)]
             seed_resp = await self._es.search(
-                index=self._entries_idx,
+                index=self._index,
                 body={
                     "knn": {
                         "field": "embedding",
                         "query_vector": agg,
                         "k": settings.STRUCTMEM_CONSOLIDATION_HISTORY_TOP_K,
                         "num_candidates": 50,
-                        "filter": {"term": {"conversation_id": conversation_id}},
+                        "filter": {
+                            "bool": {
+                                "must": [
+                                    {"term": {"kind": "entry"}},
+                                    {"term": {"conversation_id": conversation_id}},
+                                ]
+                            }
+                        },
                     },
                     "size": settings.STRUCTMEM_CONSOLIDATION_HISTORY_TOP_K,
                 },
@@ -424,8 +434,9 @@ class ChatMemoryService:
                 now = datetime.now(timezone.utc).isoformat()
                 for entry, emb in zip(synth_entries, synth_embs):
                     await self._es.index(
-                        index=self._synthesis_idx,
+                        index=self._index,
                         body={
+                            "kind": "synthesis",
                             "conversation_id": conversation_id,
                             "content": entry.get("content", ""),
                             "hypothesis_type": entry.get("hypothesis_type", ""),
@@ -445,7 +456,7 @@ class ChatMemoryService:
             # 4. Mark buffer consolidated
             for entry in buffer:
                 await self._es.update(
-                    index=self._entries_idx,
+                    index=self._index,
                     id=entry["_id"],
                     body={"doc": {"consolidated": True}},
                 )

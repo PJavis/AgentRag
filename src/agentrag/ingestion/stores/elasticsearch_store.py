@@ -29,8 +29,13 @@ class ElasticsearchStore:
         self.index_name = settings.ELASTICSEARCH_INDEX_NAME
         self.entity_index_name = settings.ELASTICSEARCH_ENTITY_INDEX_NAME
         self.relationship_index_name = settings.ELASTICSEARCH_RELATIONSHIP_INDEX_NAME
-        self.entries_index_name = settings.STRUCTMEM_ENTRIES_INDEX_NAME
-        self.synthesis_index_name = settings.STRUCTMEM_SYNTHESIS_INDEX_NAME
+        # R4: unified doc memory index. `entries_index_name` and
+        # `synthesis_index_name` are kept as aliases pointing at the same
+        # physical index so existing call sites continue to compile; rows are
+        # discriminated at query time via the `kind` keyword field.
+        self.memory_doc_index = settings.STRUCTMEM_INDEX
+        self.entries_index_name = settings.STRUCTMEM_INDEX
+        self.synthesis_index_name = settings.STRUCTMEM_INDEX
 
     async def _get_index_embedding_dims(self, index_name: str) -> int | None:
         """Trả về số dims hiện tại của field embedding trong index, hoặc None nếu không có."""
@@ -514,19 +519,36 @@ class ElasticsearchStore:
         return ranked[:top_k]
 
     # ------------------------------------------------------------------
-    # StructMem — pam_entries index
+    # StructMem — unified memory_doc index (kind ∈ {entry, synthesis})
     # ------------------------------------------------------------------
 
-    async def ensure_entries_index(self, embedding_dims: int) -> None:
-        await self._recreate_index_if_dims_changed(self.entries_index_name, embedding_dims)
-        exists = await self.client.indices.exists(index=self.entries_index_name)
+    async def _ensure_memory_doc_index(self, embedding_dims: int) -> None:
+        await self._recreate_index_if_dims_changed(self.memory_doc_index, embedding_dims)
+        exists = await self.client.indices.exists(index=self.memory_doc_index)
         if exists:
             return
         mapping = {
             "settings": {"analysis": {"analyzer": {"default": {"type": "standard"}}}},
             "mappings": {
                 "properties": {
+                    # Discriminator — query-time filter for entry vs synthesis.
+                    "kind": {"type": "keyword"},
+                    # Shared fields.
                     "content": {"type": "text"},
+                    "confidence": {"type": "keyword"},
+                    "document_title": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
+                    },
+                    "group_id": {"type": "keyword"},
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": embedding_dims,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
+                    "created_at": {"type": "date"},
+                    # Entry-only fields.
                     "entry_type": {"type": "keyword"},
                     "fact_type": {"type": "keyword"},
                     "subject": {
@@ -542,26 +564,30 @@ class ElasticsearchStore:
                         "type": "text",
                         "fields": {"keyword": {"type": "keyword"}},
                     },
-                    "confidence": {"type": "keyword"},
-                    "document_title": {
-                        "type": "text",
-                        "fields": {"keyword": {"type": "keyword"}},
-                    },
-                    "group_id": {"type": "keyword"},
                     "chunk_position": {"type": "integer"},
                     "content_hash": {"type": "keyword"},
                     "consolidated": {"type": "boolean"},
-                    "embedding": {
-                        "type": "dense_vector",
-                        "dims": embedding_dims,
-                        "index": True,
-                        "similarity": "cosine",
+                    # Synthesis-only fields.
+                    "hypothesis_type": {"type": "keyword"},
+                    "supporting_entry_ids": {"type": "keyword"},
+                    "entities_involved": {
+                        "type": "text",
+                        "fields": {"keyword": {"type": "keyword"}},
                     },
-                    "created_at": {"type": "date"},
+                    "reasoning": {"type": "text"},
+                    "consolidation_run_id": {"type": "keyword"},
+                    "source_entry_count": {"type": "integer"},
                 }
             },
         }
-        await self.client.indices.create(index=self.entries_index_name, body=mapping)
+        await self.client.indices.create(index=self.memory_doc_index, body=mapping)
+
+    # Aliases preserved for callers.
+    async def ensure_entries_index(self, embedding_dims: int) -> None:
+        await self._ensure_memory_doc_index(embedding_dims)
+
+    async def ensure_synthesis_index(self, embedding_dims: int) -> None:
+        await self._ensure_memory_doc_index(embedding_dims)
 
     async def index_entries(self, entries: list[dict[str, Any]]) -> None:
         if not entries:
@@ -569,14 +595,15 @@ class ElasticsearchStore:
         first_embedding = entries[0].get("embedding")
         if not isinstance(first_embedding, list) or not first_embedding:
             raise ValueError("Entries must contain non-empty embeddings before indexing")
-        await self.ensure_entries_index(len(first_embedding))
+        await self._ensure_memory_doc_index(len(first_embedding))
 
         actions: list[dict[str, Any]] = []
         for entry in entries:
             doc_id = entry.pop("_id", None) or sha256(
                 entry.get("content", "").encode("utf-8")
             ).hexdigest()
-            actions.append({"index": {"_index": self.entries_index_name, "_id": doc_id}})
+            entry.setdefault("kind", "entry")
+            actions.append({"index": {"_index": self.memory_doc_index, "_id": doc_id}})
             actions.append(entry)
 
         response = await self.client.bulk(body=actions, refresh=True)
@@ -590,21 +617,22 @@ class ElasticsearchStore:
         group_ids: list[str] | None = None,
         top_k: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Hybrid kNN + BM25 search trên pam_entries."""
+        """Hybrid kNN + BM25 search restricted to kind=entry."""
         size = top_k or settings.RETRIEVAL_TOP_K
-        knn_filter: dict[str, Any] | None = None
-        bm25_filter: dict[str, Any] | None = None
+        filters: list[dict[str, Any]] = [{"term": {"kind": "entry"}}]
         if group_ids:
-            knn_filter = {"terms": {"group_id": group_ids}}
-            bm25_filter = {"terms": {"group_id": group_ids}}
+            filters.append({"terms": {"group_id": group_ids}})
 
-        sparse_query: dict[str, Any] = {"match": {"content": {"query": query_text}}}
-        if bm25_filter:
-            sparse_query = {"bool": {"must": [sparse_query], "filter": [bm25_filter]}}
+        sparse_query: dict[str, Any] = {
+            "bool": {
+                "must": [{"match": {"content": {"query": query_text}}}],
+                "filter": filters,
+            }
+        }
 
         try:
             sparse_resp = await self.client.search(
-                index=self.entries_index_name,
+                index=self.memory_doc_index,
                 size=size,
                 query=sparse_query,
             )
@@ -620,13 +648,12 @@ class ElasticsearchStore:
                 "query_vector": query_embedding,
                 "k": size,
                 "num_candidates": max(settings.RETRIEVAL_NUM_CANDIDATES, size),
+                "filter": filters if len(filters) > 1 else filters[0],
             },
             "size": size,
         }
-        if knn_filter:
-            knn_body["knn"]["filter"] = knn_filter
         try:
-            dense_resp = await self.client.search(index=self.entries_index_name, **knn_body)
+            dense_resp = await self.client.search(index=self.memory_doc_index, **knn_body)
             dense_hits = self._normalize_entry_hits(
                 dense_resp.get("hits", {}).get("hits", []), "structmem"
             )
@@ -645,11 +672,12 @@ class ElasticsearchStore:
             return []
         try:
             response = await self.client.search(
-                index=self.entries_index_name,
+                index=self.memory_doc_index,
                 size=1000,
                 query={
                     "bool": {
                         "filter": [
+                            {"term": {"kind": "entry"}},
                             {"term": {"group_id": group_id}},
                             {"terms": {"chunk_position": chunk_positions}},
                         ]
@@ -669,12 +697,13 @@ class ElasticsearchStore:
         """Trả về entries chưa consolidate của một group."""
         try:
             response = await self.client.search(
-                index=self.entries_index_name,
+                index=self.memory_doc_index,
                 size=max_size,
                 sort=[{"chunk_position": "asc"}],
                 query={
                     "bool": {
                         "filter": [
+                            {"term": {"kind": "entry"}},
                             {"term": {"group_id": group_id}},
                             {"term": {"consolidated": False}},
                         ]
@@ -692,7 +721,7 @@ class ElasticsearchStore:
             return
         actions: list[dict[str, Any]] = []
         for eid in entry_ids:
-            actions.append({"update": {"_index": self.entries_index_name, "_id": eid}})
+            actions.append({"update": {"_index": self.memory_doc_index, "_id": eid}})
             actions.append({"doc": {"consolidated": True}})
         await self.client.bulk(body=actions, refresh=False)
 
@@ -745,45 +774,8 @@ class ElasticsearchStore:
         return ranked[:top_k]
 
     # ------------------------------------------------------------------
-    # StructMem — pam_synthesis index
+    # StructMem — synthesis rows (kind=synthesis on unified memory_doc)
     # ------------------------------------------------------------------
-
-    async def ensure_synthesis_index(self, embedding_dims: int) -> None:
-        await self._recreate_index_if_dims_changed(self.synthesis_index_name, embedding_dims)
-        exists = await self.client.indices.exists(index=self.synthesis_index_name)
-        if exists:
-            return
-        mapping = {
-            "settings": {"analysis": {"analyzer": {"default": {"type": "standard"}}}},
-            "mappings": {
-                "properties": {
-                    "content": {"type": "text"},
-                    "hypothesis_type": {"type": "keyword"},
-                    "supporting_entry_ids": {"type": "keyword"},
-                    "entities_involved": {
-                        "type": "text",
-                        "fields": {"keyword": {"type": "keyword"}},
-                    },
-                    "confidence": {"type": "keyword"},
-                    "reasoning": {"type": "text"},
-                    "document_title": {
-                        "type": "text",
-                        "fields": {"keyword": {"type": "keyword"}},
-                    },
-                    "group_id": {"type": "keyword"},
-                    "consolidation_run_id": {"type": "keyword"},
-                    "source_entry_count": {"type": "integer"},
-                    "embedding": {
-                        "type": "dense_vector",
-                        "dims": embedding_dims,
-                        "index": True,
-                        "similarity": "cosine",
-                    },
-                    "created_at": {"type": "date"},
-                }
-            },
-        }
-        await self.client.indices.create(index=self.synthesis_index_name, body=mapping)
 
     async def index_synthesis(self, synthesis_docs: list[dict[str, Any]]) -> None:
         if not synthesis_docs:
@@ -791,14 +783,15 @@ class ElasticsearchStore:
         first_embedding = synthesis_docs[0].get("embedding")
         if not isinstance(first_embedding, list) or not first_embedding:
             raise ValueError("Synthesis docs must contain non-empty embeddings before indexing")
-        await self.ensure_synthesis_index(len(first_embedding))
+        await self._ensure_memory_doc_index(len(first_embedding))
 
         actions: list[dict[str, Any]] = []
         for doc in synthesis_docs:
             doc_id = doc.pop("_id", None) or sha256(
                 doc.get("content", "").encode("utf-8")
             ).hexdigest()
-            actions.append({"index": {"_index": self.synthesis_index_name, "_id": doc_id}})
+            doc.setdefault("kind", "synthesis")
+            actions.append({"index": {"_index": self.memory_doc_index, "_id": doc_id}})
             actions.append(doc)
 
         response = await self.client.bulk(body=actions, refresh=True)
@@ -812,24 +805,22 @@ class ElasticsearchStore:
         group_ids: list[str] | None = None,
         top_k: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Hybrid search trên pam_synthesis."""
+        """Hybrid search restricted to kind=synthesis."""
         size = top_k or max(settings.RETRIEVAL_TOP_K // 2, 3)
-        knn_filter: dict[str, Any] | None = None
+        filters: list[dict[str, Any]] = [{"term": {"kind": "synthesis"}}]
         if group_ids:
-            knn_filter = {"terms": {"group_id": group_ids}}
+            filters.append({"terms": {"group_id": group_ids}})
 
-        sparse_query: dict[str, Any] = {"match": {"content": {"query": query_text}}}
-        if group_ids:
-            sparse_query = {
-                "bool": {
-                    "must": [sparse_query],
-                    "filter": [{"terms": {"group_id": group_ids}}],
-                }
+        sparse_query: dict[str, Any] = {
+            "bool": {
+                "must": [{"match": {"content": {"query": query_text}}}],
+                "filter": filters,
             }
+        }
 
         try:
             sparse_resp = await self.client.search(
-                index=self.synthesis_index_name,
+                index=self.memory_doc_index,
                 size=size,
                 query=sparse_query,
             )
@@ -845,13 +836,12 @@ class ElasticsearchStore:
                 "query_vector": query_embedding,
                 "k": size,
                 "num_candidates": max(settings.RETRIEVAL_NUM_CANDIDATES, size),
+                "filter": filters if len(filters) > 1 else filters[0],
             },
             "size": size,
         }
-        if knn_filter:
-            knn_body["knn"]["filter"] = knn_filter
         try:
-            dense_resp = await self.client.search(index=self.synthesis_index_name, **knn_body)
+            dense_resp = await self.client.search(index=self.memory_doc_index, **knn_body)
             dense_hits = self._normalize_synthesis_hits(dense_resp.get("hits", {}).get("hits", []))
         except ESNotFoundError:
             dense_hits = []

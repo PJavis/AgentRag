@@ -84,8 +84,11 @@ class Settings(BaseSettings):
     DOMAIN_FILTER_ENABLED: bool = True
     DOMAIN_ROUTER_CONFIDENCE_THRESHOLD: float = 0.7
     DOMAIN_ROUTER_TOP_K: int = 3
-    STRUCTMEM_ENTRIES_INDEX_NAME: str = "agentrag_entries"
-    STRUCTMEM_SYNTHESIS_INDEX_NAME: str = "agentrag_synthesis"
+    # Unified doc memory index (kind ∈ {"entry","synthesis"}). Was previously
+    # agentrag_entries + agentrag_synthesis; collapsed in R4 to halve the
+    # mapping surface. Legacy *_INDEX_NAME settings retained below as aliases
+    # so external configs keep loading; both resolve to the unified index.
+    STRUCTMEM_INDEX: str = "agentrag_memory_doc"
     # Số chunks/group tích luỹ trước khi trigger cross-chunk consolidation
     STRUCTMEM_CONSOLIDATION_THRESHOLD: int = 20
     # Top-K historical entries làm seed trong consolidation
@@ -103,8 +106,6 @@ class Settings(BaseSettings):
     RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
 
     AGENT_MAX_STEPS: int = 4
-    # Backend orchestrator: hand-rolled loop (default) or langgraph StateGraph.
-    AGENT_BACKEND: Literal["loop", "langgraph"] = "loop"
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10
@@ -118,10 +119,10 @@ class Settings(BaseSettings):
     STRUCTURED_SQL_MAX_RETRIES: int = 2
     STRUCTURED_CONFIDENCE_THRESHOLD: float = 0.7
 
-    # Chat StructMem — áp dụng dual-perspective memory cho lịch sử hội thoại
-    CHAT_STRUCTMEM_ENABLED: bool = False
-    CHAT_MEMORY_INDEX: str = "agentrag_chat_entries"
-    CHAT_MEMORY_SYNTHESIS_INDEX: str = "agentrag_chat_synthesis"
+    # Chat StructMem — áp dụng dual-perspective memory cho lịch sử hội thoại.
+    # Single index, rows discriminated by `kind` ∈ {"entry","synthesis"}.
+    CHAT_STRUCTMEM_ENABLED: bool = True
+    CHAT_MEMORY_INDEX: str = "agentrag_memory_chat"
     CHAT_MEMORY_CONSOLIDATION_THRESHOLD: int = 10  # số turns tích luỹ trước khi consolidate
     CHAT_MEMORY_TOP_K: int = 8  # số entries retrieve mỗi lượt
 
@@ -219,15 +220,6 @@ class Settings(BaseSettings):
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.
     AGENT_LOST_IN_MIDDLE_REORDER: bool = True
-
-    # Self-critique pass: after the agent drafts an answer, run a second LLM
-    # call that checks the draft against the retrieved context and flags
-    # hallucinations / sycophantic agreement / unsupported claims.
-    # Costs +1 LLM call per turn. Disable for ultra-low-cost mode.
-    AGENT_SELF_CRITIQUE_ENABLED: bool = False
-    # Only critique when retrieval looks weak (top hit RRF score below threshold).
-    # Higher → critique more often. Set to 1.0 to always critique.
-    AGENT_SELF_CRITIQUE_RRF_THRESHOLD: float = 0.05
 
     # Plan-then-execute: before retrieval, decompose complex / multi-hop
     # questions into a list of sub-queries, retrieve evidence for each in

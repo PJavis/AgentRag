@@ -117,3 +117,16 @@ See `src/agentrag/worker/functions.py` for the live set:
 | ARQ workers          | `src/agentrag/worker/functions.py`            | E     |
 
 R = Reasoning Plane, E = Execution Plane.
+
+## Storage split: PG segments vs ES agentrag_segments
+
+Both stores receive every chunk on ingest. **Not redundant** — each serves a distinct read path.
+
+| Store | Role | Readers |
+|---|---|---|
+| Postgres `segments` | Durable, ordered, joinable. Source of truth for full-text reconstruction and per-document operations. | `adapter/routers/insights.py::_source_full_text` (concat by `position`), `adapter/routers/sources.py::_segment_count` (health), `agent/tools.py::get_document_segments` (agent tool, joins `Segment ⨝ Document` by title), `graph/vision_jobs.py::upsert_image_segments` (max-position numbering, deletion cascade in `delete_source`) |
+| Elasticsearch `agentrag_segments` | Retrieval-only: BM25 + dense kNN + RRF hybrid. | `ingestion/stores/elasticsearch_store.py::{sparse,dense,hybrid}_search`, `retrieval/elasticsearch_retriever.py`, `generation/summary_service.py` (4 sites), `generation/mindmap_service.py` |
+
+**Rule:** PG is the durable spine + tool-API substrate. ES is the retrieval projection. Anything that needs ordered enumeration, deletion cascade, or content_hash dedupe goes through PG. Anything that needs ranked relevance goes through ES. Do NOT add a retrieval read against PG, and do NOT add a row-level join against ES.
+
+ES is rebuildable from PG (see `scripts/` — add `reindex_es.py` if a re-projection is ever needed). PG is NOT rebuildable from ES (loses original FK + position monotonicity).

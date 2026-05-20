@@ -4,8 +4,6 @@ Each node = one phase of the existing chat() loop. Helper methods on the
 shared AgentService instance handle the actual work; the graph supplies
 orchestration, conditional branching, and checkpointing.
 
-Backend flag: AGENT_BACKEND=langgraph in .env.
-
 Nodes:
     validate            → security gate
     memory              → ChatMemoryService.retrieve

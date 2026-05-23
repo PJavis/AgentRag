@@ -51,6 +51,49 @@ def _lang_instruction(question: str) -> str:
     return "Response language: English."
 
 
+_VERBOSE_TOKENS = (
+    "dài hơn", "chi tiết", "kỹ hơn", "kỹ càng", "tỉ mỉ", "đầy đủ hơn",
+    "mở rộng", "giải thích thêm", "nói rõ", "rõ hơn", "sâu hơn",
+    "thêm chi tiết", "expand", "elaborate", "in detail", "more detail",
+    "longer", "go deeper", "explain more",
+)
+
+# Summarization / overview intent — needs structured multi-section output even
+# without explicit "detailed" keyword. Trigger verbose mode automatically.
+_SUMMARY_TOKENS = (
+    "tóm tắt", "tổng hợp", "tổng quan", "khái quát", "overview",
+    "summary", "summarize", "summarise", "recap",
+    "trình bày", "trình bầy", "giới thiệu",
+    "nội dung tài liệu", "nội dung của tài liệu", "main points",
+    "key points", "the key", "phân tích",
+)
+
+
+def _is_verbose_followup(question: str) -> bool:
+    """Detect user asking for a longer / more detailed elaboration of the prior turn,
+    OR a summary/overview request that needs structured multi-section output."""
+    q = (question or "").lower()
+    return (
+        any(tok in q for tok in _VERBOSE_TOKENS)
+        or any(tok in q for tok in _SUMMARY_TOKENS)
+    )
+
+
+# Shared Markdown formatting rules. Both the semantic _answer prompt and the
+# structured AnswerSynthesizer use this so every assistant turn renders with
+# bold highlights / blockquote warnings / GFM tables / LaTeX formulas in the
+# ReactMarkdown frontend (remark-gfm + remark-math + rehype-katex).
+MARKDOWN_FORMAT_RULES = (
+    "FORMAT: `answer` field is Markdown. Required: "
+    "**bold** key terms (drug names, doses, lab values, diagnoses, percentages); "
+    "bullet lists `- ` for parallel facts; `### Heading` between sections; "
+    "GFM tables `| a | b |` for comparisons; LaTeX `$...$` or `$$...$$` for formulas "
+    "(eGFR, BMI, dose calc, ratios, statistics); "
+    "`> blockquote` only for safety warnings or contraindications. "
+    "Each section heading on its own line, body below. Never inline heading with body."
+)
+
+
 _CHITCHAT_SYSTEM_PROMPT = (
     "You are a warm, friendly research companion. The user is making small talk "
     "(greeting / thanks / casual remark) — reply briefly and naturally, like a friend. "
@@ -69,24 +112,47 @@ from src.agentrag.structured.pipeline import StructuredReasoningPipeline
 from src.agentrag.structured.query_classifier import QueryIntentClassifier
 
 
+_PRIMARY_ANSWER_KEYS = (
+    "answer", "summary", "response", "output", "text", "content",
+    "result", "explanation", "tóm_tắt", "câu_trả_lời",
+)
+
+
 def _find_answer_field(obj: Any, max_depth: int = 6) -> str | None:
-    """Find first non-empty 'answer' string in nested dict/list.
+    """Find first non-empty answer/summary/response string in nested dict/list.
 
     Some finetuned models ignore the prompt and wrap output in odd shapes
-    like {"search_results":[{"result":[{"answer":"..."}]}]}. Walk the tree
-    instead of giving up.
+    like {"search_results":[{"result":[{"answer":"..."}]}]} or simply switch
+    `answer` → `summary` when the question is a summarization request. Walk
+    the tree instead of giving up.
     """
     if max_depth <= 0:
         return None
     if isinstance(obj, dict):
-        ans = obj.get("answer")
-        if isinstance(ans, str) and ans.strip():
-            return ans.strip()
-        if isinstance(ans, dict):
-            nested = _find_answer_field(ans, max_depth - 1)
-            if nested:
-                return nested
-        for v in obj.values():
+        for key in _PRIMARY_ANSWER_KEYS:
+            v = obj.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+            if isinstance(v, dict):
+                nested = _find_answer_field(v, max_depth - 1)
+                if nested:
+                    return nested
+            if isinstance(v, list):
+                # Some models return content as list of strings/sections.
+                parts = []
+                for item in v:
+                    if isinstance(item, str) and item.strip():
+                        parts.append(item.strip())
+                    elif isinstance(item, dict):
+                        nested = _find_answer_field(item, max_depth - 1)
+                        if nested:
+                            parts.append(nested)
+                if parts:
+                    return "\n\n".join(parts)
+        # Fall back: recurse into remaining values.
+        for k, v in obj.items():
+            if k in _PRIMARY_ANSWER_KEYS:
+                continue
             if isinstance(v, (dict, list)):
                 nested = _find_answer_field(v, max_depth - 1)
                 if nested:
@@ -546,6 +612,7 @@ class AgentService:
         final_answer: dict[str, Any] | None,
         chat_history: list[dict[str, Any]] | None,
         memory_context: list[dict[str, Any]] | None = None,
+        verbosity: str | None = None,
     ) -> dict[str, Any]:
         if final_answer and final_answer.get("answer"):
             return {
@@ -554,15 +621,35 @@ class AgentService:
                 "highlights": final_answer.get("highlights", []),
             }
 
+        if verbosity == "detailed":
+            verbose = True
+        elif verbosity == "concise":
+            verbose = False
+        else:
+            verbose = _is_verbose_followup(question)
+        length_directive = (
+            "LENGTH: thorough, multi-paragraph. For summary/overview requests use "
+            "sections: Định nghĩa, Phân loại, Nguyên nhân, Chẩn đoán, Điều trị, Tiên lượng. "
+            if verbose
+            else
+            "LENGTH: concise — focus on the question. Still use **bold** and bullets when appropriate. "
+        )
         system_prompt = (
             f"{_lang_instruction(question)} "
             "Answer ONLY from the provided context. "
-            "Return JSON with keys: answer, citations, highlights. "
+            "OUTPUT SCHEMA (strict): {\"answer\": \"<markdown string>\", "
+            "\"citations\": [{\"document_title\": str, \"section_path\": str, "
+            "\"position\": int, \"content_hash\": str}], "
+            "\"highlights\": [\"sentence1\", \"sentence2\", ...]} . "
+            "The top-level keys MUST be exactly \"answer\", \"citations\", \"highlights\". "
+            "Do NOT name the top-level key after a tool, search method, or topic. "
+            "Do NOT output \"summary\", \"search_results\", \"search_hybrid_kg\", \"response\", \"output\". "
             "Each citation must include document_title, section_path, position, content_hash. "
             "highlights: array of 3-5 strings — the most important facts or takeaways from the answer, "
             "each a complete self-contained sentence. "
-            "In the answer text, wrap important medical/technical terms in **bold**. "
-            "Be concise and direct — answer the specific question, do not add background or general overviews. "
+            # Markdown formatting — frontend renders ReactMarkdown + GFM + KaTeX.
+            f"{MARKDOWN_FORMAT_RULES}"
+            f"{length_directive}"
             "When context contains multiple documents, focus on the document(s) directly relevant to the question; ignore unrelated documents. "
             "If the question is too vague to give a useful answer (e.g., which item, which document, or which aspect is missing), "
             "set answer to ONE focused clarifying question, citations to [], and highlights to []. "
@@ -581,23 +668,54 @@ class AgentService:
             "You MAY perform simple arithmetic (×, ÷, +, −) on numeric values explicitly stated in the context; "
             "show the calculation briefly (e.g. '10 × 3000 = 30,000 gold')."
         )
+        history_view = self.summarize_history(chat_history, limit=10)
+        # When verbose follow-up and ChatStructMem suppressed the slidng window,
+        # surface the last 2 turns trimmed to 1200 chars each so 7B models don't
+        # blow their context budget (was 4 turns × 4000 chars = 16k).
+        if verbose and not history_view and chat_history:
+            history_view = [
+                {
+                    "role": item.get("role"),
+                    "content": (item.get("content") or "")[:1200],
+                }
+                for item in chat_history[-2:]
+            ]
         answer_payload: dict[str, Any] = {
             "question": question,
-            "chat_history": self.summarize_history(chat_history, limit=10),
+            "chat_history": history_view,
             "context": packed_context,
-            "tool_trace_summary": [
-                {"tool_name": step["tool_name"], "tool_input": step["tool_input"]}
-                for step in tool_trace
-            ],
         }
         if memory_context:
             answer_payload["conversation_memory"] = memory_context
         user_prompt = json.dumps(answer_payload, ensure_ascii=True)
+        # Debug: log payload sizes to diagnose summarization failures.
+        import logging as _logging
+        _ctx_log = _logging.getLogger(__name__)
+        _ctx_log.info(
+            "_answer: question=%r packed_context_count=%d packed_chars=%d verbose=%s",
+            question[:80], len(packed_context),
+            sum(len(str(c.get("excerpt") or c.get("content") or "")) for c in packed_context),
+            verbose,
+        )
         answer, _latency_ms = await self.llm_gateway.json_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             task="answer",
         )
+        _ctx_log.info(
+            "_answer: raw_answer_keys=%s answer_field_len=%d",
+            list(answer.keys()) if isinstance(answer, dict) else type(answer).__name__,
+            len(str(answer.get("answer") or "")) if isinstance(answer, dict) else 0,
+        )
+        # Dump first 800 chars of raw answer for debugging.
+        try:
+            import json as _json
+            _ctx_log.info(
+                "_answer: raw_answer_dump=%s",
+                _json.dumps(answer, ensure_ascii=False)[:800],
+            )
+        except Exception:
+            pass
         # Recover answer if model returned wrong top-level shape.
         # Finetunes occasionally produce {"search_results":[...]} or
         # decide-shape {"done":false, "reflection":...} despite the answer prompt.
@@ -620,6 +738,10 @@ class AgentService:
                         break
                 if not fallback_text:
                     fallback_text = (
+                        "Tôi chưa tìm được thông tin chính xác cho câu hỏi này. Bạn có thể thử:\n\n"
+                        "- **\"Tóm tắt tài liệu\"** — xem tổng quan toàn bộ nội dung\n"
+                        "- Hỏi cụ thể hơn về một mục, trang, hoặc thuật ngữ\n"
+                        "- Dùng từ khoá có trong tài liệu (tên thuốc, chẩn đoán, hệ cơ quan)\n\n"
                         "Tôi không tìm thấy thông tin đủ rõ trong tài liệu để trả lời câu hỏi này. "
                         "Bạn có thể hỏi cụ thể hơn về một mục hoặc trang nào không?"
                     )

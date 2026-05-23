@@ -175,6 +175,28 @@ export function TraceDialog({ open, onOpenChange, message }: TraceDialogProps) {
 
         <ScrollArea className="flex-1 -mx-6 px-6">
           <div className="space-y-5 py-2">
+            {path === 'summary' && (
+              <div className="border rounded-lg p-3 bg-amber-50/40 dark:bg-amber-950/20 border-amber-200/60 dark:border-amber-900/40 text-sm">
+                <div className="font-medium text-amber-900 dark:text-amber-200 mb-1">
+                  📋 Tóm tắt nhanh
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Câu trả lời này được sinh bằng <code className="bg-muted px-1 rounded">SummaryService</code> —
+                  không đi qua agent loop. Lấy top chunks từ document_title đã pin →
+                  1 LLM call sinh markdown structured. Để có trace chi tiết, hỏi câu cụ thể hơn.
+                </div>
+              </div>
+            )}
+            {path === 'chitchat' && (
+              <div className="border rounded-lg p-3 bg-blue-50/40 dark:bg-blue-950/20 border-blue-200/60 dark:border-blue-900/40 text-sm">
+                <div className="font-medium text-blue-900 dark:text-blue-200 mb-1">
+                  💬 Chit-chat
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Tin nhắn ngắn / xã giao — bỏ qua retrieval, dùng model rẻ trả lời trực tiếp.
+                </div>
+              </div>
+            )}
             {/* Stage graph */}
             <div>
               <div className="text-xs font-medium mb-2 flex items-center gap-1.5">

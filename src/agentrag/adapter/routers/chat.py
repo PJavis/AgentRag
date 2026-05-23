@@ -24,6 +24,7 @@ from src.agentrag.adapter.models import (
     CreateSourceChatSessionRequest,
     ExecuteChatRequest,
     ExecuteChatResponse,
+    RegenerateChatRequest,
     SendMessageRequest,
     UpdateSessionRequest,
 )
@@ -99,6 +100,28 @@ _FILENAME_HINT_RE = re.compile(
 )
 
 
+async def _list_notebook_document_titles(notebook_id: str | None, limit: int = 10) -> list[str]:
+    """Return Document.title list for sources linked to the given notebook."""
+    if not notebook_id:
+        return []
+    try:
+        nb_uuid = uuid.UUID(notebook_id)
+    except (TypeError, ValueError):
+        return []
+    async with AsyncSessionLocal() as session:
+        q = (
+            select(Document.title)
+            .join(
+                adapter_notebook_sources,
+                adapter_notebook_sources.c.document_id == Document.id,
+            )
+            .where(adapter_notebook_sources.c.notebook_id == nb_uuid)
+            .limit(limit)
+        )
+        rows = (await session.execute(q)).all()
+    return [r[0] for r in rows if r and r[0]]
+
+
 async def _resolve_document_hint(question: str, notebook_id: str | None) -> str | None:
     """Scan the user message for filename hints ('lec10', 'chương 3', etc.)
     and return the best-matching Document.title from the notebook.
@@ -156,6 +179,42 @@ async def _resolve_document_hint(question: str, notebook_id: str | None) -> str 
         ).limit(5)
         rows = (await session.execute(q2)).all()
         return rows[0][0] if rows else None
+
+
+def _summary_to_markdown(summary: dict) -> str:
+    """Render a SummaryService.generate() result into a Markdown chat answer."""
+    title = summary.get("title") or "Tóm tắt"
+    parts: list[str] = [f"## Tóm tắt: {title}\n"]
+    overview = summary.get("overview")
+    if isinstance(overview, str) and overview.strip():
+        parts.append(overview.strip() + "\n")
+    sections = summary.get("sections") or []
+    for sec in sections:
+        heading = sec.get("heading") or ""
+        if heading:
+            parts.append(f"\n### {heading}\n")
+        body_text = sec.get("summary")
+        if isinstance(body_text, str) and body_text.strip():
+            parts.append(body_text.strip())
+        key_points = sec.get("key_points") or []
+        if isinstance(key_points, list) and key_points:
+            parts.append("")
+            for kp in key_points:
+                if isinstance(kp, str) and kp.strip():
+                    clean = kp.strip().lstrip("-•* ").strip()
+                    parts.append(f"- {clean}")
+        important_terms = sec.get("important_terms") or []
+        if isinstance(important_terms, list) and important_terms:
+            parts.append("\n**Thuật ngữ quan trọng:**")
+            for term in important_terms:
+                if isinstance(term, dict):
+                    t = (term.get("term") or "").strip()
+                    d = (term.get("definition") or "").strip()
+                    if t and d:
+                        parts.append(f"- **{t}** — {d}")
+                    elif t:
+                        parts.append(f"- **{t}**")
+    return "\n".join(parts).strip() or "Không trích xuất được tóm tắt từ tài liệu."
 
 
 # ── Notebook chat sessions ─────────────────────────────────────────────────────
@@ -246,6 +305,12 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     except Exception:
         _log.exception("execute_chat: _resolve_document_hint failed")
 
+    # Summary intent: do NOT auto-pin here — the SummaryService routing block
+    # below handles single-doc (when filename hint resolved) vs multi-doc
+    # (iterate all notebook sources) on its own. For non-summary chat we want
+    # cross-document retrieval, so leave document_title=None unless explicitly
+    # hinted.
+
     history: list[dict] = []
     user_appended_ok = False
     try:
@@ -278,26 +343,89 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
                 _log.exception("execute_chat: domain_router.classify failed")
                 effective_domain_filter = None
 
-    agent = get_agent_service()
+    # Summary intent + resolved document → bypass agent loop, use the dedicated
+    # SummaryService which iterates a structured medical template per section.
+    # The 7B agent JSON-output mode is unreliable for full-doc summaries; the
+    # dedicated service produces deterministic markdown output.
+    # Multi-doc: if notebook has 2-5 sources, summarize all and merge.
+    summary_routed = False
+    result: dict
     try:
-        result = await agent.chat(
-            question=body.message,
-            document_title=document_title,
-            chat_history=history,
-            conversation_id=body.session_id,
-            domain_filter=effective_domain_filter,
-        )
-    except Exception as exc:
-        _log.exception("execute_chat: agent.chat failed")
-        result = {
-            "answer": f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}",
-            "citations": [],
-            "tool_trace": [],
-            "timings_ms": {},
-            "reasoning_path": "error",
-            "plan_subqueries": [],
-            "sql_query": None,
-        }
+        from src.agentrag.agent.service import _is_verbose_followup
+        if _is_verbose_followup(body.message):
+            from src.agentrag.generation.summary_service import SummaryService
+            # Collect doc titles to summarize. If filename hint matched →
+            # single-doc; else all linked sources (capped to 5).
+            doc_titles: list[str] = []
+            if document_title:
+                doc_titles = [document_title]
+            else:
+                doc_titles = await _list_notebook_document_titles(notebook_id, limit=5)
+            if doc_titles:
+                _log.info(
+                    "execute_chat: SummaryService multi-doc → %d titles: %s",
+                    len(doc_titles), [t[:40] for t in doc_titles],
+                )
+                svc = SummaryService()
+                if len(doc_titles) == 1:
+                    summary = await svc.generate(document_title=doc_titles[0], style="study_note")
+                    markdown = _summary_to_markdown(summary)
+                else:
+                    # Run all summaries in parallel; merge into one Markdown answer.
+                    summaries = await asyncio.gather(
+                        *[svc.generate(document_title=t, style="study_note") for t in doc_titles],
+                        return_exceptions=True,
+                    )
+                    parts: list[str] = [f"## Tóm tắt notebook ({len(doc_titles)} tài liệu)\n"]
+                    for i, s in enumerate(summaries, 1):
+                        if isinstance(s, Exception):
+                            parts.append(f"\n### {i}. {doc_titles[i-1]}\n\n⚠️ Lỗi: {s}\n")
+                            continue
+                        parts.append(f"\n---\n\n### {i}. {doc_titles[i-1]}\n")
+                        md_one = _summary_to_markdown(s)
+                        # Strip duplicate top-level "## Tóm tắt:" heading
+                        if md_one.startswith("## "):
+                            nl = md_one.find("\n")
+                            if nl > 0:
+                                md_one = md_one[nl+1:].lstrip()
+                        parts.append(md_one)
+                    markdown = "\n".join(parts).strip()
+                result = {
+                    "answer": markdown,
+                    "citations": [],
+                    "tool_trace": [],
+                    "timings_ms": {},
+                    "reasoning_path": "summary",
+                    "plan_subqueries": [],
+                    "sql_query": None,
+                    "highlights": [],
+                }
+                summary_routed = True
+    except Exception:
+        _log.exception("execute_chat: SummaryService routing failed, falling back to agent")
+
+    if not summary_routed:
+        agent = get_agent_service()
+        try:
+            result = await agent.chat(
+                question=body.message,
+                document_title=document_title,
+                chat_history=history,
+                conversation_id=body.session_id,
+                domain_filter=effective_domain_filter,
+                verbosity=body.verbosity,
+            )
+        except Exception as exc:
+            _log.exception("execute_chat: agent.chat failed")
+            result = {
+                "answer": f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}",
+                "citations": [],
+                "tool_trace": [],
+                "timings_ms": {},
+                "reasoning_path": "error",
+                "plan_subqueries": [],
+                "sql_query": None,
+            }
 
     appended: dict | None = None
     try:
@@ -408,9 +536,399 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         ).model_dump()
 
 
+@notebook_router.post("/regenerate")
+async def regenerate_chat(body: RegenerateChatRequest, request: Request):
+    """Re-run the agent for the user message that produced the given assistant
+    turn. Deletes the stale assistant message, runs `agent.chat()` again with
+    the same question + truncated history, appends the fresh assistant turn,
+    returns full message list."""
+    import logging
+    _log = logging.getLogger(__name__)
+    store = ConversationStore()
+    conv = await store.get_conversation(body.session_id)
+    if not conv:
+        raise HTTPException(404, "Session not found")
+
+    msgs = await store.list_messages(body.session_id, limit=1000)
+    target_idx = next(
+        (i for i, m in enumerate(msgs) if m.get("message_id") == body.assistant_message_id),
+        -1,
+    )
+    if target_idx < 0:
+        raise HTTPException(404, "Assistant message not found in session")
+    if msgs[target_idx].get("role") != "assistant":
+        raise HTTPException(400, "Target message is not an assistant turn")
+
+    user_idx = target_idx - 1
+    while user_idx >= 0 and msgs[user_idx].get("role") != "user":
+        user_idx -= 1
+    if user_idx < 0:
+        raise HTTPException(400, "No preceding user message to regenerate from")
+
+    user_question = msgs[user_idx].get("content", "")
+    history = msgs[:user_idx + 1]  # keep prior turns + user msg, drop everything after
+
+    # Drop the stale assistant turn + ALL subsequent turns (user + assistant).
+    # Regenerating from an old turn invalidates the downstream conversation
+    # branch — keeping orphaned follow-ups produces broken history on the next
+    # turn (agent thinks user already asked X when they did not).
+    for stale in msgs[target_idx:]:
+        try:
+            await store.delete_message(body.session_id, stale["message_id"])
+        except Exception:
+            _log.exception("regenerate: delete_message failed for %s", stale.get("message_id"))
+
+    # Resolve document hint + domain filter (same as execute_chat)
+    notebook_id = (conv.get("extra_metadata") or {}).get("notebook_id")
+    document_title: str | None = None
+    try:
+        document_title = await _resolve_document_hint(user_question, notebook_id)
+    except Exception:
+        _log.exception("regenerate: _resolve_document_hint failed")
+
+    # (Summary-intent multi-doc routing is handled in the SummaryService block below.)
+
+    effective_domain_filter = body.domain_filter
+    if not effective_domain_filter:
+        from src.agentrag.config import settings as _settings
+        if _settings.DOMAIN_FILTER_ENABLED:
+            try:
+                from src.agentrag.services.container import get_container
+                route = await get_container().domain_router.classify(user_question)
+                if route.systems or route.specialties:
+                    effective_domain_filter = {
+                        **({"system": route.systems[0]} if route.systems else {}),
+                        **({"specialties": route.specialties} if route.specialties else {}),
+                    }
+            except Exception:
+                _log.exception("regenerate: domain_router.classify failed")
+
+    # Same summary-intent routing as execute_chat — single-doc OR multi-doc.
+    summary_routed = False
+    result: dict
+    try:
+        from src.agentrag.agent.service import _is_verbose_followup
+        if _is_verbose_followup(user_question):
+            from src.agentrag.generation.summary_service import SummaryService
+            doc_titles = [document_title] if document_title else await _list_notebook_document_titles(notebook_id, limit=5)
+            if doc_titles:
+                _log.info(
+                    "regenerate: SummaryService multi-doc → %d titles",
+                    len(doc_titles),
+                )
+                svc = SummaryService()
+                if len(doc_titles) == 1:
+                    summary = await svc.generate(document_title=doc_titles[0], style="study_note")
+                    markdown = _summary_to_markdown(summary)
+                else:
+                    summaries = await asyncio.gather(
+                        *[svc.generate(document_title=t, style="study_note") for t in doc_titles],
+                        return_exceptions=True,
+                    )
+                    parts: list[str] = [f"## Tóm tắt notebook ({len(doc_titles)} tài liệu)\n"]
+                    for i, s in enumerate(summaries, 1):
+                        if isinstance(s, Exception):
+                            parts.append(f"\n### {i}. {doc_titles[i-1]}\n\n⚠️ Lỗi: {s}\n")
+                            continue
+                        parts.append(f"\n---\n\n### {i}. {doc_titles[i-1]}\n")
+                        md_one = _summary_to_markdown(s)
+                        if md_one.startswith("## "):
+                            nl = md_one.find("\n")
+                            if nl > 0:
+                                md_one = md_one[nl+1:].lstrip()
+                        parts.append(md_one)
+                    markdown = "\n".join(parts).strip()
+                result = {
+                    "answer": markdown,
+                    "citations": [],
+                    "tool_trace": [],
+                    "timings_ms": {},
+                    "reasoning_path": "summary",
+                    "plan_subqueries": [],
+                    "sql_query": None,
+                    "highlights": [],
+                }
+                summary_routed = True
+    except Exception:
+        _log.exception("regenerate: SummaryService routing failed, falling back to agent")
+
+    if not summary_routed:
+        agent = get_agent_service()
+        try:
+            result = await agent.chat(
+                question=user_question,
+                document_title=document_title,
+                chat_history=history,
+                conversation_id=body.session_id,
+                domain_filter=effective_domain_filter,
+                verbosity=body.verbosity,
+            )
+        except Exception as exc:
+            _log.exception("regenerate: agent.chat failed")
+            result = {
+                "answer": f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}",
+                "citations": [],
+                "tool_trace": [],
+                "timings_ms": {},
+                "reasoning_path": "error",
+                "plan_subqueries": [],
+                "sql_query": None,
+            }
+
+    appended: dict | None = None
+    try:
+        appended = await store.append_message(
+            body.session_id,
+            role="assistant",
+            content=result.get("answer", ""),
+            citations=result.get("citations", []),
+            tool_trace=result.get("tool_trace", []),
+            timings_ms=result.get("timings_ms", {}),
+            extra_metadata={
+                "reasoning_path": result.get("reasoning_path"),
+                "plan_subqueries": result.get("plan_subqueries") or [],
+                "sql_query": result.get("sql_query"),
+                "regenerated": True,
+            },
+        )
+    except Exception:
+        _log.exception("regenerate: append_message failed")
+
+    # Follow-ups (best-effort, mirrors execute_chat)
+    follow_ups: list[str] = []
+    try:
+        from src.agentrag.agent.followups import generate_followups
+        from src.agentrag.services.container import get_container
+        follow_ups = await generate_followups(
+            question=user_question,
+            answer=result.get("answer", ""),
+            citations=result.get("citations") or [],
+            llm_gateway=get_container().llm,
+        )
+    except Exception:
+        _log.exception("regenerate: generate_followups failed")
+    if follow_ups and isinstance(appended, dict):
+        try:
+            from src.agentrag.database import AsyncSessionLocal as _ASL
+            from src.agentrag.database.models import ChatMessage as _CM
+            msg_id = appended.get("message_id")
+            if msg_id:
+                async with _ASL() as _s:
+                    row = await _s.get(_CM, uuid.UUID(msg_id))
+                    if row is not None:
+                        meta = dict(row.extra_metadata or {})
+                        meta["follow_ups"] = follow_ups
+                        row.extra_metadata = meta
+                        await _s.commit()
+                try:
+                    await store._delete_messages_cache(body.session_id)
+                except Exception:
+                    pass
+        except Exception:
+            _log.exception("regenerate: persist follow_ups failed")
+
+    try:
+        msgs = await store.list_messages(body.session_id, limit=1000)
+        return ExecuteChatResponse(
+            session_id=body.session_id,
+            messages=[_msg_to_chat(m) for m in msgs],
+        ).model_dump()
+    except Exception:
+        _log.exception("regenerate: final list_messages failed")
+        raise HTTPException(500, "Regenerate succeeded but final read failed")
+
+
 @notebook_router.post("/context")
 async def build_context(body: dict):
     return {"context": "", "source_count": 0, "token_count": 0, "char_count": 0}
+
+
+@notebook_router.post("/execute-stream")
+async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
+    """SSE variant of /chat/execute. Emits `event: token` chunks for the
+    semantic answer path; falls back to a single `event: done` for the summary
+    path (which is already fast and produces one structured block)."""
+    import logging
+    import json as _json
+    _log = logging.getLogger(__name__)
+
+    store = ConversationStore()
+    conv = await store.get_conversation(body.session_id)
+    if not conv:
+        raise HTTPException(404, "Session not found")
+
+    notebook_id = (conv.get("extra_metadata") or {}).get("notebook_id")
+    document_title: str | None = None
+    try:
+        document_title = await _resolve_document_hint(body.message, notebook_id)
+    except Exception:
+        _log.exception("execute_chat_stream: _resolve_document_hint failed")
+
+    history: list[dict] = []
+    try:
+        history = await store.list_messages(body.session_id, limit=20)
+    except Exception:
+        pass
+    try:
+        await store.append_message(body.session_id, role="user", content=body.message)
+    except Exception:
+        pass
+
+    effective_domain_filter = body.domain_filter
+    if not effective_domain_filter:
+        from src.agentrag.config import settings as _settings
+        if _settings.DOMAIN_FILTER_ENABLED:
+            try:
+                from src.agentrag.services.container import get_container
+                route = await get_container().domain_router.classify(body.message)
+                if route.systems or route.specialties:
+                    effective_domain_filter = {
+                        **({"system": route.systems[0]} if route.systems else {}),
+                        **({"specialties": route.specialties} if route.specialties else {}),
+                    }
+            except Exception:
+                _log.exception("execute_chat_stream: domain_router.classify failed")
+
+    # Summary intent → bypass agent loop. Emit a single block via SSE for UX
+    # consistency (frontend just appends and renders).
+    from src.agentrag.agent.service import _is_verbose_followup
+    is_summary = _is_verbose_followup(body.message)
+    summary_titles: list[str] = []
+    if is_summary:
+        summary_titles = [document_title] if document_title else await _list_notebook_document_titles(notebook_id, limit=5)
+
+    def _sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def event_generator():
+        try:
+            if is_summary and summary_titles:
+                yield _sse("status", {"step": "summary", "doc_count": len(summary_titles)})
+                from src.agentrag.generation.summary_service import (
+                    SummaryService,
+                    _MEDICAL_TEMPLATE_VI,
+                )
+                svc = SummaryService()
+                acc_parts: list[str] = []
+
+                async def stream_doc(doc_title: str, doc_idx: int | None):
+                    """Yield ('token'|'status', payload) per section so the UI
+                    sees incremental progress instead of a long blank wait."""
+                    if doc_idx is None:
+                        prefix = f"## Tóm tắt: {doc_title}\n\n"
+                    else:
+                        prefix = f"### {doc_idx}. {doc_title}\n\n"
+                    acc_parts.append(prefix)
+                    yield ("token", prefix)
+
+                    overview = await svc._generate_overview(doc_title)
+                    if overview:
+                        chunk = overview.strip() + "\n\n"
+                        acc_parts.append(chunk)
+                        yield ("token", chunk)
+
+                    image_chunks = await svc._fetch_image_chunks(doc_title)
+                    for heading in _MEDICAL_TEMPLATE_VI:
+                        yield ("status", {"step": "section", "heading": heading, "doc": doc_title})
+                        sec = await svc._summarize_section(doc_title, heading, image_chunks)
+                        if not (sec.get("summary") or sec.get("key_points")):
+                            continue
+                        lines = [f"#### {sec.get('heading') or heading}\n"]
+                        sec_sum = (sec.get("summary") or "").strip()
+                        if sec_sum:
+                            lines.append(sec_sum + "\n")
+                        for kp in (sec.get("key_points") or []):
+                            if isinstance(kp, str) and kp.strip():
+                                clean = kp.strip().lstrip("-•* ").strip()
+                                lines.append(f"- {clean}")
+                        terms = sec.get("important_terms") or []
+                        if terms:
+                            lines.append("\n**Thuật ngữ quan trọng:**")
+                            for term in terms:
+                                if isinstance(term, dict):
+                                    tn = (term.get("term") or "").strip()
+                                    td = (term.get("definition") or "").strip()
+                                    if tn and td:
+                                        lines.append(f"- **{tn}** — {td}")
+                                    elif tn:
+                                        lines.append(f"- **{tn}**")
+                        lines.append("\n")
+                        block = "\n".join(lines)
+                        acc_parts.append(block)
+                        yield ("token", block)
+
+                if len(summary_titles) == 1:
+                    async for kind, payload in stream_doc(summary_titles[0], None):
+                        if kind == "token":
+                            yield _sse("token", {"text": payload})
+                        else:
+                            yield _sse("status", payload)
+                else:
+                    header = f"## Tóm tắt notebook ({len(summary_titles)} tài liệu)\n\n"
+                    acc_parts.append(header)
+                    yield _sse("token", {"text": header})
+                    for idx, dt in enumerate(summary_titles, 1):
+                        sep = "\n---\n\n"
+                        acc_parts.append(sep)
+                        yield _sse("token", {"text": sep})
+                        async for kind, payload in stream_doc(dt, idx):
+                            if kind == "token":
+                                yield _sse("token", {"text": payload})
+                            else:
+                                yield _sse("status", payload)
+
+                answer = "".join(acc_parts).strip()
+                try:
+                    await store.append_message(
+                        body.session_id, role="assistant", content=answer,
+                        extra_metadata={"reasoning_path": "summary"},
+                    )
+                except Exception:
+                    _log.exception("execute_chat_stream: append summary failed")
+                yield _sse("done", {"reasoning_path": "summary", "answer_length": len(answer)})
+                return
+
+            # Semantic path — stream via agent.chat_stream.
+            from src.agentrag.retrieval.context import set_domain_filter
+            set_domain_filter(effective_domain_filter)
+            agent = get_agent_service()
+            collected: list[str] = []
+            async for chunk in agent.chat_stream(
+                question=body.message,
+                document_title=document_title,
+                chat_history=history,
+                conversation_id=body.session_id,
+            ):
+                if "event: token" in chunk:
+                    try:
+                        data_line = chunk.split("data: ", 1)[-1].strip()
+                        token = _json.loads(data_line).get("text", "")
+                        if token:
+                            collected.append(token)
+                    except Exception:
+                        pass
+                yield chunk
+            full_answer = "".join(collected)
+            if full_answer:
+                try:
+                    await store.append_message(
+                        body.session_id, role="assistant", content=full_answer,
+                        extra_metadata={"reasoning_path": "semantic"},
+                    )
+                except Exception:
+                    _log.exception("execute_chat_stream: append assistant failed")
+        except Exception as exc:
+            _log.exception("execute_chat_stream: error")
+            yield _sse("error", {"detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Source-based chat (streaming) ─────────────────────────────────────────────
@@ -765,6 +1283,22 @@ async def submit_chat_feedback(body: dict, request: Request):
                 reasoning_path=body.get("reasoning_path"),
             ))
         await session.commit()
+    # Emit activity event so feedback shows up in user's activity feed.
+    try:
+        from src.agentrag.observability.activity import record_event
+        await record_event(
+            user_id=user_id if user_id != "anonymous" else None,
+            event_type="chat_feedback",
+            target_kind="chat_turn",
+            target_id=str(turn_id),
+            payload={
+                "rating": rating_int,
+                "session_id": body.get("session_id"),
+                "reasoning_path": body.get("reasoning_path"),
+            },
+        )
+    except Exception:
+        pass
     return {"ok": True, "rating": rating_int}
 
 

@@ -65,6 +65,10 @@ class AgentLLM:
             temperature=self.temperature,
             max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
+            # Force Ollama to use a larger context window. The default 8192
+            # truncates long prompts (context + history + rules) silently which
+            # corrupts model output. 32768 fits 8 GB VRAM for 7B Q4 models.
+            extra_body={"options": {"num_ctx": settings.LLM_OLLAMA_NUM_CTX}},
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -118,6 +122,7 @@ class AgentLLM:
             model=self.model,
             temperature=self.temperature,
             max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
+            extra_body={"options": {"num_ctx": settings.LLM_OLLAMA_NUM_CTX}},
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -146,6 +151,7 @@ class AgentLLM:
             temperature=self.temperature,
             max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
             stream=True,
+            extra_body={"options": {"num_ctx": settings.LLM_OLLAMA_NUM_CTX}},
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

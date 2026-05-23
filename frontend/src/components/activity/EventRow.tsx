@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { Bot, FileUp, Search, CheckCircle, XCircle } from 'lucide-react'
+import { Bot, FileUp, Search, CheckCircle, XCircle, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import type { ActivityEvent } from '@/lib/types/api'
@@ -12,6 +12,7 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   ingest_done: CheckCircle,
   ingest_failed: XCircle,
   search: Search,
+  chat_feedback: ThumbsUp,
 }
 
 interface EventRowProps {
@@ -21,7 +22,10 @@ interface EventRowProps {
 
 export function EventRow({ event, onTrace }: EventRowProps) {
   const router = useRouter()
-  const Icon = ICONS[event.event_type] ?? Bot
+  let Icon = ICONS[event.event_type] ?? Bot
+  if (event.event_type === 'chat_feedback' && (event.payload as Record<string, unknown>)?.rating === -1) {
+    Icon = ThumbsDown
+  }
   const time = event.created_at
     ? new Date(event.created_at).toLocaleTimeString(undefined, { hour12: false })
     : ''
@@ -53,6 +57,10 @@ export function EventRow({ event, onTrace }: EventRowProps) {
     summary = String(p.error ?? '').slice(0, 100)
   } else if (event.event_type === 'search') {
     summary = `"${p.query ?? ''}" · ${p.mode ?? ''} · ${p.hit_count ?? 0} hits`
+  } else if (event.event_type === 'chat_feedback') {
+    const rating = Number(p.rating ?? 0)
+    summary = rating > 0 ? '👍 Like' : '👎 Dislike'
+    if (p.reasoning_path) summary += ` · ${p.reasoning_path}`
   }
 
   return (

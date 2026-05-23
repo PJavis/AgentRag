@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNotebookChat } from '@/lib/hooks/useNotebookChat'
 import { useNotes } from '@/lib/hooks/use-notes'
 import { ChatPanel } from '@/components/source/ChatPanel'
@@ -16,9 +16,11 @@ interface ChatColumnProps {
   contextSelections: ContextSelections
   sources: SourceListResponse[]
   sourcesLoading: boolean
+  pendingMessage?: { text: string; id: number } | null
+  onPendingHandled?: () => void
 }
 
-export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoading }: ChatColumnProps) {
+export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoading, pendingMessage, onPendingHandled }: ChatColumnProps) {
   const { t } = useTranslation()
 
   // Fetch notes for this notebook
@@ -65,6 +67,17 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
     }
   }, [sources, notes, contextSelections, chat.tokenCount, chat.charCount])
 
+  // Watch parent-supplied pending message (e.g. "Tóm tắt nhanh" click in
+  // SourcesColumn) and dispatch it through the chat hook. The `id` field is a
+  // monotonic counter so React triggers the effect even when the same source
+  // is summarized twice in a row.
+  useEffect(() => {
+    if (!pendingMessage?.text) return
+    chat.sendMessageStreaming(pendingMessage.text)
+    onPendingHandled?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMessage?.id])
+
   // Show loading state while sources/notes are being fetched
   if (sourcesLoading || notesLoading) {
     return (
@@ -98,7 +111,8 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
       messages={chat.messages}
       isStreaming={chat.isSending}
       contextIndicators={null}
-      onSendMessage={(message, modelOverride, domainFilter) => chat.sendMessage(message, modelOverride, domainFilter)}
+      onSendMessage={(message, modelOverride, domainFilter, verbosity) => chat.sendMessageStreaming(message, modelOverride, domainFilter, verbosity)}
+      onRegenerateMessage={(messageId, domainFilter, verbosity) => chat.regenerateMessage(messageId, domainFilter, verbosity)}
       modelOverride={chat.currentSession?.model_override ?? chat.pendingModelOverride ?? undefined}
       onModelChange={(model) => chat.setModelOverride(model ?? null)}
       sessions={chat.sessions}

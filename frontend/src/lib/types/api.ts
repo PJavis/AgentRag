@@ -270,6 +270,7 @@ export type ActivityEventType =
   | 'ingest_done'
   | 'ingest_failed'
   | 'search'
+  | 'chat_feedback'
 
 export interface ActivityEvent {
   id: string
@@ -287,6 +288,7 @@ export interface ActivityCounts {
   ingest_done?: number
   ingest_failed?: number
   search?: number
+  chat_feedback?: number
 }
 
 export interface ActivityHeatmapCell {
@@ -323,6 +325,7 @@ export interface SendNotebookChatMessageRequest {
   }
   model_override?: string
   domain_filter?: DomainFilterValue | null
+  verbosity?: 'concise' | 'detailed' | null
 }
 
 export interface BuildContextRequest {

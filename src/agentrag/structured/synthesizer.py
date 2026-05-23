@@ -30,6 +30,8 @@ Rules:
 - Return JSON: {{"answer": str, "citations": list}}
 - Each citation must include: {{"document_title": str, "section_path": str, "content_hash": str}}
 - Only cite sources that actually appear in the provenance list.
+
+{markdown_rules}
 """
 
 
@@ -62,7 +64,11 @@ class AnswerSynthesizer:
             if _VI_RE.search(question)
             else "Response language: English."
         )
-        system_prompt = _SYNTH_SYSTEM_TEMPLATE.format(lang_instruction=lang_instruction)
+        from src.agentrag.agent.service import MARKDOWN_FORMAT_RULES
+        system_prompt = _SYNTH_SYSTEM_TEMPLATE.format(
+            lang_instruction=lang_instruction,
+            markdown_rules=MARKDOWN_FORMAT_RULES,
+        )
 
         formatted = self._format_result(sql_result.result_rows, query_type)
         provenance_context = self._build_provenance_context(

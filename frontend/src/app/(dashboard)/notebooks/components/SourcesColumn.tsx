@@ -32,6 +32,7 @@ interface SourcesColumnProps {
   onRefresh?: () => void
   contextSelections?: Record<string, ContextMode>
   onContextModeChange?: (sourceId: string, mode: ContextMode) => void
+  onQuickSummary?: (sourceTitle: string) => void
   // Pagination props
   hasNextPage?: boolean
   isFetchingNextPage?: boolean
@@ -45,6 +46,7 @@ export function SourcesColumn({
   onRefresh,
   contextSelections,
   onContextModeChange,
+  onQuickSummary,
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
@@ -204,6 +206,7 @@ export function SourcesColumn({
                     onRetry={handleRetry}
                     onRemoveFromNotebook={handleRemoveFromNotebook}
                     onRefresh={onRefresh}
+                    onQuickSummary={onQuickSummary}
                     showRemoveFromNotebook={true}
                     contextMode={contextSelections?.[source.id]}
                     onContextModeChange={onContextModeChange

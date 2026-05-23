@@ -60,7 +60,14 @@ class Document(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     project = relationship("Project", back_populates="documents")
-    segments = relationship("Segment", back_populates="document")
+    # cascade="all, delete-orphan" makes session.delete(document) emit explicit
+    # DELETE for child Segments instead of UPDATE segments SET document_id=NULL
+    # (which violates segments.document_id NOT NULL constraint).
+    segments = relationship(
+        "Segment",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
 
 class Segment(Base):
     __tablename__ = "segments"

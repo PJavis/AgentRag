@@ -47,6 +47,7 @@ class ChatState(TypedDict, total=False):
     document_title: Optional[str]
     chat_history: list[dict[str, Any]]
     conversation_id: Optional[str]
+    verbosity: Optional[str]            # "concise" | "detailed" | None (auto)
     total_started: float
 
     # Intermediate
@@ -148,10 +149,15 @@ async def structured_run(state: ChatState) -> dict[str, Any]:
 
 
 async def semantic_plan(state: ChatState) -> dict[str, Any]:
-    if not (
-        settings.AGENT_PLAN_THEN_EXECUTE_ENABLED
-        and len(state["question"].strip()) >= settings.AGENT_PLAN_TRIGGER_MIN_CHARS
-    ):
+    from src.agentrag.agent.service import _is_verbose_followup
+    # Trigger planner when:
+    #   - feature enabled AND
+    #   - question is long enough, OR is a summary/verbose intent (short
+    #     "tóm tắt tài liệu" still needs multi-subquery fan-out to gather
+    #     enough context for a structured overview).
+    long_enough = len(state["question"].strip()) >= settings.AGENT_PLAN_TRIGGER_MIN_CHARS
+    summary_intent = _is_verbose_followup(state["question"]) or state.get("verbosity") == "detailed"
+    if not (settings.AGENT_PLAN_THEN_EXECUTE_ENABLED and (long_enough or summary_intent)):
         return {"plan_subqueries": [], "plan_latency_ms": 0.0}
     started = time.perf_counter()
     subs = await _INNER._plan_subqueries(state["question"], state.get("document_title"))
@@ -308,6 +314,7 @@ async def answer_node(state: ChatState) -> dict[str, Any]:
         final_answer=final,
         chat_history=state.get("chat_history"),
         memory_context=state.get("memory_context"),
+        verbosity=state.get("verbosity"),
     )
     return {
         "answer": out.get("answer", ""),
@@ -428,12 +435,34 @@ class GraphAgentService:
         chat_history: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
         domain_filter: dict[str, Any] | None = None,
+        verbosity: str | None = None,
     ) -> dict[str, Any]:
+        # Verbose / summary follow-ups like "viết dài hơn được không?" have no
+        # domain terms → retrieval misses everything. Rewrite the question by
+        # prepending the most recent prior user question so the retriever
+        # (planner + tool calls) has something to match against. Keep the
+        # rewrite simple natural Vietnamese — bracketed payloads confuse 7B
+        # JSON models.
+        from src.agentrag.agent.service import _is_verbose_followup
+        effective_question = question
+        if (
+            _is_verbose_followup(question)
+            and chat_history
+            and len(question.strip()) < 80
+        ):
+            prior_user = next(
+                (m.get("content", "") for m in reversed(chat_history)
+                 if m.get("role") == "user" and (m.get("content") or "").strip() != question.strip()),
+                None,
+            )
+            if prior_user:
+                effective_question = f"{prior_user} (yêu cầu chi tiết hơn)"
         initial: ChatState = {
-            "question": question,
+            "question": effective_question,
             "document_title": document_title,
             "chat_history": chat_history or [],
             "conversation_id": conversation_id,
+            "verbosity": verbosity,
         }
         # S5 — propagate domain_filter via ContextVar so AgentTools.search_*
         # picks it up downstream (same mechanism as loop backend).

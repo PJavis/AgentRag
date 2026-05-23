@@ -7,6 +7,8 @@ import { getApiErrorMessage } from '@/lib/utils/error-handler'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { chatApi } from '@/lib/api/chat'
 import { QUERY_KEYS } from '@/lib/api/query-client'
+import { getApiUrl } from '@/lib/config'
+import { useAuthStore } from '@/lib/stores/auth-store'
 import {
   NotebookChatMessage,
   CreateNotebookChatSessionRequest,
@@ -181,7 +183,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
   const sendMessage = useCallback(async (
     message: string,
     modelOverride?: string,
-    domainFilter?: DomainFilterValue | null
+    domainFilter?: DomainFilterValue | null,
+    verbosity?: 'concise' | 'detailed' | null
   ) => {
     let sessionId = currentSessionId
 
@@ -240,7 +243,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
         message,
         context,
         model_override: modelOverride ?? (currentSession?.model_override ?? undefined),
-        domain_filter: normalizedDomainFilter
+        domain_filter: normalizedDomainFilter,
+        verbosity: verbosity ?? undefined
       })
 
       // Only replace local messages when server returns the expected shape.
@@ -279,6 +283,182 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     queryClient,
     t
   ]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Streaming variant of sendMessage — consumes /chat/execute-stream SSE,
+  // appends tokens to a placeholder AI bubble for live "typing" feel. Falls
+  // back to non-streaming on any error.
+  const sendMessageStreaming = useCallback(async (
+    message: string,
+    modelOverride?: string,
+    domainFilter?: DomainFilterValue | null,
+    verbosity?: 'concise' | 'detailed' | null
+  ) => {
+    let sessionId = currentSessionId
+    if (!sessionId) {
+      try {
+        const defaultTitle = message.length > 30 ? `${message.substring(0, 30)}...` : message
+        const newSession = await chatApi.createSession({
+          notebook_id: notebookId,
+          title: defaultTitle,
+          model_override: pendingModelOverride ?? undefined
+        })
+        sessionId = newSession.id
+        setCurrentSessionId(sessionId)
+        setPendingModelOverride(null)
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notebookChatSessions(notebookId) })
+      } catch (err: unknown) {
+        const error = err as { response?: { data?: { detail?: string } }, message?: string }
+        toast.error(getApiErrorMessage(error.response?.data?.detail || error.message, (key) => t(key), 'apiErrors.failedToCreateSession'))
+        return
+      }
+    }
+
+    // Optimistic user bubble + empty placeholder AI bubble we'll fill in.
+    const userId = `temp-user-${Date.now()}`
+    const aiPlaceholderId = `temp-ai-${Date.now()}`
+    setMessages(prev => [
+      ...prev,
+      { id: userId, type: 'human', content: message, timestamp: new Date().toISOString() },
+      { id: aiPlaceholderId, type: 'ai', content: '', timestamp: new Date().toISOString() },
+    ])
+    setIsSending(true)
+
+    const hasSystem = !!domainFilter?.system
+    const hasSpecialties = Array.isArray(domainFilter?.specialties) && (domainFilter?.specialties?.length ?? 0) > 0
+    const normalizedDomainFilter: DomainFilterValue | undefined =
+      hasSystem || hasSpecialties
+        ? {
+            ...(hasSystem ? { system: domainFilter!.system } : {}),
+            ...(hasSpecialties ? { specialties: domainFilter!.specialties } : {})
+          }
+        : undefined
+
+    try {
+      const apiUrl = await getApiUrl()
+      const token = useAuthStore.getState().token
+      const resp = await fetch(`${apiUrl}/api/chat/execute-stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          message,
+          context: { sources: [], notes: [] },
+          model_override: modelOverride ?? (currentSession?.model_override ?? undefined),
+          domain_filter: normalizedDomainFilter,
+          verbosity: verbosity ?? undefined,
+        }),
+      })
+      if (!resp.ok || !resp.body) {
+        throw new Error(`HTTP ${resp.status}`)
+      }
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let accumulated = ''
+      let reasoningPath = ''
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        // SSE frames are separated by blank line ("\n\n").
+        let sep
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, sep)
+          buffer = buffer.slice(sep + 2)
+          let eventName = 'message'
+          let dataLine = ''
+          for (const line of frame.split('\n')) {
+            if (line.startsWith('event: ')) eventName = line.slice(7).trim()
+            else if (line.startsWith('data: ')) dataLine = line.slice(6)
+          }
+          if (!dataLine) continue
+          try {
+            const data = JSON.parse(dataLine)
+            if (eventName === 'token' && typeof data.text === 'string') {
+              accumulated += data.text
+              setMessages(prev =>
+                prev.map(m => (m.id === aiPlaceholderId ? { ...m, content: accumulated } : m))
+              )
+            } else if (eventName === 'done') {
+              reasoningPath = String(data.reasoning_path || '')
+            } else if (eventName === 'error') {
+              throw new Error(String(data.detail || 'stream error'))
+            }
+          } catch {
+            // ignore bad JSON frame
+          }
+        }
+      }
+      // Final reconciliation — refetch real session to pick up server-side
+      // message_ids, citations, follow_ups, etc.
+      if (reasoningPath) {
+        setMessages(prev =>
+          prev.map(m => (m.id === aiPlaceholderId ? { ...(m as object), reasoning_path: reasoningPath } as NotebookChatMessage : m))
+        )
+      }
+      await refetchCurrentSession()
+    } catch (err: unknown) {
+      console.warn('streaming failed, falling back to non-streaming:', err)
+      // Drop the placeholder bubbles and fall back to the existing path.
+      setMessages(prev => prev.filter(m => m.id !== userId && m.id !== aiPlaceholderId))
+      await sendMessage(message, modelOverride, domainFilter, verbosity)
+    } finally {
+      setIsSending(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSessionId, currentSession, notebookId, pendingModelOverride, queryClient, t, refetchCurrentSession])
+
+  // Regenerate a specific assistant message
+  const regenerateMessage = useCallback(async (
+    assistantMessageId: string,
+    domainFilter?: DomainFilterValue | null,
+    verbosity?: 'concise' | 'detailed' | null
+  ) => {
+    if (!currentSessionId) return
+    const hasSystem = !!domainFilter?.system
+    const hasSpecialties = Array.isArray(domainFilter?.specialties) && (domainFilter?.specialties?.length ?? 0) > 0
+    const normalizedDomainFilter: DomainFilterValue | undefined =
+      hasSystem || hasSpecialties
+        ? {
+            ...(hasSystem ? { system: domainFilter!.system } : {}),
+            ...(hasSpecialties ? { specialties: domainFilter!.specialties } : {})
+          }
+        : undefined
+
+    setIsSending(true)
+    // Optimistic: drop the stale assistant bubble AND every turn after it.
+    // Regenerating invalidates that downstream conversation branch — the
+    // server will purge them too, but pre-emptively hide them so the user
+    // does not see ghost turns during the round-trip.
+    setMessages(prev => {
+      const idx = prev.findIndex(m => m.id === assistantMessageId)
+      return idx < 0 ? prev : prev.slice(0, idx)
+    })
+    try {
+      const response = await chatApi.regenerate({
+        session_id: currentSessionId,
+        assistant_message_id: assistantMessageId,
+        domain_filter: normalizedDomainFilter,
+        verbosity: verbosity ?? undefined,
+        model_override: currentSession?.model_override ?? undefined
+      })
+      const serverMessages = response?.messages
+      if (Array.isArray(serverMessages) && serverMessages.length >= 2) {
+        setMessages(serverMessages)
+      }
+      await refetchCurrentSession()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } }, message?: string };
+      console.error('Error regenerating message:', error)
+      toast.error(getApiErrorMessage(error.response?.data?.detail || error.message, (key) => t(key), 'apiErrors.failedToSendMessage'))
+      try { await refetchCurrentSession() } catch {}
+    } finally {
+      setIsSending(false)
+    }
+  }, [currentSessionId, currentSession, refetchCurrentSession, t]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch session
   const switchSession = useCallback((sessionId: string) => {
@@ -350,6 +530,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     deleteSession,
     switchSession,
     sendMessage,
+    sendMessageStreaming,
+    regenerateMessage,
     setModelOverride,
     refetchSessions
   }

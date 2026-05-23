@@ -196,6 +196,26 @@ class ConversationStore:
         await self._write_messages_cache(conversation_id, payload)
         return payload[-limit:]
 
+    async def delete_message(self, conversation_id: str, message_id: str) -> bool:
+        """Delete a single chat message by id. Used by regenerate flow to
+        drop the stale assistant turn before re-running the agent."""
+        try:
+            conversation_uuid = uuid.UUID(conversation_id)
+            message_uuid = uuid.UUID(message_id)
+        except ValueError:
+            return False
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                delete(ChatMessage).where(
+                    ChatMessage.id == message_uuid,
+                    ChatMessage.conversation_id == conversation_uuid,
+                )
+            )
+            await session.commit()
+            ok = (result.rowcount or 0) > 0
+        await self._delete_messages_cache(conversation_id)
+        return ok
+
     async def delete_conversation(self, conversation_id: str) -> bool:
         try:
             conversation_uuid = uuid.UUID(conversation_id)

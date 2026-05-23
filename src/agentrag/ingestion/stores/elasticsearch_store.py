@@ -9,6 +9,31 @@ from elasticsearch import AsyncElasticsearch, NotFoundError as ESNotFoundError
 from src.agentrag.config import settings
 
 
+# Process-wide AsyncElasticsearch singleton. Each new ElasticsearchStore()
+# previously spun up its own aiohttp pool — when the owning script exited
+# without an explicit close() the pool leaked, surfacing as the
+# "Unclosed connector / Unclosed client session" RuntimeWarning. Sharing a
+# single client across instances avoids that and reduces handshake overhead.
+_SHARED_ES_CLIENT: AsyncElasticsearch | None = None
+
+
+def _get_shared_es_client() -> AsyncElasticsearch:
+    global _SHARED_ES_CLIENT
+    if _SHARED_ES_CLIENT is None:
+        _SHARED_ES_CLIENT = AsyncElasticsearch([settings.ELASTICSEARCH_URL])
+    return _SHARED_ES_CLIENT
+
+
+async def close_shared_es_client() -> None:
+    """Close the shared client (call from FastAPI lifespan shutdown)."""
+    global _SHARED_ES_CLIENT
+    if _SHARED_ES_CLIENT is not None:
+        try:
+            await _SHARED_ES_CLIENT.close()
+        finally:
+            _SHARED_ES_CLIENT = None
+
+
 def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Build ES `terms` filter clauses for S5 domain tags."""
     if not filters:
@@ -25,7 +50,9 @@ def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
 
 class ElasticsearchStore:
     def __init__(self):
-        self.client = AsyncElasticsearch([settings.ELASTICSEARCH_URL])
+        # Reuse the process-wide client so we don't leak aiohttp connectors
+        # when one-shot scripts spin up multiple ES stores.
+        self.client = _get_shared_es_client()
         self.index_name = settings.ELASTICSEARCH_INDEX_NAME
         self.entity_index_name = settings.ELASTICSEARCH_ENTITY_INDEX_NAME
         self.relationship_index_name = settings.ELASTICSEARCH_RELATIONSHIP_INDEX_NAME

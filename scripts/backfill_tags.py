@@ -23,6 +23,12 @@ async def _main(batch: int, dry_run: bool) -> None:
     es = AsyncElasticsearch(hosts=[settings.ELASTICSEARCH_URL])
     tagger = SectionTagger()
     try:
+        if not await es.indices.exists(index=settings.ELASTICSEARCH_INDEX_NAME):
+            print(
+                f"Index '{settings.ELASTICSEARCH_INDEX_NAME}' does not exist yet — "
+                "no segments to backfill. Skipping (this is normal on a fresh install)."
+            )
+            return
         scroll = await es.search(
             index=settings.ELASTICSEARCH_INDEX_NAME,
             body={"query": {"match_all": {}}, "size": batch},

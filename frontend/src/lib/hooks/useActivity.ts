@@ -11,6 +11,10 @@ export const ACTIVITY_QUERY_KEYS = {
   adminEvents: (userId?: string, type?: string) =>
     ['admin', 'activity', 'events', userId ?? 'all', type ?? 'all'] as const,
   adminUsers: ['admin', 'activity', 'users'] as const,
+  ingestProgress: (includeDone?: boolean) =>
+    ['activity', 'ingest-progress', includeDone ? 'with-done' : 'active'] as const,
+  adminIngestProgress: (userId?: string, includeDone?: boolean) =>
+    ['admin', 'activity', 'ingest-progress', userId ?? 'all', includeDone ? 'with-done' : 'active'] as const,
 }
 
 export function useActivitySummary(refetchMs = 30_000) {
@@ -47,5 +51,21 @@ export function useAdminUsers() {
   return useQuery({
     queryKey: ACTIVITY_QUERY_KEYS.adminUsers,
     queryFn: activityApi.adminUsers,
+  })
+}
+
+export function useIngestProgress(includeDone = false, refetchMs = 4_000) {
+  return useQuery({
+    queryKey: ACTIVITY_QUERY_KEYS.ingestProgress(includeDone),
+    queryFn: () => activityApi.ingestProgress(includeDone),
+    refetchInterval: refetchMs,
+  })
+}
+
+export function useAdminIngestProgress(userId?: string, includeDone = false, refetchMs = 4_000) {
+  return useQuery({
+    queryKey: ACTIVITY_QUERY_KEYS.adminIngestProgress(userId, includeDone),
+    queryFn: () => activityApi.adminIngestProgress(userId, includeDone),
+    refetchInterval: refetchMs,
   })
 }

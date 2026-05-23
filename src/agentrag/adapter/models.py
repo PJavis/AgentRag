@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -136,11 +136,22 @@ class ExecuteChatRequest(BaseModel):
     model_override: str | None = None
     # S5 — UI dropdown override. {"system": "tim_mach", "specialties": [...]}
     domain_filter: dict[str, Any] | None = None
+    # Answer length mode. None → auto-detect (keyword sniff in question).
+    # "concise" → terse direct. "detailed" → thorough multi-paragraph.
+    verbosity: Literal["concise", "detailed"] | None = None
 
 
 class ExecuteChatResponse(BaseModel):
     session_id: str
     messages: list[ChatMessage]
+
+
+class RegenerateChatRequest(BaseModel):
+    session_id: str
+    assistant_message_id: str
+    domain_filter: dict[str, Any] | None = None
+    verbosity: Literal["concise", "detailed"] | None = None
+    model_override: str | None = None
 
 
 class CreateSourceChatSessionRequest(BaseModel):
@@ -206,6 +217,7 @@ class ActivityCounts(BaseModel):
     ingest_done: int = 0
     ingest_failed: int = 0
     search: int = 0
+    chat_feedback: int = 0
 
 
 class ActivityHeatmapCell(BaseModel):

@@ -7,9 +7,12 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Bot, User, Send, Loader2, FileText, Lightbulb, StickyNote, Clock } from 'lucide-react'
+import { Bot, User, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 import {
   SourceChatMessage,
   SourceChatContextIndicator,
@@ -19,6 +22,7 @@ import {
 } from '@/lib/types/api'
 import { ModelSelector } from './ModelSelector'
 import { DomainFilter } from './DomainFilter'
+import { VerbosityToggle } from './VerbosityToggle'
 import { TraceDialog } from './TraceDialog'
 import { Network } from 'lucide-react'
 import { ContextIndicator } from '@/components/common/ContextIndicator'
@@ -51,7 +55,13 @@ interface ChatPanelProps {
   onSendMessage: (
     message: string,
     modelOverride?: string,
-    domainFilter?: DomainFilterValue | null
+    domainFilter?: DomainFilterValue | null,
+    verbosity?: 'concise' | 'detailed' | null
+  ) => void
+  onRegenerateMessage?: (
+    assistantMessageId: string,
+    domainFilter?: DomainFilterValue | null,
+    verbosity?: 'concise' | 'detailed' | null
   ) => void
   modelOverride?: string
   onModelChange?: (model?: string) => void
@@ -77,6 +87,7 @@ export function ChatPanel({
   isStreaming,
   contextIndicators,
   onSendMessage,
+  onRegenerateMessage,
   modelOverride,
   onModelChange,
   sessions = [],
@@ -96,6 +107,7 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
   const [domainFilter, setDomainFilter] = useState<DomainFilterValue | null>(null)
+  const [verbosity, setVerbosity] = useState<'concise' | 'detailed' | null>(null)
   const [traceMessage, setTraceMessage] = useState<SourceChatMessage | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -121,7 +133,12 @@ export function ChatPanel({
 
   const handleSend = () => {
     if (input.trim() && !isStreaming) {
-      onSendMessage(input.trim(), modelOverride, contextType === 'notebook' ? domainFilter : undefined)
+      onSendMessage(
+        input.trim(),
+        modelOverride,
+        contextType === 'notebook' ? domainFilter : undefined,
+        verbosity,
+      )
       setInput('')
     }
   }
@@ -227,6 +244,15 @@ export function ChatPanel({
                             content={message.content}
                             notebookId={notebookId}
                           />
+                          {(message as { reasoning_path?: string }).reasoning_path && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] h-5 font-mono"
+                              title="Reasoning path used for this answer"
+                            >
+                              {(message as { reasoning_path?: string }).reasoning_path}
+                            </Badge>
+                          )}
                           {(message.tool_trace?.length || message.timings_ms) && (
                             <Button
                               variant="ghost"
@@ -237,6 +263,25 @@ export function ChatPanel({
                             >
                               <Network className="h-3.5 w-3.5" />
                               <span>{t('chat.trace') || 'Trace'}</span>
+                            </Button>
+                          )}
+                          {onRegenerateMessage && !message.id.startsWith('temp-') && !message.id.startsWith('local-') && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              disabled={isStreaming}
+                              onClick={() =>
+                                onRegenerateMessage(
+                                  message.id,
+                                  contextType === 'notebook' ? domainFilter : undefined,
+                                  verbosity,
+                                )
+                              }
+                              title="Sinh lại câu trả lời"
+                              aria-label="Sinh lại câu trả lời"
+                            >
+                              <RefreshCcw className="h-3.5 w-3.5" />
                             </Button>
                           )}
                         </div>
@@ -255,6 +300,7 @@ export function ChatPanel({
                             q,
                             modelOverride,
                             contextType === 'notebook' ? domainFilter : undefined,
+                            verbosity,
                           )
                         }
                         disabled={isStreaming}
@@ -326,6 +372,32 @@ export function ChatPanel({
 
         {/* Input Area */}
         <div className="flex-shrink-0 p-4 space-y-3 border-t">
+          {/* Quick-start chips — show when input is empty and no messages yet */}
+          {!input.trim() && messages.length === 0 && !isStreaming && (
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: '📋 Tóm tắt tài liệu', q: 'Tóm tắt chi tiết tài liệu này' },
+                { label: '🔍 Các điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
+                { label: '❓ Câu hỏi thường gặp', q: 'Liệt kê các câu hỏi thường gặp về tài liệu này' },
+              ].map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  className="text-xs px-3 py-1.5 rounded-full border bg-muted/40 hover:bg-accent transition-colors"
+                  onClick={() =>
+                    onSendMessage(
+                      chip.q,
+                      modelOverride,
+                      contextType === 'notebook' ? domainFilter : undefined,
+                      verbosity,
+                    )
+                  }
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Model selector + Domain filter (notebook only) */}
           {(onModelChange || contextType === 'notebook') && (
             <div className="flex items-center justify-between gap-2">
@@ -341,13 +413,16 @@ export function ChatPanel({
               ) : (
                 <span />
               )}
-              {contextType === 'notebook' && (
-                <DomainFilter
-                  value={domainFilter}
-                  onChange={setDomainFilter}
-                  disabled={isStreaming}
-                />
-              )}
+              <div className="flex items-center gap-2">
+                <VerbosityToggle value={verbosity} onChange={setVerbosity} disabled={isStreaming} />
+                {contextType === 'notebook' && (
+                  <DomainFilter
+                    value={domainFilter}
+                    onChange={setDomainFilter}
+                    disabled={isStreaming}
+                  />
+                )}
+              </div>
             </div>
           )}
 
@@ -420,7 +495,8 @@ function AIMessageContent({
         <InlineImageCitation key={`img-${i}-${c.content_hash ?? i}`} citation={c} />
       ))}
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           a: LinkComponent,
           p: ({ children }) => <p className="mb-4">{children}</p>,
@@ -433,6 +509,23 @@ function AIMessageContent({
           li: ({ children }) => <li className="mb-1">{children}</li>,
           ul: ({ children }) => <ul className="mb-4 space-y-1">{children}</ul>,
           ol: ({ children }) => <ol className="mb-4 space-y-1">{children}</ol>,
+          strong: ({ children }) => (
+            <strong className="font-semibold text-amber-900 dark:text-amber-200 bg-amber-100/60 dark:bg-amber-900/30 px-1 rounded">
+              {children}
+            </strong>
+          ),
+          em: ({ children }) => <em className="italic text-foreground/90">{children}</em>,
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-4 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30 pl-4 pr-3 py-2 my-3 rounded-r">
+              {children}
+            </blockquote>
+          ),
+          code: ({ children, ...props }) => {
+            const isInline = !(props as { className?: string }).className
+            return isInline
+              ? <code className="bg-muted px-1 py-0.5 rounded text-[0.9em]">{children}</code>
+              : <code {...props}>{children}</code>
+          },
           table: ({ children }) => (
             <div className="my-4 overflow-x-auto">
               <table className="min-w-full border-collapse border border-border">{children}</table>

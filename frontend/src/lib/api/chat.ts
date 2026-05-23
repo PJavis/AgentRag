@@ -8,6 +8,7 @@ import {
   NotebookChatMessage,
   BuildContextRequest,
   BuildContextResponse,
+  DomainFilterValue,
 } from '@/lib/types/api'
 
 export const chatApi = {
@@ -54,6 +55,23 @@ export const chatApi = {
       messages: NotebookChatMessage[]
     }>(
       `/chat/execute`,
+      data
+    )
+    return response.data
+  },
+
+  regenerate: async (data: {
+    session_id: string
+    assistant_message_id: string
+    domain_filter?: DomainFilterValue | null
+    verbosity?: 'concise' | 'detailed' | null
+    model_override?: string
+  }) => {
+    const response = await apiClient.post<{
+      session_id: string
+      messages: NotebookChatMessage[]
+    }>(
+      `/chat/regenerate`,
       data
     )
     return response.data

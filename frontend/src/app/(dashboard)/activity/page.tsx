@@ -1,14 +1,17 @@
 'use client'
 
 import { useState } from 'react'
-import { Activity as ActivityIcon, Bot, FileUp, Search, DollarSign } from 'lucide-react'
+import { Activity as ActivityIcon, Bot, FileUp, Search, DollarSign, Cog } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import {
   useActivitySummary,
   useActivityEvents,
+  useIngestProgress,
 } from '@/lib/hooks/useActivity'
 import { ActivityHeatmap } from '@/components/activity/ActivityHeatmap'
 import { ActivityFeed } from '@/components/activity/ActivityFeed'
+import { IngestProgress } from '@/components/activity/IngestProgress'
 
 function fmtInt(n: number): string {
   return n.toLocaleString()
@@ -44,9 +47,12 @@ function SummaryCard({
 
 export default function ActivityPage() {
   const [type, setType] = useState<string | undefined>(undefined)
+  const [includeDone, setIncludeDone] = useState(false)
   const summary = useActivitySummary()
   const events = useActivityEvents(type, 50)
+  const ingest = useIngestProgress(includeDone)
   const s = summary.data
+  const activeIngestCount = ingest.data?.active_count ?? 0
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -66,6 +72,29 @@ export default function ActivityPage() {
         <SummaryCard icon={Search} label="Searches" value={fmtInt(s?.counts.search ?? 0)} />
         <SummaryCard icon={DollarSign} label="Est. cost" value={fmtUsd(s?.usd_estimate ?? 0)} />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Cog className="h-4 w-4" />
+            Ingest đang xử lý
+            {activeIngestCount > 0 && (
+              <Badge variant="secondary" className="ml-1 h-5 px-2 font-normal">
+                {activeIngestCount}
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <IngestProgress
+            items={ingest.data?.items ?? []}
+            activeCount={activeIngestCount}
+            loading={ingest.isLoading}
+            includeDone={includeDone}
+            onToggleIncludeDone={() => setIncludeDone((v) => !v)}
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

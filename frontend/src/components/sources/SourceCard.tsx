@@ -39,6 +39,7 @@ interface SourceCardProps {
   onRemoveFromNotebook?: (sourceId: string) => void
   onClick?: (sourceId: string) => void
   onRefresh?: () => void
+  onQuickSummary?: (sourceTitle: string) => void
   className?: string
   showRemoveFromNotebook?: boolean
   contextMode?: ContextMode
@@ -114,6 +115,7 @@ export function SourceCard({
   onRetry,
   onRemoveFromNotebook,
   onRefresh,
+  onQuickSummary,
   className,
   showRemoveFromNotebook = false,
   contextMode,
@@ -308,6 +310,20 @@ export function SourceCard({
                 </Button>
               </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
+              {onQuickSummary && currentStatus === 'completed' && (
+                <>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onQuickSummary(source.title || 'tài liệu')
+                    }}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    Tóm tắt nhanh
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               {showRemoveFromNotebook && (
                 <>
                   <DropdownMenuItem

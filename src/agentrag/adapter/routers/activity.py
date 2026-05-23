@@ -24,7 +24,7 @@ from src.agentrag.adapter.models import (
     AdminUserEntry,
 )
 from src.agentrag.database import AsyncSessionLocal
-from src.agentrag.database.models import EventLog, User
+from src.agentrag.database.models import Document, EventLog, User
 
 router = APIRouter(prefix="/activity")
 admin_router = APIRouter(prefix="/admin/activity")
@@ -223,3 +223,77 @@ async def admin_users(request: Request):
             ).model_dump()
         )
     return entries
+
+
+# ── Ingest progress (live document processing) ────────────────────────────────
+
+_INGEST_STATUS_ORDER = {"processing": 0, "queued": 1, "pending": 2, "failed": 3, "done": 4}
+
+
+def _doc_progress_row(d: Document) -> dict:
+    total = d.graph_total_chunks or 0
+    processed = d.graph_processed_chunks or 0
+    failed_chunks = d.graph_failed_chunks or 0
+    pct = round(processed / total * 100, 1) if total else (
+        100.0 if d.graph_status == "done" else 0.0
+    )
+    return {
+        "document_id": str(d.id),
+        "title": d.title,
+        "source_type": d.source_type,
+        "graph_status": d.graph_status,
+        "progress_pct": pct,
+        "chunks_total": total,
+        "chunks_done": processed,
+        "chunks_failed": failed_chunks,
+        "graph_last_error": d.graph_last_error,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+    }
+
+
+async def _ingest_progress_for(user_filter: uuid.UUID | None, include_done: bool, limit: int):
+    """Return active (and optionally recent-done) ingest jobs sorted by status."""
+    async with AsyncSessionLocal() as session:
+        q = select(Document)
+        if user_filter is not None:
+            q = q.where(Document.user_id == user_filter)
+        if not include_done:
+            q = q.where(Document.graph_status.in_(("pending", "queued", "processing", "failed")))
+        q = q.order_by(desc(Document.updated_at)).limit(limit)
+        docs = (await session.execute(q)).scalars().all()
+    rows = [_doc_progress_row(d) for d in docs]
+    rows.sort(key=lambda r: (
+        _INGEST_STATUS_ORDER.get(r["graph_status"] or "", 5),
+        -(r["progress_pct"] or 0),
+    ))
+    return {"items": rows, "active_count": sum(1 for r in rows if r["graph_status"] in ("pending", "queued", "processing"))}
+
+
+@router.get("/ingest-progress")
+async def ingest_progress(
+    request: Request,
+    include_done: bool = False,
+    limit: int = 30,
+):
+    """Per-user list of documents currently being ingested + recent done/failed."""
+    user_id = _require_user(request)
+    return await _ingest_progress_for(user_id, include_done=include_done, limit=limit)
+
+
+@admin_router.get("/ingest-progress")
+async def admin_ingest_progress(
+    request: Request,
+    user_id: str | None = None,
+    include_done: bool = False,
+    limit: int = 50,
+):
+    """Global ingest progress feed (admin only). Optional user_id filter."""
+    _require_admin(request)
+    f: uuid.UUID | None = None
+    if user_id:
+        try:
+            f = uuid.UUID(user_id)
+        except ValueError:
+            raise HTTPException(400, "Invalid user_id")
+    return await _ingest_progress_for(f, include_done=include_done, limit=limit)

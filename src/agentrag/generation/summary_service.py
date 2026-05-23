@@ -27,19 +27,21 @@ _MEDICAL_TEMPLATE_VI = [
 
 _OVERVIEW_SYSTEM = """\
 You are a medical education expert. Write a concise overview (3-5 sentences) of the document.
-Use the document's language. Return JSON:
-{"overview": "<text>"}
+LANGUAGE: respond in VIETNAMESE (tiếng Việt) by default — only switch language if the document content is clearly non-Vietnamese.
+Highlight key medical terms in **bold** within the overview text.
+Return JSON: {"overview": "<text>"}
 Return ONLY JSON, no markdown fences.
 """
 
 _SECTION_SYSTEM = """\
 You are a medical education expert. Summarize the given document chunks for the specified section heading.
-Use the document's language. Be specific and clinically precise.
+LANGUAGE: respond in VIETNAMESE (tiếng Việt) by default — only switch language if the document content is clearly non-Vietnamese.
+Be specific and clinically precise. Wrap key medical/drug/dosage terms in **bold**.
 
 Return JSON with exactly:
 {
-  "summary": "<2-4 sentence summary>",
-  "key_points": ["<point>", ...],
+  "summary": "<2-4 sentence summary, with **bold** key terms>",
+  "key_points": ["<point with **bold** terms>", ...],
   "important_terms": [{"term": "<term>", "definition": "<short def>"}, ...]
 }
 - key_points: 3-6 bullet points, each a complete claim from the content
@@ -50,13 +52,15 @@ Return ONLY JSON, no markdown fences.
 
 _QUICK_SYSTEM = """\
 You are a medical education expert. Create a quick-review cheat sheet for the given document.
-Use the document's language. Return JSON:
+LANGUAGE: respond in VIETNAMESE (tiếng Việt) by default — only switch language if the document content is clearly non-Vietnamese.
+Wrap key terms in **bold** throughout.
+Return JSON:
 {
-  "overview": "<2-3 sentence summary>",
+  "overview": "<2-3 sentence summary with **bold** key terms>",
   "sections": [
     {
       "heading": "<heading>",
-      "summary": "<1-2 sentences>",
+      "summary": "<1-2 sentences with **bold** terms>",
       "key_points": ["<point>", ...]
     }
   ]

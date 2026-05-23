@@ -34,6 +34,12 @@ async def lifespan(app: FastAPI):
     await create_adapter_tables()
     yield
     await close_pool()
+    # Close shared aiohttp-backed clients to silence "Unclosed connector".
+    try:
+        from src.agentrag.ingestion.stores.elasticsearch_store import close_shared_es_client
+        await close_shared_es_client()
+    except Exception:
+        pass
 
 
 app = FastAPI(lifespan=lifespan)

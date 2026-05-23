@@ -262,6 +262,9 @@ class Settings(BaseSettings):
     # ran). Set blank to disable. Default = qwen2.5:7b-instruct, the base
     # the project finetunes from.
     LLM_FALLBACK_MODEL: str = "qwen2.5:7b-instruct"
+    # Ollama num_ctx override (default 8192 truncates long prompts silently).
+    # 32768 = 32k tokens, fits qwen2.5 7B Q4 within 16GB VRAM.
+    LLM_OLLAMA_NUM_CTX: int = 32768
     JWT_SECRET: str | None = None               # signing secret; auto-derived in dev
     JWT_TTL_DAYS: int = 7
 

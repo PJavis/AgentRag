@@ -58,6 +58,18 @@ export default function NotebookPage() {
     notes: {}
   })
 
+  // Cross-column quick-action: SourcesColumn → ChatColumn message dispatch.
+  // Counter id forces useEffect re-fire even when same source summarized twice.
+  const [pendingChatMessage, setPendingChatMessage] = useState<{ text: string; id: number } | null>(null)
+  const handleQuickSummary = (sourceTitle: string) => {
+    // Switch to chat tab on mobile so the user sees the answer appear.
+    if (!isDesktop) setMobileActiveTab('chat')
+    setPendingChatMessage({
+      text: `Tóm tắt chi tiết tài liệu "${sourceTitle}"`,
+      id: Date.now(),
+    })
+  }
+
   // Initialize and update selections when sources load or change
   useEffect(() => {
     if (sources && sources.length > 0) {
@@ -167,6 +179,7 @@ export default function NotebookPage() {
                     onRefresh={refetchSources}
                     contextSelections={contextSelections.sources}
                     onContextModeChange={(sourceId, mode) => handleContextModeChange(sourceId, mode, 'source')}
+                    onQuickSummary={handleQuickSummary}
                     hasNextPage={hasNextPage}
                     isFetchingNextPage={isFetchingNextPage}
                     fetchNextPage={fetchNextPage}
@@ -238,6 +251,8 @@ export default function NotebookPage() {
                 contextSelections={contextSelections}
                 sources={sources}
                 sourcesLoading={sourcesLoading}
+                pendingMessage={pendingChatMessage}
+                onPendingHandled={() => setPendingChatMessage(null)}
               />
             </div>
           </div>

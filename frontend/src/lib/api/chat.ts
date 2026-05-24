@@ -60,6 +60,18 @@ export const chatApi = {
     return response.data
   },
 
+  sendWithImage: async (sessionId: string, message: string, file: File) => {
+    const form = new FormData()
+    form.append('session_id', sessionId)
+    form.append('message', message || 'Mô tả hình này')
+    form.append('image', file)
+    const response = await apiClient.post<{
+      session_id: string
+      messages: NotebookChatMessage[]
+    }>(`/chat/with-image`, form)
+    return response.data
+  },
+
   regenerate: async (data: {
     session_id: string
     assistant_message_id: string

@@ -53,6 +53,8 @@ dependencies = [
     "pyyaml>=6.0",
     "pytesseract>=0.3.13",
     "mineru[all]>=3.1.14",
+    # Audio transcription (Whisper) for mp3/wav/m4a ingest
+    "faster-whisper>=1.0.3",
 ]
 
 [project.optional-dependencies]

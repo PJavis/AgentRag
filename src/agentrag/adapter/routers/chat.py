@@ -9,7 +9,7 @@ import time
 import uuid
 
 from cachetools import TTLCache
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
@@ -203,17 +203,8 @@ def _summary_to_markdown(summary: dict) -> str:
                 if isinstance(kp, str) and kp.strip():
                     clean = kp.strip().lstrip("-•* ").strip()
                     parts.append(f"- {clean}")
-        important_terms = sec.get("important_terms") or []
-        if isinstance(important_terms, list) and important_terms:
-            parts.append("\n**Thuật ngữ quan trọng:**")
-            for term in important_terms:
-                if isinstance(term, dict):
-                    t = (term.get("term") or "").strip()
-                    d = (term.get("definition") or "").strip()
-                    if t and d:
-                        parts.append(f"- **{t}** — {d}")
-                    elif t:
-                        parts.append(f"- **{t}**")
+        # Note: important_terms intentionally NOT rendered as a separate block.
+        # Terms are highlighted inline via **bold** within summary/key_points.
     return "\n".join(parts).strip() or "Không trích xuất được tóm tắt từ tài liệu."
 
 
@@ -815,9 +806,9 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                     """Yield ('token'|'status', payload) per section so the UI
                     sees incremental progress instead of a long blank wait."""
                     if doc_idx is None:
-                        prefix = f"## Tóm tắt: {doc_title}\n\n"
+                        prefix = f"## {doc_title}\n\n"
                     else:
-                        prefix = f"### {doc_idx}. {doc_title}\n\n"
+                        prefix = f"## {doc_idx}. {doc_title}\n\n"
                     acc_parts.append(prefix)
                     yield ("token", prefix)
 
@@ -833,7 +824,7 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                         sec = await svc._summarize_section(doc_title, heading, image_chunks)
                         if not (sec.get("summary") or sec.get("key_points")):
                             continue
-                        lines = [f"#### {sec.get('heading') or heading}\n"]
+                        lines = [f"### {sec.get('heading') or heading}\n"]
                         sec_sum = (sec.get("summary") or "").strip()
                         if sec_sum:
                             lines.append(sec_sum + "\n")
@@ -841,17 +832,8 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                             if isinstance(kp, str) and kp.strip():
                                 clean = kp.strip().lstrip("-•* ").strip()
                                 lines.append(f"- {clean}")
-                        terms = sec.get("important_terms") or []
-                        if terms:
-                            lines.append("\n**Thuật ngữ quan trọng:**")
-                            for term in terms:
-                                if isinstance(term, dict):
-                                    tn = (term.get("term") or "").strip()
-                                    td = (term.get("definition") or "").strip()
-                                    if tn and td:
-                                        lines.append(f"- **{tn}** — {td}")
-                                    elif tn:
-                                        lines.append(f"- **{tn}**")
+                        # important_terms intentionally not rendered as a list
+                        # — key terms are already inline-bolded via **bold**.
                         lines.append("\n")
                         block = "\n".join(lines)
                         acc_parts.append(block)
@@ -1233,6 +1215,115 @@ async def _direct_rag(
     payload = (answer, citations, highlights, tool_trace)
     _DIRECT_RAG_CACHE[cache_key] = payload
     return payload
+
+
+# ── Chat with attached image (ad-hoc vision Q&A) ─────────────────────────────
+
+
+@notebook_router.post("/with-image")
+async def chat_with_image(
+    request: Request,
+    session_id: str = Form(...),
+    message: str = Form(...),
+    image: UploadFile = File(...),
+):
+    """Ad-hoc multimodal chat — user drops an image into the chat and asks
+    a question about it. Image is saved under data/images/chat-uploads/,
+    then VisionService describes it AND the answer LLM receives the actual
+    bytes (via multimodal). Result persists to the conversation."""
+    import logging, os as _os, time as _time, uuid as _uuid
+    from pathlib import Path as _Path
+    _log = logging.getLogger(__name__)
+
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(400, "image content_type must be image/*")
+
+    store = ConversationStore()
+    conv = await store.get_conversation(session_id)
+    if not conv:
+        raise HTTPException(404, "Session not found")
+
+    raw = await image.read()
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(413, "image too large (max 20MB)")
+    ext = (image.filename or "uploaded.jpg").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+        ext = "jpg"
+    fname = f"{_uuid.uuid4().hex}.{ext}"
+    upload_dir = _Path(settings.IMAGE_STORAGE_DIR) / "chat-uploads" / session_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    save_path = upload_dir / fname
+    save_path.write_bytes(raw)
+    rel_url = f"/images/chat-uploads/{session_id}/{fname}"
+    public_url = (
+        settings.PUBLIC_BASE_URL.rstrip("/") + rel_url
+        if getattr(settings, "PUBLIC_BASE_URL", None)
+        else rel_url
+    )
+
+    # Persist user turn with image marker so UI can render thumbnail.
+    user_content = message.strip() or "[Hỏi về hình đã đính kèm]"
+    try:
+        await store.append_message(
+            session_id, role="user", content=user_content,
+            extra_metadata={"attached_image_url": rel_url, "attached_image_mime": image.content_type},
+        )
+    except Exception:
+        _log.exception("with-image: append user msg failed")
+
+    # Call vision-capable LLM directly (no retrieval — ad-hoc Q&A on image).
+    answer_text: str
+    try:
+        from src.agentrag.services.container import get_container
+        gateway = get_container().llm
+        system_prompt = (
+            "Bạn là trợ lý y khoa. Trả lời câu hỏi của người dùng dựa vào hình "
+            "ảnh được đính kèm. Sử dụng **bold** cho thuật ngữ y khoa, "
+            "$...$ cho công thức nếu cần."
+        )
+        desc, _lat = await gateway.vision_response(
+            system_prompt=system_prompt,
+            text_prompt=user_content,
+            image_bytes=raw,
+            mime_type=image.content_type,
+            task="answer",
+        )
+        answer_text = (desc or "").strip()
+        if not answer_text:
+            answer_text = "Không tạo được mô tả từ hình ảnh."
+    except Exception as exc:
+        _log.exception("with-image: vision call failed")
+        answer_text = f"⚠️ Lỗi xử lý ảnh: {type(exc).__name__}"
+
+    try:
+        await store.append_message(
+            session_id, role="assistant", content=answer_text,
+            extra_metadata={
+                "reasoning_path": "vision_chat",
+                "attached_image_url": rel_url,
+            },
+        )
+    except Exception:
+        _log.exception("with-image: append assistant msg failed")
+
+    try:
+        from src.agentrag.observability.activity import record_event
+        identity = get_identity(request)
+        await record_event(
+            user_id=identity.user_id if identity else None,
+            event_type="chat_turn",
+            target_kind="conversation",
+            target_id=session_id,
+            payload={"message": user_content[:200], "has_image": True},
+        )
+    except Exception:
+        pass
+
+    msgs = await store.list_messages(session_id, limit=1000)
+    return ExecuteChatResponse(
+        session_id=session_id,
+        messages=[_msg_to_chat(m) for m in msgs],
+    ).model_dump()
 
 
 # ── Feedback (thumbs up/down) ─────────────────────────────────────────────────

@@ -24,6 +24,14 @@ _EXT_TO_SOURCE_TYPE: dict[str, str] = {
     ".webp": "image",
     ".bmp":  "image",
     ".gif":  "image",
+    # Audio — transcribed via Whisper, indexed as text chunks with timestamps
+    ".mp3":  "audio",
+    ".wav":  "audio",
+    ".m4a":  "audio",
+    ".ogg":  "audio",
+    ".flac": "audio",
+    ".aac":  "audio",
+    ".opus": "audio",
 }
 
 SUPPORTED_EXTENSIONS = set(_EXT_TO_SOURCE_TYPE.keys())

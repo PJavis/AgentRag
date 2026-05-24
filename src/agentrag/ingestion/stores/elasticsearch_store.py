@@ -129,6 +129,16 @@ class ElasticsearchStore:
                         "index": True,
                         "similarity": "cosine",
                     },
+                    # Visual-CLIP embedding (only populated on image segments).
+                    # Distinct from `embedding` because CLIP vector space ≠
+                    # text-embedding space. Defaults to 512-dim
+                    # (sentence-transformers/clip-ViT-B-32-multilingual-v1).
+                    "image_embedding": {
+                        "type": "dense_vector",
+                        "dims": settings.VISUAL_EMBEDDING_DIMS,
+                        "index": True,
+                        "similarity": "cosine",
+                    },
                 }
             },
         }
@@ -155,6 +165,12 @@ class ElasticsearchStore:
                         "system_tag": {"type": "keyword"},
                         "specialty_tag": {"type": "keyword"},
                         "canonical_terms": {"type": "keyword"},
+                        "image_embedding": {
+                            "type": "dense_vector",
+                            "dims": settings.VISUAL_EMBEDDING_DIMS,
+                            "index": True,
+                            "similarity": "cosine",
+                        },
                     }
                 },
             )
@@ -279,23 +295,25 @@ class ElasticsearchStore:
                     }
                 }
             )
-            actions.append(
-                {
-                    "content": chunk["content"],
-                    "embedding": chunk["embedding"],
-                    "document_title": document_title,
-                    "section_path": chunk.get("section_path"),
-                    "position": chunk.get("position"),
-                    "content_hash": chunk.get("content_hash"),
-                    "segment_type": chunk.get("segment_type", "text"),
-                    "page_start": chunk.get("page_start"),
-                    "page_end": chunk.get("page_end"),
-                    "system_tag": chunk.get("system_tag"),
-                    "specialty_tag": chunk.get("specialty_tag") or [],
-                    "canonical_terms": chunk.get("canonical_terms") or [],
-                    "metadata": chunk.get("metadata", {}),
-                }
-            )
+            doc_body: dict[str, Any] = {
+                "content": chunk["content"],
+                "embedding": chunk["embedding"],
+                "document_title": document_title,
+                "section_path": chunk.get("section_path"),
+                "position": chunk.get("position"),
+                "content_hash": chunk.get("content_hash"),
+                "segment_type": chunk.get("segment_type", "text"),
+                "page_start": chunk.get("page_start"),
+                "page_end": chunk.get("page_end"),
+                "system_tag": chunk.get("system_tag"),
+                "specialty_tag": chunk.get("specialty_tag") or [],
+                "canonical_terms": chunk.get("canonical_terms") or [],
+                "metadata": chunk.get("metadata", {}),
+            }
+            # P0.2: image segments also carry a CLIP visual vector.
+            if chunk.get("image_embedding"):
+                doc_body["image_embedding"] = chunk["image_embedding"]
+            actions.append(doc_body)
 
         response = await self.client.bulk(body=actions, refresh=True)
         if response.get("errors"):
@@ -394,6 +412,56 @@ class ElasticsearchStore:
             # agent can still answer with its own knowledge / structmem.
             return []
         return self._normalize_hits(response.get("hits", {}).get("hits", []), "sparse")
+
+    async def visual_search(
+        self,
+        query_text: str,
+        top_k: int | None = None,
+        document_title: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """kNN against `image_embedding` field using CLIP text encoding of the
+        query. Returns image segments whose visual content matches the query
+        semantically (e.g. "X-quang phổi" → chest X-ray images even if their
+        text caption is sparse)."""
+        if not settings.VISUAL_EMBEDDING_ENABLED:
+            return []
+        try:
+            from src.agentrag.ingestion.embedders.visual_embedder import VisualEmbedder
+            ve = VisualEmbedder.get()
+            qv = ve.embed_text(query_text)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning("visual_search: embed failed: %s", exc)
+            return []
+        size = top_k or settings.RETRIEVAL_TOP_K
+        search_body: dict[str, Any] = {
+            "knn": {
+                "field": "image_embedding",
+                "query_vector": qv,
+                "k": size,
+                "num_candidates": max(50, size * 5),
+            },
+            "size": size,
+        }
+        knn_filter_clauses: list[dict[str, Any]] = [
+            {"term": {"segment_type": "image"}},
+        ]
+        if document_title:
+            knn_filter_clauses.append(
+                {"term": {"document_title.keyword": document_title}}
+            )
+        knn_filter_clauses.extend(_tag_filter_clauses(filters))
+        search_body["knn"]["filter"] = (
+            knn_filter_clauses[0]
+            if len(knn_filter_clauses) == 1
+            else {"bool": {"filter": knn_filter_clauses}}
+        )
+        try:
+            response = await self.client.search(index=self.index_name, **search_body)
+        except ESNotFoundError:
+            return []
+        return self._normalize_hits(response.get("hits", {}).get("hits", []), "visual")
 
     async def dense_search(
         self,

@@ -103,6 +103,49 @@ class ImageParser:
         """Describe image bytes directly (used for PDF-extracted images)."""
         return await self._describe(image_bytes, mime, context)
 
+    async def describe_batch(
+        self,
+        images: list[tuple[bytes, str]],  # [(bytes, mime), ...]
+        context: str = "",
+    ) -> list[str]:
+        """Describe N images in ONE LLM call to cut RPM cost ~N×.
+
+        The LLM is asked to return JSON like
+            {"descriptions": ["desc1", "desc2", ...]}
+        and we map back by index. Falls back to per-image when batch parse
+        fails or returns wrong shape.
+        """
+        if not images:
+            return []
+        if len(images) == 1:
+            return [await self._describe(images[0][0], images[0][1], context)]
+        try:
+            descs = await self._llm.vision_response_batch(
+                system_prompt=_MEDICAL_VISION_SYSTEM,
+                text_prompt=(
+                    f"Document context: {context}\n\n"
+                    "Describe EACH image separately. Return JSON: "
+                    '{"descriptions": ["<desc 1>", "<desc 2>", ...]}'
+                ),
+                images=images,
+                task="vision",
+            )
+            if isinstance(descs, list) and len(descs) == len(images) and all(
+                isinstance(d, str) and d.strip() for d in descs
+            ):
+                return descs
+            logger.warning(
+                "describe_batch: parse mismatch (got %d, want %d) — fallback to per-image",
+                len(descs) if isinstance(descs, list) else -1, len(images),
+            )
+        except Exception as exc:
+            logger.warning("describe_batch failed: %s — fallback to per-image", exc)
+        # Fallback: sequential per-image
+        out: list[str] = []
+        for img_bytes, mime in images:
+            out.append(await self._describe(img_bytes, mime, context))
+        return out
+
     async def _describe(
         self,
         image_bytes: bytes,

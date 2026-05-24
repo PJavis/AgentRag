@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "intfloat/multilingual-e5-large-instruct"
     EMBEDDING_BASE_URL: str | None = None
     EMBEDDING_BATCH_SIZE: int = 32
+    # Output vector dim — only honored by providers that support truncation
+    # (e.g. Gemini gemini-embedding-001 supports 768 / 1536 / 3072 via
+    # Matryoshka Representation Learning). Leave None to use model default.
+    EMBEDDING_OUTPUT_DIM: int | None = None
 
     EXTRACTION_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] = "ollama"
     EXTRACTION_MODEL: str = "llama3.1:8b-instruct-q5_K_M"
@@ -168,6 +172,30 @@ class Settings(BaseSettings):
     # Flush described chunks → PG + ES every N images so progress is visible
     # while the job runs (instead of one big bulk commit at the end).
     VISION_FLUSH_BATCH_SIZE: int = 10
+    # Group N images per vision LLM call to cut RPM cost ~N×. Set to 1 to
+    # disable. Default 4 fits free-tier Gemini 12 RPM with doc-many-figures.
+    VISION_DESCRIBE_BATCH: int = 4
+
+    # ── Audio transcription (Whisper) ─────────────────────────────────────────
+    # Provider: faster_whisper (local, free) | openai (cloud, paid).
+    AUDIO_TRANSCRIBE_PROVIDER: Literal["faster_whisper", "openai"] = "faster_whisper"
+    # faster-whisper model size: tiny | base | small | medium | large-v3.
+    # `small` ~150MB ~5x realtime on GPU; `medium` ~1.5GB ~2x realtime; `large-v3` best quality.
+    AUDIO_WHISPER_MODEL: str = "small"
+    AUDIO_WHISPER_DEVICE: str = "auto"          # auto | cpu | cuda
+    AUDIO_WHISPER_COMPUTE_TYPE: str = "auto"    # auto | int8 | float16 | int8_float16
+    AUDIO_WHISPER_LANGUAGE: str | None = None   # None = auto-detect; "vi" for VN
+    AUDIO_WHISPER_BEAM_SIZE: int = 5
+    AUDIO_OPENAI_MODEL: str = "whisper-1"
+
+    # ── Visual (CLIP) embedding ──────────────────────────────────────────────
+    # Cross-modal text↔image embedding for visual retrieval. Default
+    # `sentence-transformers/clip-ViT-B-32-multilingual-v1` (512-dim,
+    # VN-capable). Lazy-loaded on first image ingest.
+    VISUAL_EMBEDDING_ENABLED: bool = True
+    VISUAL_EMBEDDING_MODEL: str = "sentence-transformers/clip-ViT-B-32-multilingual-v1"
+    VISUAL_EMBEDDING_DIMS: int = 512
+    VISUAL_EMBEDDING_DEVICE: str = "auto"  # auto | cpu | cuda
 
     # Token-aware context budget. When >0, replaces AGENT_MAX_CONTEXT_CHUNKS
     # as the trim signal: keep adding ranked chunks until total tokens exceed

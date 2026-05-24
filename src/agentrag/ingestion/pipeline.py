@@ -34,6 +34,8 @@ _MARKITDOWN_SOURCE_TYPES = {"word"}
 _EXCEL_SOURCE_TYPES = {"excel", "csv"}
 # Standalone image files — described via Vision LLM
 _IMAGE_SOURCE_TYPES = {"image"}
+# Audio formats — Whisper transcription
+_AUDIO_SOURCE_TYPES = {"audio"}
 
 
 async def ingest_folder(
@@ -128,6 +130,16 @@ async def ingest_folder(
                 content = parse_result["parsed_content"]
                 report["sheets"] = parse_result.get("sheets", [])
                 report["total_rows"] = parse_result.get("total_rows", 0)
+
+            elif source_type in _AUDIO_SOURCE_TYPES:
+                from .parsers.audio_parser import AudioParser
+                audio_parser = AudioParser()
+                parse_result = audio_parser.parse(file_path, doc["title"])
+                content = parse_result["content"]
+                _md = parse_result.get("metadata", {}) or {}
+                report["audio_duration_s"] = _md.get("duration_s")
+                report["audio_language"] = _md.get("language")
+                report["audio_segments"] = len(_md.get("segments", []) or [])
 
             else:
                 # markdown — đọc trực tiếp

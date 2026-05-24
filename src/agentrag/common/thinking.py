@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import re
 
-_THINK_PATTERN = re.compile(r"<think>(.*?)</think>", re.DOTALL)
-_THINK_PATTERN_NO_OPEN = re.compile(r"^(.*?)</think>", re.DOTALL)
+# Match both <think>…</think> (DeepSeek-R1, QwQ) and <thought>…</thought>
+# (Gemma 4 via Gemini OpenAI-compat endpoint emits chain-of-thought this way).
+_THINK_PATTERN = re.compile(r"<(?:think|thought)>(.*?)</(?:think|thought)>", re.DOTALL)
+_THINK_PATTERN_NO_OPEN = re.compile(r"^(.*?)</(?:think|thought)>", re.DOTALL)
 
 # Skip very large content (>100KB) to avoid pathological regex backtracking.
 _MAX_BYTES = 100_000

@@ -37,6 +37,7 @@ def build_embedding_provider(settings: Settings) -> BaseEmbeddingProvider:
             model=model,
             api_key=settings.GEMINI_API_KEY,
             batch_size=settings.EMBEDDING_BATCH_SIZE,
+            output_dim=getattr(settings, "EMBEDDING_OUTPUT_DIM", None),
         )
 
     if provider == "hf_inference":

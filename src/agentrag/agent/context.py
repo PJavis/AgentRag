@@ -144,6 +144,8 @@ class ContextAssembler:
         for item in candidates:
             page_start = item.get("page_start")
             page_end = item.get("page_end")
+            # image_url may live at top level (ES segment doc) OR inside metadata.
+            image_url = item.get("image_url") or (item.get("metadata") or {}).get("image_url")
             entry: dict[str, Any] = {
                 "document_title": item.get("document_title"),
                 "section_path": item.get("section_path"),
@@ -153,6 +155,9 @@ class ContextAssembler:
                 "page_start": page_start,
                 "page_end": page_end,
                 "excerpt": (item.get("content") or "")[:1500],
+                # Preserve image_url so the answer node can pass bytes to a
+                # multimodal LLM (Gemini 2.5 Flash) for visual grounding.
+                "image_url": image_url,
             }
             # Convenience field: human-readable page reference
             if page_start is not None:

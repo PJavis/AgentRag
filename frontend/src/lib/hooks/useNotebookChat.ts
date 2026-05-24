@@ -284,6 +284,66 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     t
   ]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Send a message with an attached image — routes to /chat/with-image
+  // (ad-hoc multimodal Q&A, no retrieval, vision LLM grounds on the bytes).
+  const sendImageMessage = useCallback(async (
+    message: string,
+    file: File,
+  ) => {
+    let sessionId = currentSessionId
+    if (!sessionId) {
+      try {
+        const newSession = await chatApi.createSession({
+          notebook_id: notebookId,
+          title: (message || file.name).slice(0, 30),
+          model_override: pendingModelOverride ?? undefined,
+        })
+        sessionId = newSession.id
+        setCurrentSessionId(sessionId)
+        setPendingModelOverride(null)
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.notebookChatSessions(notebookId) })
+      } catch (err: unknown) {
+        const e = err as { response?: { data?: { detail?: string } }, message?: string }
+        toast.error(getApiErrorMessage(e.response?.data?.detail || e.message, (k) => t(k), 'apiErrors.failedToCreateSession'))
+        return
+      }
+    }
+
+    // Optimistic user bubble showing the local image preview.
+    const localUrl = URL.createObjectURL(file)
+    const tempId = `temp-user-img-${Date.now()}`
+    setMessages(prev => [
+      ...prev,
+      {
+        id: tempId,
+        type: 'human',
+        content: message || 'Mô tả hình này',
+        timestamp: new Date().toISOString(),
+        // attached image preview rendered by ChatPanel via extra_metadata
+        // (server message will replace this with persisted URL).
+        attached_image_url: localUrl,
+      } as NotebookChatMessage & { attached_image_url?: string },
+    ])
+    setIsSending(true)
+
+    try {
+      const response = await chatApi.sendWithImage(sessionId, message, file)
+      if (Array.isArray(response?.messages) && response.messages.length >= 2) {
+        setMessages(response.messages)
+      }
+      await refetchCurrentSession()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } }, message?: string }
+      console.error('sendImageMessage error', e)
+      toast.error(getApiErrorMessage(e.response?.data?.detail || e.message, (k) => t(k), 'apiErrors.failedToSendMessage'))
+      try { await refetchCurrentSession() } catch {}
+    } finally {
+      URL.revokeObjectURL(localUrl)
+      setIsSending(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSessionId, notebookId, pendingModelOverride, queryClient, t, refetchCurrentSession])
+
   // Streaming variant of sendMessage — consumes /chat/execute-stream SSE,
   // appends tokens to a placeholder AI bubble for live "typing" feel. Falls
   // back to non-streaming on any error.
@@ -531,6 +591,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     switchSession,
     sendMessage,
     sendMessageStreaming,
+    sendImageMessage,
     regenerateMessage,
     setModelOverride,
     refetchSessions

@@ -691,17 +691,50 @@ class AgentService:
         # Debug: log payload sizes to diagnose summarization failures.
         import logging as _logging
         _ctx_log = _logging.getLogger(__name__)
+        # Collect image URLs from packed_context for multimodal grounding —
+        # so a vision-capable answer model (Gemini 2.5/3.5 Flash, GPT-4o) can
+        # read pixels, not just the vision-LLM caption that fed retrieval.
+        image_urls: list[str] = []
+        seen_urls: set[str] = set()
+        for c in packed_context:
+            if c.get("segment_type") == "image":
+                url = c.get("image_url")
+                if url and url not in seen_urls:
+                    # If url is a relative path served by FastAPI /images
+                    # static mount, prepend the public base URL when known.
+                    if url.startswith("/images/") and getattr(settings, "PUBLIC_BASE_URL", None):
+                        url = settings.PUBLIC_BASE_URL.rstrip("/") + url
+                    image_urls.append(url)
+                    seen_urls.add(url)
+                    if len(image_urls) >= 4:
+                        break  # cap to keep prompt budget reasonable
         _ctx_log.info(
-            "_answer: question=%r packed_context_count=%d packed_chars=%d verbose=%s",
+            "_answer: question=%r packed_context_count=%d packed_chars=%d verbose=%s images=%d",
             question[:80], len(packed_context),
             sum(len(str(c.get("excerpt") or c.get("content") or "")) for c in packed_context),
-            verbose,
+            verbose, len(image_urls),
         )
-        answer, _latency_ms = await self.llm_gateway.json_response(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            task="answer",
-        )
+        if image_urls:
+            try:
+                answer, _latency_ms = await self.llm_gateway.json_response_multimodal(
+                    system_prompt=system_prompt,
+                    user_text=user_prompt,
+                    image_urls=image_urls,
+                    task="answer",
+                )
+            except Exception:
+                _ctx_log.exception("_answer: multimodal call failed, falling back to text-only")
+                answer, _latency_ms = await self.llm_gateway.json_response(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    task="answer",
+                )
+        else:
+            answer, _latency_ms = await self.llm_gateway.json_response(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                task="answer",
+            )
         _ctx_log.info(
             "_answer: raw_answer_keys=%s answer_field_len=%d",
             list(answer.keys()) if isinstance(answer, dict) else type(answer).__name__,

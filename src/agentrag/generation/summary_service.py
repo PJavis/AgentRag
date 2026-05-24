@@ -26,9 +26,25 @@ _MEDICAL_TEMPLATE_VI = [
 ]
 
 _OVERVIEW_SYSTEM = """\
-You are a medical education expert. Write a concise overview (3-5 sentences) of the document.
-LANGUAGE: respond in VIETNAMESE (tiếng Việt) by default — only switch language if the document content is clearly non-Vietnamese.
-Highlight key medical terms in **bold** within the overview text.
+You are a medical education expert writing the OPENING SECTION of a study
+guide. Write a flowing, natural-language intro (5-8 sentences, ONE paragraph)
+that:
+  1. Names the document topic and clinical context (1-2 sentences).
+  2. Explains WHY this matters in practice — epidemiology, prevalence,
+     impact on patient care, or learning objectives the handout covers.
+  3. Briefly previews what the reader will learn — definition, classification,
+     causes, diagnosis, treatment, prognosis — but written as prose, NOT a list.
+  4. Ends with a sentence that bridges naturally into the detailed sections
+     below (e.g. "Phần dưới đây trình bày chi tiết từng khía cạnh...").
+
+LANGUAGE: respond in VIETNAMESE (tiếng Việt) by default — only switch
+language if the document content is clearly non-Vietnamese.
+
+STYLE: conversational and natural, like an attending physician explaining
+to a junior. Do NOT start with "Đây là tóm tắt..." or "Tài liệu này nói về...".
+Open with a real fact — a statistic, a key definition, or the central clinical
+problem. Wrap key medical terms in **bold** but do NOT over-bold.
+
 Return JSON: {"overview": "<text>"}
 Return ONLY JSON, no markdown fences.
 """
@@ -36,17 +52,36 @@ Return ONLY JSON, no markdown fences.
 _SECTION_SYSTEM = """\
 You are a medical education expert. Summarize the given document chunks for the specified section heading.
 LANGUAGE: respond in VIETNAMESE (tiếng Việt) by default — only switch language if the document content is clearly non-Vietnamese.
-Be specific and clinically precise. Wrap key medical/drug/dosage terms in **bold**.
+Be specific, comprehensive, and clinically precise. Cover EVERY relevant
+detail from the content — numbers, percentages, criteria, mechanisms,
+sub-classifications, exceptions. Do NOT summarize so aggressively that key
+clinical details disappear. Prefer nested sub-bullets over flattening.
+
+STYLE — natural narrative, NOT robotic:
+- The `summary` field is PROSE (4-8 sentences flowing together), not a list.
+- Open with a concrete fact, definition, mechanism, or statistic — NOT with
+  the section name itself. BAD: "Định nghĩa là...". GOOD: "Theo WHO, hiếm
+  muộn là tình trạng...".
+- Use connectors (do đó, ngoài ra, tuy nhiên, mặt khác) to link sentences.
+- Mix sentence lengths for readability.
+
+AGGRESSIVELY wrap key medical terms, drug names, dosages, lab values,
+anatomical structures, diagnoses, and red-flag warnings in **bold** within
+the summary text and key_points. Wrap statistics ($15\\%$), thresholds
+($< 15 \\text{ triệu/ml}$), and ranges in inline LaTeX ($...$). Do NOT
+output a separate term/definition list.
 
 Return JSON with exactly:
 {
-  "summary": "<2-4 sentence summary, with **bold** key terms>",
-  "key_points": ["<point with **bold** terms>", ...],
-  "important_terms": [{"term": "<term>", "definition": "<short def>"}, ...]
+  "summary": "<4-8 sentence flowing prose, every key medical term **bolded**>",
+  "key_points": ["<point with terms **bolded** and stats in $LaTeX$>", ...]
 }
-- key_points: 3-6 bullet points, each a complete claim from the content
-- important_terms: up to 5 medical/technical terms with definitions
-If the content does not cover this section, return {"summary": "", "key_points": [], "important_terms": []}.
+- key_points: 6-12 bullet points, each a complete claim from the content.
+- Use nested bullets (sub-bullets indented 2 spaces with `-`) for hierarchical info.
+- Use Markdown tables `| col | col |` when the content has structured comparisons.
+- Use `> blockquote` ONLY for safety warnings / contraindications.
+- Each bullet should have at least 1 **bold** term.
+If the content does not cover this section, return {"summary": "", "key_points": []}.
 Return ONLY JSON, no markdown fences.
 """
 
@@ -135,12 +170,12 @@ class SummaryService:
     ) -> dict[str, Any]:
         hits = await self._es.sparse_search(
             query=heading,
-            top_k=8,
+            top_k=15,
             document_title=document_title,
         )
         # Also include text chunks (exclude image chunks from context)
         text_hits = [h for h in hits if h.get("segment_type", "text") != "image"]
-        context = self._chunks_to_text(text_hits, max_len=2000)
+        context = self._chunks_to_text(text_hits, max_len=5000)
 
         result, _ = await self._llm.json_response(
             system_prompt=_SECTION_SYSTEM,
@@ -176,6 +211,8 @@ class SummaryService:
             "heading": heading,
             "summary": result.get("summary", ""),
             "key_points": result.get("key_points", []),
+            # important_terms still parsed for back-compat, but consumers
+            # render inline-bolded keywords instead of a separate term list.
             "important_terms": result.get("important_terms", []),
             "images": images,
         }

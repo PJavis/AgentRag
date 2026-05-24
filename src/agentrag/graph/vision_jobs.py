@@ -175,6 +175,29 @@ async def process_vision_job(job: VisionExtractJob) -> dict[str, Any]:
             c["embedding"] = emb
             c["position"] = base_pos + total_indexed + i
 
+        # P0.2: also compute CLIP visual embedding for each image so the
+        # retriever can do cross-modal kNN (text query → image vector).
+        if settings.VISUAL_EMBEDDING_ENABLED:
+            try:
+                from src.agentrag.ingestion.embedders.visual_embedder import VisualEmbedder
+                ve = VisualEmbedder.get()
+                img_bytes_list: list[bytes] = []
+                for c in pending:
+                    p = Path(c["metadata"].get("image_path", ""))
+                    try:
+                        img_bytes_list.append(p.read_bytes() if p.exists() else b"")
+                    except OSError:
+                        img_bytes_list.append(b"")
+                # Filter out zero-byte (missing) entries to keep alignment.
+                valid = [(i, b) for i, b in enumerate(img_bytes_list) if b]
+                if valid:
+                    valid_bytes = [b for _, b in valid]
+                    vecs = ve.embed_images(valid_bytes)
+                    for (idx, _), v in zip(valid, vecs):
+                        pending[idx]["image_embedding"] = v
+            except Exception:
+                logger.exception("vision_extract: visual embedding failed (skipping)")
+
         async with AsyncSessionLocal() as session:
             for c in pending:
                 session.add(Segment(
@@ -197,19 +220,70 @@ async def process_vision_job(job: VisionExtractJob) -> dict[str, Any]:
         )
         pending.clear()
 
-    tasks = [
-        asyncio.create_task(
-            _describe_one(image_parser, img, job.title, sem, bucket, retries)
-        )
-        for img in job.image_records
-    ]
-    for coro in asyncio.as_completed(tasks):
-        result = await coro
-        described += 1
-        if result is not None:
-            pending.append(result)
-        if len(pending) >= batch_size:
-            await _flush()
+    # Batch describe — group N images per LLM call to cut RPM cost. Set
+    # VISION_DESCRIBE_BATCH=1 to disable (per-image). Default 4 keeps free
+    # Gemini 12 RPM viable for docs with many figures.
+    describe_batch = max(1, getattr(settings, "VISION_DESCRIBE_BATCH", 4))
+    if describe_batch == 1:
+        tasks = [
+            asyncio.create_task(
+                _describe_one(image_parser, img, job.title, sem, bucket, retries)
+            )
+            for img in job.image_records
+        ]
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            described += 1
+            if result is not None:
+                pending.append(result)
+            if len(pending) >= batch_size:
+                await _flush()
+    else:
+        records = job.image_records
+        for start in range(0, len(records), describe_batch):
+            chunk = records[start:start + describe_batch]
+            loaded: list[tuple[bytes, str]] = []
+            chunk_valid: list[dict[str, Any]] = []
+            for img in chunk:
+                p = Path(img["path"])
+                if not p.exists():
+                    continue
+                try:
+                    loaded.append((p.read_bytes(), img.get("mime", "image/jpeg")))
+                    chunk_valid.append(img)
+                except OSError:
+                    continue
+            if not loaded:
+                continue
+            await bucket.acquire()
+            try:
+                descs = await image_parser.describe_batch(loaded, context=job.title)
+            except Exception:
+                logger.exception("vision_extract: batch describe failed; per-image fallback")
+                descs = []
+                for img_bytes, mime in loaded:
+                    d = await image_parser._describe(img_bytes, mime, context=job.title)
+                    descs.append(d)
+            for img, desc in zip(chunk_valid, descs):
+                described += 1
+                if not desc or desc.startswith("[image"):
+                    continue
+                pending.append({
+                    "content": desc,
+                    "content_hash": hashlib.sha256(desc.encode("utf-8")).hexdigest(),
+                    "segment_type": "image",
+                    "section_path": f"page_{img['page']}_image",
+                    "position": 0,
+                    "page_start": img["page"],
+                    "page_end": img["page"],
+                    "metadata": {
+                        "document_title": job.title,
+                        "image_url": img.get("url", ""),
+                        "image_path": img["path"],
+                    },
+                })
+                if len(pending) >= batch_size:
+                    await _flush()
 
     await _flush()
 

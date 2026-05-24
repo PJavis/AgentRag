@@ -120,7 +120,7 @@ class ElasticsearchRetriever:
                 should_rerank=should_rerank,
             )
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
-            hits = self._balance_segment_types(hits, size)
+            hits = self._balance_segment_types_for_query(query, hits, size)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
             payload = {
@@ -152,7 +152,7 @@ class ElasticsearchRetriever:
                 should_rerank=should_rerank,
             )
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
-            hits = self._balance_segment_types(hits, size)
+            hits = self._balance_segment_types_for_query(query, hits, size)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
             payload = {
@@ -194,6 +194,32 @@ class ElasticsearchRetriever:
                 graph_reason = "skipped_by_intent"
         else:
             graph_reason = "not_requested"
+        # P2.9 Multi-vector retrieval: when query is image-intent AND
+        # visual embedding enabled, also run CLIP visual kNN and RRF-fuse
+        # those image hits into the candidate pool. Lets the retriever surface
+        # X-quang / atlas images even when their text caption is sparse.
+        if (
+            getattr(settings, "VISUAL_EMBEDDING_ENABLED", False)
+            and self._is_image_intent(query)
+        ):
+            try:
+                visual_hits = await self.store.visual_search(
+                    query_text=query,
+                    top_k=candidate_size,
+                    document_title=document_title,
+                    filters=filters,
+                )
+            except Exception:
+                visual_hits = []
+            if visual_hits:
+                hits = self._rrf_fuse_multi_source(
+                    sources={
+                        "primary": hits,
+                        "visual": visual_hits,
+                    },
+                    top_k=candidate_size,
+                    rrf_k=settings.RETRIEVAL_RRF_K,
+                )
         hits = self._dedupe_hits(hits)
         hits, reranked = await self._rerank_hits(
             query=query,
@@ -202,7 +228,7 @@ class ElasticsearchRetriever:
             should_rerank=should_rerank,
         )
         hits = self._apply_query_intent_ranking(query=query, hits=hits)
-        hits = self._balance_segment_types(hits, size)
+        hits = self._balance_segment_types_for_query(query, hits, size)
         hits = self._finalize_ranks(hits)
         rerank_reason = self._last_rerank_reason
         payload = {
@@ -387,10 +413,34 @@ class ElasticsearchRetriever:
             hit["rank"] = idx
         return hits
 
+    _IMAGE_INTENT_TOKENS = (
+        "hình", "ảnh", "atlas", "sơ đồ", "biểu đồ", "đồ thị", "x-quang", "x quang",
+        "siêu âm", "mri", "ct scan", "ecg", "điện tim", "vẽ", "minh hoạ", "minh họa",
+        "show me", "image", "picture", "diagram", "chart", "figure", "scan", "x-ray",
+    )
+
+    @classmethod
+    def _is_image_intent(cls, query: str) -> bool:
+        """Detect queries that explicitly ask for visual content. When true,
+        we relax the image-ratio cap so retrieval surfaces images first."""
+        q = (query or "").lower()
+        return any(tok in q for tok in cls._IMAGE_INTENT_TOKENS)
+
+    @classmethod
+    def _balance_segment_types_for_query(
+        cls, query: str, hits: list[dict[str, Any]], top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Wrapper that bumps the image cap when the query asks for visuals."""
+        if cls._is_image_intent(query):
+            # Allow up to 70% images when user explicitly wants visuals.
+            return cls._balance_segment_types(hits, top_k, max_ratio_override=0.7)
+        return cls._balance_segment_types(hits, top_k)
+
     @staticmethod
     def _balance_segment_types(
         hits: list[dict[str, Any]],
         top_k: int,
+        max_ratio_override: float | None = None,
     ) -> list[dict[str, Any]]:
         """Cap the image-segment fraction inside the top_k window.
 
@@ -399,10 +449,16 @@ class ElasticsearchRetriever:
         answer LLM then summarises figure captions instead of body text.
         Demote excess images by swapping them with the next text hit from
         the tail, preserving relative order otherwise.
+
+        Pass `max_ratio_override` to relax the cap for image-intent queries.
         """
         if not hits or top_k <= 0:
             return hits
-        max_ratio = getattr(settings, "RETRIEVAL_MAX_IMAGE_RATIO", 0.3)
+        max_ratio = (
+            max_ratio_override
+            if max_ratio_override is not None
+            else getattr(settings, "RETRIEVAL_MAX_IMAGE_RATIO", 0.3)
+        )
         max_images = max(0, int(top_k * max_ratio))
         head = hits[:top_k]
         tail = hits[top_k:]

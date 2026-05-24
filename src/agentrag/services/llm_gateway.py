@@ -77,6 +77,24 @@ class LLMGateway:
         latency_ms = (time.perf_counter() - started) * 1000
         return payload, latency_ms
 
+    async def json_response_multimodal(
+        self,
+        system_prompt: str,
+        user_text: str,
+        image_urls: list[str],
+        task: str = "general",
+    ) -> tuple[dict[str, Any], float]:
+        """Route a multimodal (text + images) JSON call through the per-task
+        client. Use when packed_context has image segments and the chosen
+        answer model supports vision (Gemini 2.5 Flash, GPT-4o, etc.)."""
+        client = self._resolve_client(task, content=system_prompt + user_text)
+        started = time.perf_counter()
+        payload = await client.json_response_multimodal(
+            system_prompt, user_text, image_urls, task=task
+        )
+        latency_ms = (time.perf_counter() - started) * 1000
+        return payload, latency_ms
+
     async def text_response(
         self,
         system_prompt: str,
@@ -134,6 +152,63 @@ class LLMGateway:
         except (json.JSONDecodeError, TypeError):
             pass
         return {}
+
+    async def vision_response_batch(
+        self,
+        system_prompt: str,
+        text_prompt: str,
+        images: list[tuple[bytes, str]],
+        task: str = "vision",
+    ) -> list[str]:
+        """Describe N images in ONE multimodal LLM call. Returns list of N
+        description strings. Saves RPM cost (free Gemini = 12 RPM).
+        Caller responsible for fallback when parse fails."""
+        if not images:
+            return []
+        import json as _json
+        client, model = self._get_vision_client()
+        content: list[dict[str, Any]] = [{"type": "text", "text": text_prompt}]
+        for img_bytes, mime in images:
+            data_url = f"data:{mime};base64,{base64.b64encode(img_bytes).decode()}"
+            content.append({"type": "image_url", "image_url": {"url": data_url}})
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ]
+        started = time.perf_counter()
+        response = await client.chat.completions.create(
+            model=model,
+            temperature=0.0,
+            max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
+            response_format={"type": "json_object"},
+            messages=messages,
+        )
+        latency_ms = (time.perf_counter() - started) * 1000
+        raw = (response.choices[0].message.content or "").strip()
+        total_img_bytes = sum(len(b) for b, _ in images)
+        _cost.record_llm_call(
+            task=task,
+            model=model,
+            latency_ms=latency_ms,
+            in_text=system_prompt + text_prompt + ("X" * (total_img_bytes // 100)),
+            out_text=raw,
+            usage=getattr(response, "usage", None),
+        )
+        from src.agentrag.common.thinking import clean_thinking_content
+        cleaned = clean_thinking_content(raw)
+        s = cleaned if cleaned.strip() else raw
+        if s and not s.lstrip().startswith("{"):
+            idx = s.find("{")
+            if idx >= 0:
+                s = s[idx:]
+        try:
+            parsed = _json.loads(s or "{}")
+        except _json.JSONDecodeError:
+            return []
+        descs = parsed.get("descriptions")
+        if isinstance(descs, list):
+            return [str(d) for d in descs]
+        return []
 
     async def vision_response(
         self,

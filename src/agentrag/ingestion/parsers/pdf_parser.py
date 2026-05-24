@@ -182,6 +182,13 @@ class PDFParser:
         doc = fitz.open(str(path))
         images: list[dict[str, Any]] = []
         seen_xrefs: set[int] = set()
+        # Perceptual-hash dedup: same diagram repeated across slides should
+        # only be embedded + described once. We use a cheap content-hash
+        # (SHA1 of raw jpeg bytes) as a first pass — handles identical bytes.
+        # For visually-near-duplicates a true pHash would help, but adds an
+        # extra Pillow dep. Bytes-hash catches the common slide-deck case.
+        import hashlib as _hashlib
+        seen_byte_hashes: set[str] = set()
 
         for page_num, page in enumerate(doc, start=1):
             for img_idx, img_info in enumerate(page.get_images(full=True)):
@@ -196,6 +203,14 @@ class PDFParser:
                     img_bytes = pix.tobytes("jpeg")
                     if len(img_bytes) < settings.IMAGE_MIN_SIZE_BYTES:
                         continue
+                    byte_hash = _hashlib.sha1(img_bytes).hexdigest()
+                    if byte_hash in seen_byte_hashes:
+                        logger.debug(
+                            "PDFParser: skip duplicate image hash=%s p%d xref=%d",
+                            byte_hash[:8], page_num, xref,
+                        )
+                        continue
+                    seen_byte_hashes.add(byte_hash)
                     filename = f"p{page_num}_{img_idx}.jpg"
                     save_path = out_dir / filename
                     save_path.write_bytes(img_bytes)
@@ -206,6 +221,7 @@ class PDFParser:
                         "url": url,
                         "bytes": img_bytes,
                         "mime": "image/jpeg",
+                        "byte_hash": byte_hash,
                     })
                 except Exception as exc:
                     logger.debug("Skipping image xref=%d p%d: %s", xref, page_num, exc)

@@ -113,6 +113,7 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
       contextIndicators={null}
       onSendMessage={(message, modelOverride, domainFilter, verbosity) => chat.sendMessageStreaming(message, modelOverride, domainFilter, verbosity)}
       onRegenerateMessage={(messageId, domainFilter, verbosity) => chat.regenerateMessage(messageId, domainFilter, verbosity)}
+      onSendImageMessage={(message, file) => chat.sendImageMessage(message, file)}
       modelOverride={chat.currentSession?.model_override ?? chat.pendingModelOverride ?? undefined}
       onModelChange={(model) => chat.setModelOverride(model ?? null)}
       sessions={chat.sessions}

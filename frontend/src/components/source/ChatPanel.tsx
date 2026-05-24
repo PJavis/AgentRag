@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Bot, User, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw } from 'lucide-react'
+import { Bot, User, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw, Paperclip, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -63,6 +63,7 @@ interface ChatPanelProps {
     domainFilter?: DomainFilterValue | null,
     verbosity?: 'concise' | 'detailed' | null
   ) => void
+  onSendImageMessage?: (message: string, file: File) => void
   modelOverride?: string
   onModelChange?: (model?: string) => void
   // Session management props
@@ -88,6 +89,7 @@ export function ChatPanel({
   contextIndicators,
   onSendMessage,
   onRegenerateMessage,
+  onSendImageMessage,
   modelOverride,
   onModelChange,
   sessions = [],
@@ -108,6 +110,9 @@ export function ChatPanel({
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false)
   const [domainFilter, setDomainFilter] = useState<DomainFilterValue | null>(null)
   const [verbosity, setVerbosity] = useState<'concise' | 'detailed' | null>(null)
+  const [attachedImage, setAttachedImage] = useState<File | null>(null)
+  const attachedPreview = attachedImage ? URL.createObjectURL(attachedImage) : null
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [traceMessage, setTraceMessage] = useState<SourceChatMessage | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -132,7 +137,15 @@ export function ChatPanel({
   }, [messages])
 
   const handleSend = () => {
-    if (input.trim() && !isStreaming) {
+    if (isStreaming) return
+    // Image-attached path overrides text-only.
+    if (attachedImage && onSendImageMessage) {
+      onSendImageMessage(input.trim(), attachedImage)
+      setInput('')
+      setAttachedImage(null)
+      return
+    }
+    if (input.trim()) {
       onSendMessage(
         input.trim(),
         modelOverride,
@@ -426,7 +439,54 @@ export function ChatPanel({
             </div>
           )}
 
+          {attachedPreview && (
+            <div className="flex items-center gap-2 px-2 py-1 border rounded bg-muted/30">
+              <img
+                src={attachedPreview}
+                alt="attached"
+                className="h-12 w-12 object-cover rounded"
+              />
+              <span className="text-xs flex-1 truncate text-muted-foreground">
+                {attachedImage?.name} · {((attachedImage?.size ?? 0) / 1024).toFixed(0)} KB
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => setAttachedImage(null)}
+                title="Bỏ ảnh đính kèm"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+
           <div className="flex gap-2 items-end min-w-0">
+            {onSendImageMessage && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) setAttachedImage(f)
+                    e.target.value = '' // reset so same file can be re-selected
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-[40px] w-[40px] flex-shrink-0"
+                  disabled={isStreaming}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Đính kèm ảnh"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              </>
+            )}
             <Textarea
               id={chatInputId}
               name="chat-message"
@@ -435,9 +495,7 @@ export function ChatPanel({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={(() => {
-                // Defensive: t() may return null/undefined before i18n is
-                // initialised. Template literal would render the string
-                // "null" inside the input — guard explicitly.
+                if (attachedImage) return 'Hỏi gì về ảnh này? (Enter để gửi)'
                 const main = t('chat.sendPlaceholder') || 'Ask anything…'
                 const press = t('chat.pressToSend') || 'Press {key} to send'
                 const hint = (typeof press === 'string' ? press : 'Press {key} to send').replace('{key}', keyHint)
@@ -449,7 +507,7 @@ export function ChatPanel({
             />
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || isStreaming}
+              disabled={(!input.trim() && !attachedImage) || isStreaming}
               size="icon"
               className="h-[40px] w-[40px] flex-shrink-0"
             >

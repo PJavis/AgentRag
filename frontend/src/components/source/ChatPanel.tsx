@@ -4,10 +4,9 @@ import { useState, useRef, useEffect, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Bot, User, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw, Paperclip, X } from 'lucide-react'
+import { Bot, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw, Paperclip, X, Square } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -81,6 +80,10 @@ interface ChatPanelProps {
   notebookContextStats?: NotebookContextStats
   // Notebook ID for saving notes
   notebookId?: string
+  // Streaming progress phase for inline thinking indicator
+  streamingPhase?: 'idle' | 'connecting' | 'thinking' | 'writing' | 'finalizing'
+  // Cancel in-flight streaming (renders Stop button when present)
+  onCancelStreaming?: () => void
 }
 
 export function ChatPanel({
@@ -102,7 +105,9 @@ export function ChatPanel({
   title,
   contextType = 'source',
   notebookContextStats,
-  notebookId
+  notebookId,
+  streamingPhase = 'idle',
+  onCancelStreaming
 }: ChatPanelProps) {
   const { t } = useTranslation()
   const chatInputId = useId()
@@ -166,93 +171,93 @@ export function ChatPanel({
 
   const keyHint = 'Enter'
 
+  // Last AI bubble with empty content during streaming is the placeholder we
+  // fill in from SSE tokens. Render an inline ThinkingIndicator there instead
+  // of an empty prose div. If absent (e.g. regenerate flow drops the bubble
+  // entirely), fall through to the bottom-of-list indicator below.
+  const lastMessage = messages[messages.length - 1]
+  const hasInlinePlaceholder =
+    isStreaming &&
+    !!lastMessage &&
+    lastMessage.type === 'ai' &&
+    !lastMessage.content.trim()
+
   return (
     <>
-    <Card className="flex flex-col h-full flex-1 overflow-hidden">
-      <CardHeader className="pb-3 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Bot className="h-5 w-5" />
-            {title || (contextType === 'source' ? t('chat.chatWith').replace('{name}', t('navigation.sources')) : t('chat.chatWith').replace('{name}', t('common.notebook')))}
-          </CardTitle>
-          {onSelectSession && onCreateSession && onDeleteSession && (
-            <Dialog open={sessionManagerOpen} onOpenChange={setSessionManagerOpen}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-2"
-                onClick={() => setSessionManagerOpen(true)}
-                disabled={loadingSessions}
-              >
-                <Clock className="h-4 w-4" />
-                <span className="text-xs">{t('chat.sessions')}</span>
-              </Button>
-              <DialogContent className="sm:max-w-[420px] p-0 overflow-hidden">
-                <DialogTitle className="sr-only">{t('chat.sessionsTitle')}</DialogTitle>
-                <SessionManager
-                  sessions={sessions}
-                  currentSessionId={currentSessionId ?? null}
-                  onCreateSession={(title) => onCreateSession?.(title)}
-                  onSelectSession={(sessionId) => {
-                    onSelectSession(sessionId)
-                    setSessionManagerOpen(false)
-                  }}
-                  onUpdateSession={(sessionId, title) => onUpdateSession?.(sessionId, title)}
-                  onDeleteSession={(sessionId) => onDeleteSession?.(sessionId)}
-                  loadingSessions={loadingSessions}
-                />
-              </DialogContent>
-            </Dialog>
-          )}
+    <div className="relative flex flex-col h-full flex-1 overflow-hidden bg-background">
+      {/* Sessions: floating top-right */}
+      {onSelectSession && onCreateSession && onDeleteSession && (
+        <div className="absolute top-3 right-3 z-10">
+          <Dialog open={sessionManagerOpen} onOpenChange={setSessionManagerOpen}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 h-8"
+              onClick={() => setSessionManagerOpen(true)}
+              disabled={loadingSessions}
+              title={t('chat.sessions')}
+            >
+              <Clock className="h-4 w-4" />
+              <span className="text-xs hidden sm:inline">{t('chat.sessions')}</span>
+            </Button>
+            <DialogContent className="sm:max-w-[420px] p-0 overflow-hidden">
+              <DialogTitle className="sr-only">{t('chat.sessionsTitle')}</DialogTitle>
+              <SessionManager
+                sessions={sessions}
+                currentSessionId={currentSessionId ?? null}
+                onCreateSession={(title) => onCreateSession?.(title)}
+                onSelectSession={(sessionId) => {
+                  onSelectSession(sessionId)
+                  setSessionManagerOpen(false)
+                }}
+                onUpdateSession={(sessionId, title) => onUpdateSession?.(sessionId, title)}
+                onDeleteSession={(sessionId) => onDeleteSession?.(sessionId)}
+                loadingSessions={loadingSessions}
+              />
+            </DialogContent>
+          </Dialog>
         </div>
-      </CardHeader>
-      <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-        <ScrollArea className="flex-1 min-h-0 px-4" ref={scrollAreaRef}>
-          <div className="space-y-4 py-4">
-            {messages.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">
-                <Bot className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="text-sm">
-                  {t('chat.startConversation').replace('{type}', contextType === 'source' ? t('navigation.sources') : t('common.notebook'))}
-                </p>
-                <p className="text-xs mt-2">{t('chat.askQuestions')}</p>
+      )}
+
+      <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
+        <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center min-h-[60vh]">
+              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                <Bot className="h-6 w-6 text-primary" />
               </div>
-            ) : (
-              messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex gap-3 ${
-                    message.type === 'human' ? 'justify-end' : 'justify-start'
-                  }`}
-                >
-                  {message.type === 'ai' && (
-                    <div className="flex-shrink-0">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Bot className="h-4 w-4" />
+              <h2 className="text-xl font-semibold mb-2">
+                {title || t('chat.startConversation').replace('{type}', contextType === 'source' ? t('navigation.sources') : t('common.notebook'))}
+              </h2>
+              <p className="text-sm text-muted-foreground">{t('chat.askQuestions')}</p>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {messages.map((message) => (
+                <div key={message.id}>
+                  {message.type === 'human' ? (
+                    <div className="flex justify-end">
+                      <div className="max-w-[85%] rounded-2xl bg-muted px-4 py-2.5">
+                        <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
                       </div>
                     </div>
-                  )}
-                  <div className="flex flex-col gap-2 max-w-[80%]">
-                    <div
-                      className={`rounded-lg px-4 py-2 ${
-                        message.type === 'human'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted'
-                      }`}
-                    >
-                      {message.type === 'ai' ? (
+                  ) : (
+                    <div className="group">
+                      {isStreaming && !message.content.trim() ? (
+                        <ThinkingIndicator
+                          phase={streamingPhase}
+                          onCancel={onCancelStreaming}
+                        />
+                      ) : (
                         <AIMessageContent
                           content={message.content}
                           citations={(message.citations as Citation[] | undefined) || []}
                           onReferenceClick={handleReferenceClick}
                         />
-                      ) : (
-                        <p className="text-sm break-all">{message.content}</p>
                       )}
-                    </div>
-                    {message.type === 'ai' && (
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1">
+                      {(!isStreaming || message.content.trim()) && (
+                      <div className="flex items-center justify-between gap-2 mt-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1 flex-wrap">
                           <MessageActions
                             content={message.content}
                             notebookId={notebookId}
@@ -304,76 +309,68 @@ export function ChatPanel({
                           answer={message.content}
                         />
                       </div>
-                    )}
-                    {message.type === 'ai' && message.follow_ups && message.follow_ups.length > 0 && (
-                      <FollowupChips
-                        suggestions={message.follow_ups}
-                        onSelect={(q) =>
-                          onSendMessage(
-                            q,
-                            modelOverride,
-                            contextType === 'notebook' ? domainFilter : undefined,
-                            verbosity,
-                          )
-                        }
-                        disabled={isStreaming}
-                      />
-                    )}
-                  </div>
-                  {message.type === 'human' && (
-                    <div className="flex-shrink-0">
-                      <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
-                        <User className="h-4 w-4 text-primary-foreground" />
-                      </div>
+                      )}
+                      {message.follow_ups && message.follow_ups.length > 0 && (
+                        <div className="mt-3">
+                          <FollowupChips
+                            suggestions={message.follow_ups}
+                            onSelect={(q) =>
+                              onSendMessage(
+                                q,
+                                modelOverride,
+                                contextType === 'notebook' ? domainFilter : undefined,
+                                verbosity,
+                              )
+                            }
+                            disabled={isStreaming}
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              ))
-            )}
-            {isStreaming && (
-              <div className="flex gap-3 justify-start">
-                <div className="flex-shrink-0">
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Bot className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="rounded-lg px-4 py-2 bg-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        </ScrollArea>
-
-        {/* Context Indicators */}
-        {contextIndicators && (
-          <div className="border-t px-4 py-2">
-            <div className="flex flex-wrap gap-2 text-xs">
-              {contextIndicators.sources?.length > 0 && (
-                <Badge variant="outline" className="gap-1">
-                  <FileText className="h-3 w-3" />
-                  {contextIndicators.sources.length} {t('navigation.sources')}
-                </Badge>
-              )}
-              {contextIndicators.insights?.length > 0 && (
-                <Badge variant="outline" className="gap-1">
-                  <Lightbulb className="h-3 w-3" />
-                  {contextIndicators.insights.length} {contextIndicators.insights.length === 1 ? t('common.insight') : t('common.insights')}
-                </Badge>
-              )}
-              {contextIndicators.notes?.length > 0 && (
-                <Badge variant="outline" className="gap-1">
-                  <StickyNote className="h-3 w-3" />
-                  {contextIndicators.notes.length} {contextIndicators.notes.length === 1 ? t('common.note') : t('common.notes')}
-                </Badge>
+              ))}
+              {isStreaming && !hasInlinePlaceholder && (
+                <ThinkingIndicator
+                  phase={streamingPhase}
+                  onCancel={onCancelStreaming}
+                />
               )}
             </div>
-          </div>
-        )}
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+      </ScrollArea>
 
-        {/* Notebook Context Indicator */}
-        {notebookContextStats && (
+      {/* Context Indicators */}
+      {contextIndicators && (
+        <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-2">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {contextIndicators.sources?.length > 0 && (
+              <Badge variant="outline" className="gap-1">
+                <FileText className="h-3 w-3" />
+                {contextIndicators.sources.length} {t('navigation.sources')}
+              </Badge>
+            )}
+            {contextIndicators.insights?.length > 0 && (
+              <Badge variant="outline" className="gap-1">
+                <Lightbulb className="h-3 w-3" />
+                {contextIndicators.insights.length} {contextIndicators.insights.length === 1 ? t('common.insight') : t('common.insights')}
+              </Badge>
+            )}
+            {contextIndicators.notes?.length > 0 && (
+              <Badge variant="outline" className="gap-1">
+                <StickyNote className="h-3 w-3" />
+                {contextIndicators.notes.length} {contextIndicators.notes.length === 1 ? t('common.note') : t('common.notes')}
+              </Badge>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Notebook Context Indicator */}
+      {notebookContextStats && (
+        <div className="max-w-3xl mx-auto w-full px-4 sm:px-6">
           <ContextIndicator
             sourcesInsights={notebookContextStats.sourcesInsights}
             sourcesFull={notebookContextStats.sourcesFull}
@@ -381,13 +378,15 @@ export function ChatPanel({
             tokenCount={notebookContextStats.tokenCount}
             charCount={notebookContextStats.charCount}
           />
-        )}
+        </div>
+      )}
 
-        {/* Input Area */}
-        <div className="flex-shrink-0 p-4 space-y-3 border-t">
+      {/* Input Area: floating pill, centered */}
+      <div className="flex-shrink-0 px-4 sm:px-6 pb-4 pt-2">
+        <div className="max-w-3xl mx-auto w-full space-y-3">
           {/* Quick-start chips — show when input is empty and no messages yet */}
           {!input.trim() && messages.length === 0 && !isStreaming && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 justify-center">
               {[
                 { label: '📋 Tóm tắt tài liệu', q: 'Tóm tắt chi tiết tài liệu này' },
                 { label: '🔍 Các điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
@@ -411,18 +410,18 @@ export function ChatPanel({
               ))}
             </div>
           )}
-          {/* Model selector + Domain filter (notebook only) */}
+          {/* Model selector + Verbosity + Domain filter */}
           {(onModelChange || contextType === 'notebook') && (
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 text-xs">
               {onModelChange ? (
-                <>
-                  <span className="text-xs text-muted-foreground">{t('chat.model')}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">{t('chat.model')}</span>
                   <ModelSelector
                     currentModel={modelOverride}
                     onModelChange={onModelChange}
                     disabled={isStreaming}
                   />
-                </>
+                </div>
               ) : (
                 <span />
               )}
@@ -440,7 +439,7 @@ export function ChatPanel({
           )}
 
           {attachedPreview && (
-            <div className="flex items-center gap-2 px-2 py-1 border rounded bg-muted/30">
+            <div className="flex items-center gap-2 px-2 py-1 border rounded-xl bg-muted/30">
               <img
                 src={attachedPreview}
                 alt="attached"
@@ -461,7 +460,8 @@ export function ChatPanel({
             </div>
           )}
 
-          <div className="flex gap-2 items-end min-w-0">
+          {/* Pill input row */}
+          <div className="flex gap-2 items-end min-w-0 rounded-2xl border bg-background shadow-sm px-2 py-1.5 focus-within:ring-1 focus-within:ring-ring transition-shadow">
             {onSendImageMessage && (
               <>
                 <input
@@ -472,13 +472,13 @@ export function ChatPanel({
                   onChange={(e) => {
                     const f = e.target.files?.[0]
                     if (f) setAttachedImage(f)
-                    e.target.value = '' // reset so same file can be re-selected
+                    e.target.value = ''
                   }}
                 />
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="icon"
-                  className="h-[40px] w-[40px] flex-shrink-0"
+                  className="h-9 w-9 flex-shrink-0 rounded-full"
                   disabled={isStreaming}
                   onClick={() => fileInputRef.current?.click()}
                   title="Đính kèm ảnh"
@@ -502,25 +502,38 @@ export function ChatPanel({
                 return `${main} (${hint})`
               })()}
               disabled={isStreaming}
-              className="flex-1 min-h-[40px] max-h-[100px] resize-none py-2 px-3 min-w-0"
+              className="flex-1 min-h-[40px] max-h-[160px] resize-none py-2 px-2 min-w-0 border-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent"
               rows={1}
             />
-            <Button
-              onClick={handleSend}
-              disabled={(!input.trim() && !attachedImage) || isStreaming}
-              size="icon"
-              className="h-[40px] w-[40px] flex-shrink-0"
-            >
-              {isStreaming ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
+            {isStreaming && onCancelStreaming ? (
+              <Button
+                onClick={onCancelStreaming}
+                size="icon"
+                variant="destructive"
+                className="h-9 w-9 flex-shrink-0 rounded-full"
+                title={t('chat.stop') || 'Stop generating'}
+                aria-label={t('chat.stop') || 'Stop generating'}
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSend}
+                disabled={(!input.trim() && !attachedImage) || isStreaming}
+                size="icon"
+                className="h-9 w-9 flex-shrink-0 rounded-full"
+              >
+                {isStreaming ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            )}
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
     <TraceDialog
       open={!!traceMessage}
       onOpenChange={(v) => { if (!v) setTraceMessage(null) }}
@@ -598,6 +611,57 @@ function AIMessageContent({
       >
         {markdownWithCompactRefs}
       </ReactMarkdown>
+    </div>
+  )
+}
+
+// Animated progress indicator shown while the assistant is preparing a reply.
+// `phase` drives the label so the user gets a hint about what the backend is
+// doing (connecting → thinking → writing → finalizing). No real-time tool/stage
+// events are emitted yet by the backend, so phase transitions are coarse but
+// at least signal that something is happening between request and first token.
+function ThinkingIndicator({
+  phase,
+  onCancel,
+}: {
+  phase: 'idle' | 'connecting' | 'thinking' | 'writing' | 'finalizing'
+  onCancel?: () => void
+}) {
+  const { t } = useTranslation()
+  const phaseLabel = (() => {
+    switch (phase) {
+      case 'connecting':
+        return t('chat.connecting') || 'Connecting…'
+      case 'thinking':
+        return t('chat.thinking') || 'Thinking…'
+      case 'writing':
+        return t('chat.writing') || 'Writing…'
+      case 'finalizing':
+        return t('chat.finalizing') || 'Finalizing…'
+      default:
+        return t('chat.thinking') || 'Thinking…'
+    }
+  })()
+  return (
+    <div className="flex items-center gap-3 text-muted-foreground">
+      <div className="flex items-center gap-1" aria-hidden>
+        <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.3s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.15s]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce" />
+      </div>
+      <span className="text-xs">{phaseLabel}</span>
+      {onCancel && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-xs gap-1"
+          onClick={onCancel}
+          title={t('chat.stop') || 'Stop generating'}
+        >
+          <Square className="h-3 w-3 fill-current" />
+          {t('chat.stop') || 'Stop'}
+        </Button>
+      )}
     </div>
   )
 }

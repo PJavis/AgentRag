@@ -110,6 +110,8 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
       contextType="notebook"
       messages={chat.messages}
       isStreaming={chat.isSending}
+      streamingPhase={chat.streamingPhase}
+      onCancelStreaming={chat.cancelStreaming}
       contextIndicators={null}
       onSendMessage={(message, modelOverride, domainFilter, verbosity) => chat.sendMessageStreaming(message, modelOverride, domainFilter, verbosity)}
       onRegenerateMessage={(messageId, domainFilter, verbosity) => chat.regenerateMessage(messageId, domainFilter, verbosity)}

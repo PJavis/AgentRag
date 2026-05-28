@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { getApiErrorMessage } from '@/lib/utils/error-handler'
@@ -36,6 +36,15 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
   const [charCount, setCharCount] = useState<number>(0)
   // Pending model override for when user changes model before a session exists
   const [pendingModelOverride, setPendingModelOverride] = useState<string | null>(null)
+  // Streaming progress phases for richer UI feedback:
+  //   idle      → no stream in flight
+  //   connecting → request sent, no HTTP response yet
+  //   thinking  → response open, retrieval/planning, no tokens yet
+  //   writing   → first token arrived, content streaming
+  //   finalizing → stream ended, refetching server state
+  type StreamingPhase = 'idle' | 'connecting' | 'thinking' | 'writing' | 'finalizing'
+  const [streamingPhase, setStreamingPhase] = useState<StreamingPhase>('idle')
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   // Fetch sessions for this notebook
   const {
@@ -382,6 +391,11 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       { id: aiPlaceholderId, type: 'ai', content: '', timestamp: new Date().toISOString() },
     ])
     setIsSending(true)
+    setStreamingPhase('connecting')
+    // Fresh AbortController for this stream so cancel() can interrupt it.
+    abortControllerRef.current?.abort()
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
 
     const hasSystem = !!domainFilter?.system
     const hasSpecialties = Array.isArray(domainFilter?.specialties) && (domainFilter?.specialties?.length ?? 0) > 0
@@ -410,10 +424,12 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
           domain_filter: normalizedDomainFilter,
           verbosity: verbosity ?? undefined,
         }),
+        signal: abortController.signal,
       })
       if (!resp.ok || !resp.body) {
         throw new Error(`HTTP ${resp.status}`)
       }
+      setStreamingPhase('thinking')
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -439,6 +455,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
             const data = JSON.parse(dataLine)
             if (eventName === 'token' && typeof data.text === 'string') {
               accumulated += data.text
+              if (accumulated.length > 0) setStreamingPhase('writing')
               setMessages(prev =>
                 prev.map(m => (m.id === aiPlaceholderId ? { ...m, content: accumulated } : m))
               )
@@ -452,6 +469,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
           }
         }
       }
+      setStreamingPhase('finalizing')
       // Final reconciliation — refetch real session to pick up server-side
       // message_ids, citations, follow_ups, etc.
       if (reasoningPath) {
@@ -461,12 +479,26 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       }
       await refetchCurrentSession()
     } catch (err: unknown) {
-      console.warn('streaming failed, falling back to non-streaming:', err)
-      // Drop the placeholder bubbles and fall back to the existing path.
-      setMessages(prev => prev.filter(m => m.id !== userId && m.id !== aiPlaceholderId))
-      await sendMessage(message, modelOverride, domainFilter, verbosity)
+      const aborted = (err as { name?: string })?.name === 'AbortError' || abortController.signal.aborted
+      if (aborted) {
+        // User cancelled. Keep any partial assistant content already streamed
+        // (gives them what was produced so far); drop empty placeholder.
+        setMessages(prev =>
+          prev.filter(m => !(m.id === aiPlaceholderId && !m.content))
+        )
+        toast.info(t('chat.stopped') || 'Generation stopped')
+      } else {
+        console.warn('streaming failed, falling back to non-streaming:', err)
+        // Drop the placeholder bubbles and fall back to the existing path.
+        setMessages(prev => prev.filter(m => m.id !== userId && m.id !== aiPlaceholderId))
+        await sendMessage(message, modelOverride, domainFilter, verbosity)
+      }
     } finally {
       setIsSending(false)
+      setStreamingPhase('idle')
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSessionId, currentSession, notebookId, pendingModelOverride, queryClient, t, refetchCurrentSession])
@@ -525,6 +557,12 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     setCurrentSessionId(sessionId)
   }, [])
 
+  // Cancel in-flight streaming. Triggers AbortError in fetch → caller's finally
+  // clears state and keeps any partial assistant content already received.
+  const cancelStreaming = useCallback(() => {
+    abortControllerRef.current?.abort()
+  }, [])
+
   // Create session
   const createSession = useCallback((title?: string) => {
     return createSessionMutation.mutate({
@@ -579,6 +617,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     currentSessionId,
     messages,
     isSending,
+    streamingPhase,
     loadingSessions,
     tokenCount,
     charCount,
@@ -593,6 +632,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     sendMessageStreaming,
     sendImageMessage,
     regenerateMessage,
+    cancelStreaming,
     setModelOverride,
     refetchSessions
   }

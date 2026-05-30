@@ -600,7 +600,7 @@ docker compose --profile observability up -d     # self-hosted Langfuse + its Po
 LANGFUSE_ENABLED=true
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=http://localhost:3000
+LANGFUSE_HOST=http://localhost:3002
 ```
 
 Disabled by default → plain `openai.AsyncOpenAI`, zero overhead. The cost ledger

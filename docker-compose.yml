@@ -203,10 +203,12 @@ services:
       langfuse-db:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      # Host 3002 (NOT 3000) — 3000 is the Next.js frontend's port. Langfuse UI
+      # at http://localhost:3002. Set LANGFUSE_HOST=http://localhost:3002 in .env.
+      - "3002:3000"
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
-      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_URL: http://localhost:3002
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-langfuse-secret}
       SALT: ${LANGFUSE_SALT:-changeme-langfuse-salt}
       TELEMETRY_ENABLED: "false"

@@ -62,6 +62,33 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+# Langfuse LLM tracing (LANGFUSE_ENABLED=true). Pinned to v2 to match the
+# single-container self-hosted server in docker-compose (profile=observability).
+# v3+ SDK uses the OTEL ingestion endpoint, which needs a v3 server
+# (clickhouse + redis + worker) — heavier than this project's lightweight setup.
+observability = [
+    "langfuse>=2.0.0,<3.0.0",
+]
+# DeepEval benchmark harness (scripts/eval/run_benchmark.py) + HF dataset loaders.
+# DeepEval has no langchain dep → installs cleanly alongside langgraph/core 1.x.
+deepeval = [
+    "deepeval>=4.0.0",
+    "datasets>=2.0.0",
+    "google-genai>=0.3.0",   # required by deepeval GeminiModel judge
+]
+# Arize Phoenix — local trace + eval UI alongside Langfuse (profile=observability).
+phoenix = [
+    "arize-phoenix>=16.0.0",
+    "openinference-instrumentation-openai>=0.1.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+# NOTE — RAGAS is intentionally NOT an extra here. It requires langchain-core
+# <0.3, which conflicts with this project's langchain-core 1.x (via langgraph);
+# they cannot share a venv. RAGAS scoring runs in an isolated env — see
+# scripts/eval/score_ragas.py for the `uv run --no-project --with ragas` recipe.
+# Step 1 (scripts/eval/run_ragas.py, this venv) only builds rows and needs no
+# extra deps.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

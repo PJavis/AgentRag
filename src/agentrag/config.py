@@ -103,7 +103,9 @@ class Settings(BaseSettings):
     RETRIEVAL_RRF_K: int = 60
     RETRIEVAL_RERANK_ENABLED: bool = False
     RETRIEVAL_RERANK_TOP_N: int = 20
-    RETRIEVAL_RERANK_BACKEND: Literal["llm_chat", "local_cross_encoder"] = "llm_chat"
+    # local_cross_encoder: bge-reranker-v2-m3 on CPU/GPU (free, no API). Default.
+    # llm_chat: rank via OpenAI-compat chat (slow, any provider).
+    RETRIEVAL_RERANK_BACKEND: Literal["llm_chat", "local_cross_encoder"] = "local_cross_encoder"
     RETRIEVAL_RERANK_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] | None = None
     RETRIEVAL_RERANK_MODEL: str | None = None
     RETRIEVAL_RERANK_BASE_URL: str | None = None
@@ -275,6 +277,25 @@ class Settings(BaseSettings):
 
     # Observability (ADR 0001 Phase B)
     OBSERVABILITY_TRACE_ENABLED: bool = True
+
+    # ── Langfuse LLM tracing ───────────────────────────────────────────────────
+    # When enabled, every LLM call (agent / vision / reranker) is traced via the
+    # langfuse.openai drop-in wrapper. Keys come from the self-hosted (or cloud)
+    # Langfuse project. Cost ledger (observability/cost.py) stays independent.
+    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_PUBLIC_KEY: str | None = None
+    LANGFUSE_SECRET_KEY: str | None = None
+    LANGFUSE_HOST: str = "http://localhost:3000"   # self-host default (docker-compose profile=observability)
+
+    # ── Arize Phoenix tracing (alongside Langfuse) ─────────────────────────────
+    # Local OTEL trace + eval UI. When enabled, OpenInference instruments the
+    # OpenAI client so every LLM call is traced to the Phoenix collector.
+    PHOENIX_ENABLED: bool = False
+    PHOENIX_COLLECTOR_ENDPOINT: str = "http://localhost:6006/v1/traces"
+    PHOENIX_PROJECT: str = "agentrag"
+    # NOTE: RAGAS judge/embedding config lives in scripts/eval/score_ragas.py
+    # (CLI flags + env keys), not here — RAGAS runs in an isolated venv that
+    # cannot import this settings module. See scripts/eval/run_ragas.py.
 
     # ── Open-Notebook adapter ──────────────────────────────────────────────────
     OPEN_NOTEBOOK_PASSWORD: str | None = None   # legacy shared password (still accepted as bearer)

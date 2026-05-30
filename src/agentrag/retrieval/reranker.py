@@ -7,8 +7,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
-from openai import AsyncOpenAI
 
+from src.agentrag.common.langfuse_client import make_async_openai
 from src.agentrag.config import settings
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class LLMReranker:
 
         self.provider, self.model, base_url, api_key = self._resolve_backend()
         self.base_url = base_url
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.client = make_async_openai(api_key=api_key, base_url=base_url)
 
     def candidate_size(self, requested_top_k: int, force: bool = False) -> int:
         if not self.enabled and not force:

@@ -480,6 +480,9 @@ class GraphAgentService:
             "sql_query": state.get("sql_query"),
             "highlights": state.get("highlights", []),
             "timings_ms": state.get("timings_ms", {}),
+            # Retrieved+packed passages used to synthesize the answer. Exposed so
+            # eval (RAGAS contexts) and clients can inspect grounding evidence.
+            "context": state.get("packed_context", []),
         }
 
     async def chat_stream(

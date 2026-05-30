@@ -9,6 +9,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from src.agentrag.agent.llm import AgentLLM
+from src.agentrag.common.langfuse_client import make_async_openai
 from src.agentrag.config import settings
 from src.agentrag.observability import cost as _cost
 
@@ -288,17 +289,17 @@ class LLMGateway:
         if provider == "openai":
             if not settings.OPENAI_API_KEY:
                 raise RuntimeError("OPENAI_API_KEY required for vision")
-            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, base_url=base_url, timeout=timeout)
+            client = make_async_openai(api_key=settings.OPENAI_API_KEY, base_url=base_url, timeout=timeout)
         elif provider == "gemini":
             if not settings.GEMINI_API_KEY:
                 raise RuntimeError("GEMINI_API_KEY required for vision")
-            client = AsyncOpenAI(
+            client = make_async_openai(
                 api_key=settings.GEMINI_API_KEY,
                 base_url=base_url or "https://generativelanguage.googleapis.com/v1beta/openai/",
                 timeout=timeout,
             )
         elif provider == "ollama":
-            client = AsyncOpenAI(
+            client = make_async_openai(
                 api_key=settings.OLLAMA_API_KEY,
                 base_url=base_url or settings.OLLAMA_BASE_URL,
                 timeout=timeout,

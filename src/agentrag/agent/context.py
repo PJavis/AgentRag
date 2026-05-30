@@ -31,12 +31,25 @@ def _lost_in_middle_reorder(items: list[Any]) -> list[Any]:
 
 
 class ContextAssembler:
-    def assemble(self, question: str, tool_results: list[dict[str, Any]]) -> dict[str, Any]:
+    def __init__(self) -> None:
+        # Reused for the GLOBAL rerank pass below. Per-mode rerank (inside each
+        # retriever.search) is discarded once modes are combined + re-sorted, so
+        # we re-rank the final candidate set here in one shot.
+        from src.agentrag.retrieval.reranker import LLMReranker
+
+        self._reranker = LLMReranker()
+
+    async def assemble(self, question: str, tool_results: list[dict[str, Any]]) -> dict[str, Any]:
         retrieved = self._stage_retrieve(tool_results)
         deduped = self._stage_dedupe(retrieved)
         ranked = self._stage_rank_trim(question, deduped)
-        if settings.AGENT_LOST_IN_MIDDLE_REORDER and len(ranked) > 2:
-            ranked = _lost_in_middle_reorder(ranked)
+        # Global cross-encoder rerank → true relevance order. Membership is
+        # unchanged (recall-safe); only the ORDER is corrected, which is what
+        # ContextualPrecisionMetric and citation [n] alignment depend on.
+        # Lost-in-middle reordering is intentionally NOT applied here — it is
+        # applied to the prompt copy only (see service._answer), so the returned
+        # packed_context stays in descending-relevance order for eval + citations.
+        ranked = await self._stage_global_rerank(question, ranked)
         packed = self._stage_citation_pack(ranked)
         return {
             "retrieved": retrieved,
@@ -44,6 +57,19 @@ class ContextAssembler:
             "ranked": ranked,
             "packed_context": packed,
         }
+
+    async def _stage_global_rerank(
+        self, question: str, items: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not settings.RETRIEVAL_RERANK_ENABLED or len(items) <= 1:
+            return items
+        try:
+            reranked, ok, _reason = await self._reranker.maybe_rerank(
+                question, items, top_k=len(items), force=True
+            )
+            return reranked if ok else items
+        except Exception:
+            return items
 
     def _stage_retrieve(self, tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
@@ -141,12 +167,17 @@ class ContextAssembler:
 
     def _stage_citation_pack(self, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         packed = []
-        for item in candidates:
+        for idx, item in enumerate(candidates):
             page_start = item.get("page_start")
             page_end = item.get("page_end")
             # image_url may live at top level (ES segment doc) OR inside metadata.
             image_url = item.get("image_url") or (item.get("metadata") or {}).get("image_url")
             entry: dict[str, Any] = {
+                # Stable citation number = position in this relevance-ordered list.
+                # The answer prompt shows this and the model cites it as [source],
+                # so [n] aligns with retrieval_context[n-1] regardless of any
+                # lost-in-middle display reordering in the prompt.
+                "source": idx + 1,
                 "document_title": item.get("document_title"),
                 "section_path": item.get("section_path"),
                 "position": item.get("position"),

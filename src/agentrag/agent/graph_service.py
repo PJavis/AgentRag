@@ -293,7 +293,7 @@ async def tool_exec(state: ChatState) -> dict[str, Any]:
 async def assemble(state: ChatState) -> dict[str, Any]:
     started = time.perf_counter()
     # ContextAssembler.assemble returns a dict; we want the packed list only.
-    result = _INNER.context.assemble(
+    result = await _INNER.context.assemble(
         state["question"],
         [step["tool_output"] for step in state["tool_trace"]],
     )

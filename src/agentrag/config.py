@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     HF_OPENAI_BASE_URL: str = "https://router.huggingface.co/v1"
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    #: DeepSeek (OpenAI-compatible). Routed per-task via a "deepseek-*" model name
+    #: in LLM_TASK_MODEL_MAP. Falls back to OPENAI_API_KEY if unset.
+    DEEPSEEK_API_KEY: str | None = None
 
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434/v1/"
     OLLAMA_API_KEY: str = "ollama"

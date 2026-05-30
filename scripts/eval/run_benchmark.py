@@ -131,7 +131,14 @@ async def main() -> None:
 
     # ── LLM-judged metrics (1-5) ──
     print(f"\n[INFO] scoring {len(records)} cases with DeepEval (judge={args.judge_provider})...")
-    judge = build_judge(provider=args.judge_provider, model=args.judge_model, api_key=settings.GEMINI_API_KEY)
+    # Pick the judge's API key by provider (deepseek falls back to OPENAI_API_KEY,
+    # matching the runtime DeepSeek wiring). OpenAI judge reads OPENAI_API_KEY itself.
+    judge_key = {
+        "gemini": settings.GEMINI_API_KEY,
+        "deepseek": settings.DEEPSEEK_API_KEY or settings.OPENAI_API_KEY,
+        "openai": settings.OPENAI_API_KEY,
+    }.get(args.judge_provider, settings.GEMINI_API_KEY)
+    judge = build_judge(provider=args.judge_provider, model=args.judge_model, api_key=judge_key)
     cases = [
         CaseInput(
             question=r["ex"].question,

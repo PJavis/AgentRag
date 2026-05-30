@@ -12,6 +12,7 @@ import {
 import { ActivityHeatmap } from '@/components/activity/ActivityHeatmap'
 import { ActivityFeed } from '@/components/activity/ActivityFeed'
 import { IngestProgress } from '@/components/activity/IngestProgress'
+import { AppShell } from '@/components/layout/AppShell'
 
 function fmtInt(n: number): string {
   return n.toLocaleString()
@@ -55,7 +56,9 @@ export default function ActivityPage() {
   const activeIngestCount = ingest.data?.active_count ?? 0
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <AppShell>
+      <div className="flex-1 overflow-y-auto">
+        <div className="container mx-auto p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold flex items-center gap-2">
           <ActivityIcon className="h-5 w-5" />
@@ -117,6 +120,8 @@ export default function ActivityPage() {
           />
         </CardContent>
       </Card>
-    </div>
+        </div>
+      </div>
+    </AppShell>
   )
 }

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { AppShell } from '@/components/layout/AppShell'
 import {
   useCostSummary,
   useRecentCostCalls,
@@ -126,7 +127,9 @@ export default function CostDashboardPage() {
   const r = recent.data ?? []
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <AppShell>
+      <div className="flex-1 overflow-y-auto">
+        <div className="container mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">LLM Cost & Token Dashboard</h1>
@@ -251,6 +254,8 @@ export default function CostDashboardPage() {
           </Card>
         </TabsContent>
       </Tabs>
-    </div>
+        </div>
+      </div>
+    </AppShell>
   )
 }

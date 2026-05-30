@@ -41,3 +41,9 @@ yarn-error.log*
 next-env.d.ts
 
 doc_exports/
+# Playwright e2e
+/test-results/
+/playwright-report/
+/e2e/screenshots/
+/e2e/.auth/
+.run-fe.log

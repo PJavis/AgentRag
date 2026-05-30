@@ -101,6 +101,7 @@ _CHITCHAT_SYSTEM_PROMPT = (
     "Match the user's language (Vietnamese ↔ English). Keep it light."
 )
 
+from src.agentrag.agent.context import _lost_in_middle_reorder
 from src.agentrag.config import settings
 from src.agentrag.services import (
     ContextAssemblyService,
@@ -311,7 +312,7 @@ class AgentService:
                     "tool_output": tool_output,
                 })
 
-            assembly = self.context.assemble(question, [e["tool_output"] for e in tool_trace])
+            assembly = await self.context.assemble(question, [e["tool_output"] for e in tool_trace])
 
             # ── Stream answer tokens ──────────────────────────────────────────
             yield _sse("status", {"step": "answer"})
@@ -657,6 +658,12 @@ class AgentService:
             "If context is insufficient for a specific question, say so explicitly. "
             "Answer in clear, natural sentences and avoid broken wording. "
             "Only cite claims directly supported by the provided context. "
+            "INLINE CITATIONS: every context item has a numeric 'source' field. In the "
+            "\"answer\" markdown, append the supporting source number(s) in square brackets "
+            "immediately after each factual sentence or clause — e.g. 'Hà Nội là thủ đô [1].' "
+            "Cite ONLY the source(s) whose content directly supports that claim; never cite a "
+            "source that does not support it and never invent source numbers. Multiple supporting "
+            "sources → [1][2]. Conversational or clarifying replies need no citations. "
             "Do NOT add examples, field names, or details not explicitly present in the context. "
             # Image-segment context: treat vision LLM descriptions as primary
             # evidence when no text segments are available (scanned PDFs).
@@ -680,10 +687,17 @@ class AgentService:
                 }
                 for item in chat_history[-2:]
             ]
+        # Lost-in-middle is applied to the PROMPT COPY only — best chunks at the
+        # start + end for LLM attention — while the returned packed_context stays
+        # in relevance order for eval/citation. Each item keeps its stable 'source'
+        # number, so inline [n] markers still map to retrieval_context[n-1].
+        prompt_context = packed_context
+        if settings.AGENT_LOST_IN_MIDDLE_REORDER and len(packed_context) > 2:
+            prompt_context = _lost_in_middle_reorder(packed_context)
         answer_payload: dict[str, Any] = {
             "question": question,
             "chat_history": history_view,
-            "context": packed_context,
+            "context": prompt_context,
         }
         if memory_context:
             answer_payload["conversation_memory"] = memory_context

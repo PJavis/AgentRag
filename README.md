@@ -448,8 +448,36 @@ giữ 3 LLM hot cùng lúc. Sau khi `make use-preset`, append secrets vào `.env
 OPENAI_API_KEY=
 GEMINI_API_KEY=
 HF_TOKEN=
+DEEPSEEK_API_KEY=                     # DeepSeek (OpenAI-compatible); falls back to OPENAI_API_KEY
 OLLAMA_BASE_URL=http://127.0.0.1:11434/v1/
 ```
+
+### 5.1a Embedding serving (local Ollama / TEI / cloud)
+
+```env
+EMBEDDING_PROVIDER=ollama             # ollama | openai | gemini | hf_inference
+EMBEDDING_MODEL=nomic-embed-text      # use bge-m3 via TEI (below) for best VN quality
+EMBEDDING_BASE_URL=                   # blank = OLLAMA_BASE_URL
+```
+
+| Mode | Config | Notes |
+|---|---|---|
+| **Ollama (default)** | `EMBEDDING_PROVIDER=ollama`, `EMBEDDING_MODEL=nomic-embed-text` | Free local, 768-dim, stable. ⚠ Ollama's `bge-m3` GGUF can emit NaN at batch scale — serve bge-m3 via TEI instead. |
+| **TEI — bge-m3 (recommended quality)** | `make serve-embed` → `EMBEDDING_PROVIDER=openai`, `EMBEDDING_MODEL=BAAI/bge-m3`, `EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/` | Local GPU server, 1024-dim, strong VN. |
+| **Cloud** | `EMBEDDING_PROVIDER=gemini` (or `hf_inference`) + key | No local GPU. |
+
+**TEI (Text Embeddings Inference) for bge-m3:**
+
+```bash
+make serve-embed        # docker compose -f deploy/tei.compose.yml --profile gpu up -d  → :8080
+make stop-embed
+```
+
+- Serves `BAAI/bge-m3` from `models/bge-m3`. Pre-download once:
+  `uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-m3', local_dir='models/bge-m3')"`
+- **Blackwell GPUs (RTX 50xx, compute cap sm_120):** pinned TEI images are sm_80-only and fail with `Runtime compute cap 120 is not compatible`. The compose uses `text-embeddings-inference:cuda-latest` (all-arch PTX) — required for sm_120, fine on older GPUs.
+- TEI ignores the bearer key, so `OPENAI_API_KEY` holding a DeepSeek key is harmless.
+- **Switching embed model changes the vector dimension** (bge-m3 1024 vs nomic 768) → delete + re-ingest the index.
 
 ### 5.2 Database & Cache
 
@@ -519,6 +547,21 @@ LLM_LARGE_CONTEXT_THRESHOLD=100000
 ```
 
 Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `transformation`, `domain_router` (S5), `followup` (S7).
+
+> **DeepSeek — local + cloud cost mix.** DeepSeek is OpenAI-compatible and
+> auto-routes by **model-name prefix**: any `deepseek-*` value in
+> `LLM_TASK_MODEL_MAP` is sent to `https://api.deepseek.com` using
+> `DEEPSEEK_API_KEY` (→ `OPENAI_API_KEY` fallback). Route cheap tasks to local
+> Ollama and quality tasks to DeepSeek, e.g.:
+>
+> ```env
+> LLM_ROUTING_ENABLED=true
+> DEEPSEEK_API_KEY=sk-...
+> LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","domain_router":"llama3.2:3b","followup":"llama3.2:3b","schema_discovery":"deepseek-v4-flash","sql_compile":"deepseek-v4-flash","synthesize":"deepseek-v4-pro","answer":"deepseek-v4-pro"}
+> ```
+>
+> Prefix → provider: `gemini-`/`gemma-` → Gemini, `gpt-`/`o1`/`o3` → OpenAI,
+> `deepseek*` → DeepSeek, otherwise the default `AGENT_PROVIDER` (Ollama).
 
 > **Speed tuning (Phase C).** The default `LLM_TASK_MODEL_MAP` routes
 > the fast tasks (`decide` / `classify` / `domain_router` / `followup`)
@@ -1476,6 +1519,38 @@ curl -X POST http://127.0.0.1:8000/search \
 - `reasoning_path` → `"structured"` hoặc `"semantic"`
 - `tool_trace` → ít nhất 1 retrieval step
 - `citations` → có `document_title` + `content_hash`
+
+### Full RAG benchmark (9 metrics)
+
+See §5.6e. Quick run (needs `uv sync --extra deepeval`, live ES/PG/Valkey, an isolated index):
+
+```bash
+ELASTICSEARCH_INDEX_NAME=agentrag_benchmark LLM_COST_TRACKING_ENABLED=true \
+  uv run python scripts/eval/run_benchmark.py --suite both --n 30 \
+  --judge-provider deepseek --judge-model deepseek-v4-flash   # or --judge-provider gemini
+# → data/eval/benchmark_<suite>.json
+```
+
+### Frontend e2e (Playwright)
+
+Drives the real UI end-to-end: login → every route → notebook chat (streamed
+reply) → source ingest → retrieval-grounded answer.
+
+```bash
+# Prereqs: API (:8000) + frontend running, and a test user (sign up in the UI
+# or POST /on/api/auth/signup). First time only: install browsers.
+cd frontend
+npm i -D @playwright/test && npx playwright install chromium
+npm run e2e            # = playwright test
+```
+
+- `e2e/auth.setup.ts` logs in once → reuses the session (storageState).
+- `e2e/full-ui.spec.ts` smokes all routes; `e2e/deep.spec.ts` drives chat + RAG.
+- The login credentials + `baseURL` (`:3001` in config) are set for the local dev
+  stack — adjust to your ports/user.
+- ⚠ The burst of page loads + activity/cost polling can trip
+  `RATE_LIMIT_PER_MIN_DEFAULT` (429 → logout); lower the test burst or raise the
+  limit for the test session to get a clean pass.
 
 ---
 

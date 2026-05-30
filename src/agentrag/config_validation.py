@@ -85,10 +85,7 @@ def _validate_retrieval_reranker_settings(settings: Settings) -> None:
         return
 
     if settings.RETRIEVAL_RERANK_BACKEND == "local_cross_encoder":
-        if not settings.RETRIEVAL_RERANK_MODEL:
-            raise ValueError(
-                "RETRIEVAL_RERANK_MODEL is required when RETRIEVAL_RERANK_BACKEND=local_cross_encoder"
-            )
+        # Model optional — LLMReranker defaults to dengcao/bge-reranker-v2-m3.
         return
 
     provider = (

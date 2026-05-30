@@ -11,6 +11,8 @@ from openai import RateLimitError
 from sqlalchemy import select, delete
 
 from src.agentrag.chat.history import ConversationStore
+from src.agentrag.common.langfuse_client import init_langfuse, langfuse_flush
+from src.agentrag.common.phoenix_client import init_phoenix
 from src.agentrag.config import settings
 from src.agentrag.mcp.app import mcp
 from src.agentrag.config_validation import validate_settings
@@ -30,9 +32,12 @@ from src.agentrag.adapter import admin as adapter_admin
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_settings(settings)
+    init_langfuse()
+    init_phoenix()
     await init_pool(settings.REDIS_URL or "redis://127.0.0.1:6379/0")
     await create_adapter_tables()
     yield
+    langfuse_flush()
     await close_pool()
     # Close shared aiohttp-backed clients to silence "Unclosed connector".
     try:

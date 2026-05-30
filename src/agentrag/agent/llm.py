@@ -4,8 +4,9 @@ import json
 import time
 from typing import Any, AsyncIterator
 
-from openai import AsyncOpenAI, NotFoundError
+from openai import NotFoundError
 
+from src.agentrag.common.langfuse_client import make_async_openai
 from src.agentrag.config import settings
 from src.agentrag.observability.cost import record_llm_call
 
@@ -48,7 +49,7 @@ class AgentLLM:
             if settings.AGENT_TEMPERATURE is not None
             else settings.EXTRACTION_TEMPERATURE
         )
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = make_async_openai(api_key=self.api_key, base_url=self.base_url)
         # Sticky fallback: once we miss the primary model we keep using the
         # fallback for the rest of the process. Avoids re-hitting the 404.
         self._fallback_engaged = False

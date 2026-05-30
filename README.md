@@ -493,8 +493,16 @@ RETRIEVAL_TOP_K=10
 RETRIEVAL_NUM_CANDIDATES=50
 RETRIEVAL_RRF_K=60
 RETRIEVAL_RERANK_ENABLED=false
-RETRIEVAL_RERANK_BACKEND=llm_chat    # llm_chat | local_cross_encoder
+RETRIEVAL_RERANK_BACKEND=local_cross_encoder   # llm_chat | local_cross_encoder
+RETRIEVAL_RERANK_MODEL=dengcao/bge-reranker-v2-m3
 ```
+
+Rerank backends:
+
+| Backend | Model | Deps | Cost | Notes |
+|---|---|---|---|---|
+| `local_cross_encoder` | `dengcao/bge-reranker-v2-m3` | bundled (`sentence-transformers`) | free | **Default.** Local CPU/GPU, no API. Lifts relevant chunks to the top. |
+| `llm_chat` | any chat model | none | varies | Rank via a chat LLM (slow); fallback when no cross-encoder available. |
 
 ### 5.6 LLM Routing & Cost Tracking
 
@@ -530,6 +538,119 @@ buffer (last 5000 calls) with estimated USD via public Gemini / OpenAI pricing.
 
 - `GET /on/api/metrics/cost` — per-task + per-model breakdown (`calls`, `in_tokens`, `out_tokens`, `usd`, `avg_latency_ms`)
 - `POST /on/api/metrics/cost/reset` — clear ledger
+
+### 5.6c Langfuse tracing (optional)
+
+Full LLM trace UI (prompts, latency, token usage per call) alongside the cost
+ledger. Every OpenAI client is built through one factory
+(`common/langfuse_client.py::make_async_openai`), so flipping `LANGFUSE_ENABLED`
+on traces all agent / vision / reranker calls via the `langfuse.openai` drop-in —
+no per-call instrumentation.
+
+```bash
+uv sync --extra observability
+docker compose --profile observability up -d     # self-hosted Langfuse + its Postgres
+# open http://localhost:3000 → create project → copy keys into .env
+```
+
+```env
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://localhost:3000
+```
+
+Disabled by default → plain `openai.AsyncOpenAI`, zero overhead. The cost ledger
+(§5.6) stays independent; Langfuse adds the trace/latency UI.
+
+### 5.6d RAGAS answer-quality eval (optional, two-step)
+
+Score the agent against a golden dataset with RAGAS (faithfulness,
+context_precision, context_recall; optional answer_relevancy).
+
+**Why two steps:** RAGAS hard-requires `langchain-core <0.3`, which conflicts
+with this project's `langchain-core 1.x` (pulled by `langgraph`) — they cannot
+share one venv. So the agent dumps eval rows in the app venv, and RAGAS scores
+them in an isolated env.
+
+```bash
+# once, if no golden set
+python scripts/eval/generate_dataset.py achievement-system
+
+# STEP 1 (app venv): run agent → rows JSON. No extra deps.
+python scripts/eval/run_ragas.py achievement-system --limit 5
+#   → data/eval/achievement-system_ragas_rows.json
+
+# STEP 2 (isolated venv): score with a dedicated Gemini judge
+GEMINI_API_KEY=$GEMINI_API_KEY uv run --no-project \
+    --with "ragas>=0.2,<0.3" --with "langchain-openai<0.3" \
+    python scripts/eval/score_ragas.py data/eval/achievement-system_ragas_rows.json
+#   → console table + ..._ragas_rows.scored.json
+```
+
+Step 1 reads the agent's `context` field (retrieved passages) from `chat()` as
+RAGAS `retrieved_contexts`. The judge is decoupled from the agent runtime
+(`--judge-model`, default `gemini-2.5-flash`), so a slow local agent is still
+graded by a fast cloud judge.
+
+Default metrics are LLM-only: **faithfulness, context_precision,
+context_recall**. Add `--with-relevancy` to also run `answer_relevancy` — but
+that needs embeddings, and Gemini's OpenAI-compat `/embeddings` returns
+`501 UNIMPLEMENTED`, so pass `--embedding-provider openai` (OpenAI embeddings)
+for it. Failed metrics are reported `FAILED` and omitted from the JSON.
+
+Verified e2e on a 5-question hypertension dataset (real agent answers):
+`faithfulness 1.00 · context_precision 0.85 · context_recall 1.00`.
+
+### 5.6e Full RAG benchmark — 9 metrics (DeepEval + HF datasets)
+
+End-to-end benchmark that runs **our** pipeline (ingest gold docs → retrieve →
+agent answer) over public RAG datasets and gates against targets. Unlike RAGAS,
+DeepEval has no langchain conflict — installs in the app venv.
+
+```bash
+uv sync --extra deepeval
+LLM_COST_TRACKING_ENABLED=true ELASTICSEARCH_INDEX_NAME=agentrag_bench \
+  python scripts/eval/run_benchmark.py --suite vn --n 30      # or --suite en | both
+```
+
+Datasets: VN `sailor2/Vietnamese_RAG` (BKAI_RAG, LegalRAG) · EN `galileo-ai/ragbench`
+(covidqa, pubmedqa — medical). Judge = Gemini 2.5 Flash (`--judge-provider deepseek|openai` to swap).
+
+| # | Metric | Source | Target |
+|---|--------|--------|--------|
+| 1 | Retrieval recall@k | `ContextualRecallMetric` | ≥ 0.70 |
+| 2 | Context precision | `ContextualPrecisionMetric` | ≥ 0.70 |
+| 3 | Faithfulness | `FaithfulnessMetric` | ≥ 0.80 |
+| 4 | Answer correctness | `GEval` vs expected | ≥ 0.70 |
+| 5 | Citation accuracy | `GEval` vs context | ≥ 0.70 |
+| 6 | Latency p50/p95/p99 | per-question wall time | report |
+| 7 | Cost / query | LLM ledger USD ÷ N | report |
+| 8 | Failure rate | empty / exception | < 5% |
+| 9 | Freshness | `run_freshness_check` | pass |
+
+Use an isolated `ELASTICSEARCH_INDEX_NAME` so the benchmark corpus doesn't mix
+with your real index. Report → `data/eval/benchmark_<suite>.json`.
+
+> **Note — citation_accuracy:** the GEval citation metric expects inline `[N]`
+> markers in the answer. The agent currently returns citations as a structured
+> field (not inline), so this metric reads low until inline citation markers are
+> added to the answer prompt. Treat it as a known gap, not a regression.
+
+### 5.6f Phoenix tracing (optional)
+
+Arize Phoenix — local OTEL trace + eval UI, runs alongside Langfuse. OpenInference
+auto-instruments the OpenAI client, so every LLM call is traced with no per-call code.
+
+```bash
+uv sync --extra phoenix
+docker compose --profile observability up -d phoenix    # UI http://localhost:6006
+```
+
+```env
+PHOENIX_ENABLED=true
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
+```
 
 ### 5.6b Agent Harness (Context + Plan + Critique)
 

@@ -13,9 +13,9 @@ class ContextAssemblyService:
     def __init__(self):
         self._assembler = ContextAssembler()
 
-    def assemble(
+    async def assemble(
         self,
         question: str,
         tool_outputs: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        return self._assembler.assemble(question, tool_outputs)
+        return await self._assembler.assemble(question, tool_outputs)

@@ -35,6 +35,8 @@ class AgentLLM:
                 provider_override = "gemini"
             elif mlow.startswith("gpt-") or mlow.startswith("o1") or mlow.startswith("o3"):
                 provider_override = "openai"
+            elif mlow.startswith("deepseek"):
+                provider_override = "deepseek"
             # else: stay on default provider (Ollama / whatever AGENT_PROVIDER set)
         if provider_override:
             self.model, self.base_url, self.api_key = self._resolve_backend_for(
@@ -70,6 +72,13 @@ class AgentLLM:
             if not settings.OPENAI_API_KEY:
                 raise ValueError("OPENAI_API_KEY required for OpenAI-routed task")
             return (model or "gpt-4o-mini", None, settings.OPENAI_API_KEY)
+        if provider == "deepseek":
+            # DeepSeek is OpenAI-compatible. Key falls back to OPENAI_API_KEY so a
+            # single pasted key works, but a dedicated DEEPSEEK_API_KEY wins.
+            key = settings.DEEPSEEK_API_KEY or settings.OPENAI_API_KEY
+            if not key:
+                raise ValueError("DEEPSEEK_API_KEY (or OPENAI_API_KEY) required for DeepSeek-routed task")
+            return (model or "deepseek-v4-pro", "https://api.deepseek.com", key)
         if provider == "ollama":
             return (
                 model or settings.AGENT_MODEL or settings.EXTRACTION_MODEL,
@@ -172,6 +181,12 @@ class AgentLLM:
         task: str = "json",
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        # DeepSeek (and some other OpenAI-compatible backends) reject
+        # response_format=json_object unless the literal word "json" appears in
+        # the prompt. OpenAI/Gemini/Ollama are lenient; this guard is harmless
+        # for them and makes json mode portable across providers.
+        if "json" not in (system_prompt + user_prompt).lower():
+            system_prompt = (system_prompt + "\n\nRespond with a valid JSON object.").strip()
         kwargs: dict[str, Any] = dict(
             model=self.model,
             temperature=self.temperature,

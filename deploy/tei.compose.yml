@@ -14,16 +14,20 @@
 services:
   tei-gpu:
     profiles: ["gpu"]
-    image: ghcr.io/huggingface/text-embeddings-inference:1.5
+    # cuda-latest = all-arch PTX build; required for Blackwell sm_120 (RTX 50xx).
+    # The pinned :1.5 / :1.7 images are sm_80 only and fail on this GPU.
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
     container_name: agentrag-tei
     ports:
       - "8080:80"
     volumes:
-      # Point this at your finetuned checkpoint dir.
-      - ../models/agentrag-embed-v1:/data
+      # bge-m3 pre-downloaded on host (TEI 1.5 hf-hub downloader is broken in
+      # this env). Run offline against the mounted dir. For the finetuned
+      # checkpoint instead, mount ../models/agentrag-embed-v1:/data + --pooling=mean.
+      - ../models/bge-m3:/data
     command:
       - --model-id=/data
-      - --pooling=mean
+      - --pooling=cls
       - --max-batch-tokens=16384
     environment:
       - HF_HUB_OFFLINE=1
@@ -43,8 +47,10 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ../models/agentrag-embed-v1:/data
+      - ../models/bge-m3:/data
     command:
       - --model-id=/data
-      - --pooling=mean
+      - --pooling=cls
+    environment:
+      - HF_HUB_OFFLINE=1
     restart: unless-stopped

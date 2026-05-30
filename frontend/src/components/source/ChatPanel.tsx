@@ -38,6 +38,7 @@ import {
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { toast } from 'sonner'
 import { useTranslation } from '@/lib/hooks/use-translation'
+import type { StreamingStep } from '@/lib/hooks/useNotebookChat'
 
 interface NotebookContextStats {
   sourcesInsights: number
@@ -80,8 +81,10 @@ interface ChatPanelProps {
   notebookContextStats?: NotebookContextStats
   // Notebook ID for saving notes
   notebookId?: string
-  // Streaming progress phase for inline thinking indicator
-  streamingPhase?: 'idle' | 'connecting' | 'thinking' | 'writing' | 'finalizing'
+  // Live streaming step for inline flow indicator (mirrors backend status steps)
+  streamingStep?: StreamingStep
+  // Active tool name when streamingStep === 'tool'
+  streamingTool?: string | null
   // Cancel in-flight streaming (renders Stop button when present)
   onCancelStreaming?: () => void
 }
@@ -106,7 +109,8 @@ export function ChatPanel({
   contextType = 'source',
   notebookContextStats,
   notebookId,
-  streamingPhase = 'idle',
+  streamingStep = 'idle',
+  streamingTool,
   onCancelStreaming
 }: ChatPanelProps) {
   const { t } = useTranslation()
@@ -171,16 +175,14 @@ export function ChatPanel({
 
   const keyHint = 'Enter'
 
-  // Last AI bubble with empty content during streaming is the placeholder we
-  // fill in from SSE tokens. Render an inline ThinkingIndicator there instead
-  // of an empty prose div. If absent (e.g. regenerate flow drops the bubble
-  // entirely), fall through to the bottom-of-list indicator below.
+  // The last AI message is the active streaming target while isStreaming. We use
+  // its id to (a) render an inline ThinkingIndicator when it has no content yet,
+  // and (b) suppress its action row + follow-ups until the stream finishes — so
+  // a half-written answer never shows save/regenerate/feedback or a duplicate
+  // "Writing…" indicator beneath it.
   const lastMessage = messages[messages.length - 1]
-  const hasInlinePlaceholder =
-    isStreaming &&
-    !!lastMessage &&
-    lastMessage.type === 'ai' &&
-    !lastMessage.content.trim()
+  const streamingMsgId =
+    isStreaming && lastMessage?.type === 'ai' ? lastMessage.id : null
 
   return (
     <>
@@ -242,10 +244,15 @@ export function ChatPanel({
                       </div>
                     </div>
                   ) : (
+                    (() => {
+                    // Is THIS bubble the one currently being streamed into?
+                    const isActiveStream = message.id === streamingMsgId
+                    return (
                     <div className="group">
-                      {isStreaming && !message.content.trim() ? (
+                      {isActiveStream && !message.content.trim() ? (
                         <ThinkingIndicator
-                          phase={streamingPhase}
+                          step={streamingStep}
+                          tool={streamingTool}
                           onCancel={onCancelStreaming}
                         />
                       ) : (
@@ -255,7 +262,10 @@ export function ChatPanel({
                           onReferenceClick={handleReferenceClick}
                         />
                       )}
-                      {(!isStreaming || message.content.trim()) && (
+                      {/* Action row + follow-ups: hidden on the actively-streaming
+                          bubble (no premature save/regenerate/feedback) and on any
+                          empty bubble (so a content-less placeholder shows nothing). */}
+                      {!isActiveStream && message.content.trim() && (
                       <div className="flex items-center justify-between gap-2 mt-1 opacity-70 group-hover:opacity-100 transition-opacity">
                         <div className="flex items-center gap-1 flex-wrap">
                           <MessageActions
@@ -310,7 +320,7 @@ export function ChatPanel({
                         />
                       </div>
                       )}
-                      {message.follow_ups && message.follow_ups.length > 0 && (
+                      {!isActiveStream && message.follow_ups && message.follow_ups.length > 0 && (
                         <div className="mt-3">
                           <FollowupChips
                             suggestions={message.follow_ups}
@@ -327,12 +337,18 @@ export function ChatPanel({
                         </div>
                       )}
                     </div>
+                    )
+                    })()
                   )}
                 </div>
               ))}
-              {isStreaming && !hasInlinePlaceholder && (
+              {/* Fallback flow indicator for streaming flows that don't add an
+                  inline AI placeholder (e.g. regenerate). Never doubles with the
+                  inline indicator above. */}
+              {isStreaming && !streamingMsgId && (
                 <ThinkingIndicator
-                  phase={streamingPhase}
+                  step={streamingStep}
+                  tool={streamingTool}
                   onCancel={onCancelStreaming}
                 />
               )}
@@ -511,8 +527,8 @@ export function ChatPanel({
                 size="icon"
                 variant="destructive"
                 className="h-9 w-9 flex-shrink-0 rounded-full"
-                title={t('chat.stop') || 'Stop generating'}
-                aria-label={t('chat.stop') || 'Stop generating'}
+                title="Stop generating"
+                aria-label="Stop generating"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
               </Button>
@@ -554,6 +570,11 @@ function AIMessageContent({
   onReferenceClick: (type: string, id: string) => void
 }) {
   const { t } = useTranslation()
+  // Never render an empty prose container — an AI bubble with no content (e.g. a
+  // completion that streamed no tokens and skipped reconciliation) would otherwise
+  // show up as a stray empty bar. The active-stream placeholder is handled by the
+  // ThinkingIndicator branch upstream; here we just render nothing.
+  if (!content.trim()) return null
   const markdownWithCompactRefs = convertReferencesToCompactMarkdown(content, t('common.references'))
   // Prefer hover when citations are present; fall back to clickable when not.
   const LinkComponent = citations && citations.length > 0
@@ -615,53 +636,80 @@ function AIMessageContent({
   )
 }
 
-// Animated progress indicator shown while the assistant is preparing a reply.
-// `phase` drives the label so the user gets a hint about what the backend is
-// doing (connecting → thinking → writing → finalizing). No real-time tool/stage
-// events are emitted yet by the backend, so phase transitions are coarse but
-// at least signal that something is happening between request and first token.
+// Animated flow indicator shown while the assistant prepares a reply. `step`
+// mirrors the backend `event: status` pipeline steps, so the user sees the real
+// agent flow (classifying → retrieving → running a tool → answering) instead of
+// a dumb spinner. `tool` carries the active tool name when step === 'tool'.
 function ThinkingIndicator({
-  phase,
+  step,
+  tool,
   onCancel,
 }: {
-  phase: 'idle' | 'connecting' | 'thinking' | 'writing' | 'finalizing'
+  step: StreamingStep
+  tool?: string | null
   onCancel?: () => void
 }) {
-  const { t } = useTranslation()
-  const phaseLabel = (() => {
-    switch (phase) {
+  const label = (() => {
+    switch (step) {
       case 'connecting':
-        return t('chat.connecting') || 'Connecting…'
-      case 'thinking':
-        return t('chat.thinking') || 'Thinking…'
+        return 'Connecting…'
+      case 'chitchat':
+        return 'Replying…'
+      case 'classify':
+        return 'Understanding your question…'
+      case 'structured_reasoning':
+        return 'Analyzing structured data…'
+      case 'retrieve':
+        return 'Searching documents…'
+      case 'decide':
+        return 'Planning next step…'
+      case 'tool': {
+        const pretty = tool ? prettyToolName(tool) : ''
+        return pretty ? `Running tool: ${pretty}…` : 'Running tool…'
+      }
+      case 'answer':
+        return 'Composing answer…'
       case 'writing':
-        return t('chat.writing') || 'Writing…'
+        return 'Writing…'
       case 'finalizing':
-        return t('chat.finalizing') || 'Finalizing…'
+        return 'Finalizing…'
       default:
-        return t('chat.thinking') || 'Thinking…'
+        return 'Thinking…'
     }
   })()
   return (
-    <div className="flex items-center gap-3 text-muted-foreground">
+    <div className="flex items-center gap-3 text-muted-foreground" role="status" aria-live="polite">
       <div className="flex items-center gap-1" aria-hidden>
         <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.3s]" />
         <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce [animation-delay:-0.15s]" />
         <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce" />
       </div>
-      <span className="text-xs">{phaseLabel}</span>
+      <span className="text-xs transition-opacity duration-150">{label}</span>
       {onCancel && (
         <Button
           variant="ghost"
           size="sm"
           className="h-6 px-2 text-xs gap-1"
           onClick={onCancel}
-          title={t('chat.stop') || 'Stop generating'}
+          title="Stop generating"
         >
           <Square className="h-3 w-3 fill-current" />
-          {t('chat.stop') || 'Stop'}
+          Stop
         </Button>
       )}
     </div>
   )
+}
+
+// Map raw backend tool identifiers to human-friendly names for the flow label.
+function prettyToolName(tool: string): string {
+  const map: Record<string, string> = {
+    search_hybrid_kg: 'hybrid search',
+    search_hybrid: 'hybrid search',
+    search_vector: 'vector search',
+    search_keyword: 'keyword search',
+    search_sql: 'database query',
+    sql: 'database query',
+  }
+  return map[tool] || tool.replace(/_/g, ' ')
 }

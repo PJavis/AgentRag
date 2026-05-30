@@ -19,6 +19,21 @@ import {
 } from '@/lib/types/api'
 import { ContextSelections } from '@/app/(dashboard)/notebooks/[id]/page'
 
+// Live streaming step surfaced to the UI flow indicator. Mirrors the backend
+// `event: status` step values plus a few client-side phases.
+export type StreamingStep =
+  | 'idle'
+  | 'connecting'
+  | 'chitchat'
+  | 'classify'
+  | 'structured_reasoning'
+  | 'retrieve'
+  | 'decide'
+  | 'tool'
+  | 'answer'
+  | 'writing'
+  | 'finalizing'
+
 interface UseNotebookChatParams {
   notebookId: string
   sources: SourceListResponse[]
@@ -36,14 +51,23 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
   const [charCount, setCharCount] = useState<number>(0)
   // Pending model override for when user changes model before a session exists
   const [pendingModelOverride, setPendingModelOverride] = useState<string | null>(null)
-  // Streaming progress phases for richer UI feedback:
-  //   idle      → no stream in flight
-  //   connecting → request sent, no HTTP response yet
-  //   thinking  → response open, retrieval/planning, no tokens yet
-  //   writing   → first token arrived, content streaming
-  //   finalizing → stream ended, refetching server state
-  type StreamingPhase = 'idle' | 'connecting' | 'thinking' | 'writing' | 'finalizing'
-  const [streamingPhase, setStreamingPhase] = useState<StreamingPhase>('idle')
+  // Streaming progress for richer "flow" UI feedback. The backend emits
+  // `event: status` frames with a `step` field as the agent moves through its
+  // pipeline; we surface that live so the user sees what's happening instead of
+  // a dumb spinner. Steps (from src/agentrag/agent/service.py):
+  //   connecting          → client-side: request sent, no HTTP response yet
+  //   chitchat            → fast-path small-talk reply
+  //   classify            → intent classification
+  //   structured_reasoning→ structured (SQL/table) pipeline running
+  //   retrieve            → semantic/KG retrieval
+  //   decide              → agent deciding next tool
+  //   tool                → executing a tool (carries `tool` name)
+  //   answer              → composing the final answer (tokens follow)
+  //   writing             → client-side: first token arrived
+  //   finalizing          → client-side: stream ended, reconciling server state
+  //   idle                → no stream in flight
+  const [streamingStep, setStreamingStep] = useState<StreamingStep>('idle')
+  const [streamingTool, setStreamingTool] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
 
   // Fetch sessions for this notebook
@@ -391,7 +415,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       { id: aiPlaceholderId, type: 'ai', content: '', timestamp: new Date().toISOString() },
     ])
     setIsSending(true)
-    setStreamingPhase('connecting')
+    setStreamingStep('connecting')
+    setStreamingTool(null)
     // Fresh AbortController for this stream so cancel() can interrupt it.
     abortControllerRef.current?.abort()
     const abortController = new AbortController()
@@ -429,7 +454,6 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       if (!resp.ok || !resp.body) {
         throw new Error(`HTTP ${resp.status}`)
       }
-      setStreamingPhase('thinking')
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -453,23 +477,29 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
           if (!dataLine) continue
           try {
             const data = JSON.parse(dataLine)
-            if (eventName === 'token' && typeof data.text === 'string') {
+            if (eventName === 'status' && typeof data.step === 'string') {
+              // Live agent pipeline step → drive the flow indicator.
+              setStreamingStep(data.step as StreamingStep)
+              setStreamingTool(typeof data.tool === 'string' ? data.tool : null)
+            } else if (eventName === 'token' && typeof data.text === 'string') {
               accumulated += data.text
-              if (accumulated.length > 0) setStreamingPhase('writing')
+              if (accumulated.length > 0) setStreamingStep('writing')
               setMessages(prev =>
                 prev.map(m => (m.id === aiPlaceholderId ? { ...m, content: accumulated } : m))
               )
             } else if (eventName === 'done') {
               reasoningPath = String(data.reasoning_path || '')
             } else if (eventName === 'error') {
-              throw new Error(String(data.detail || 'stream error'))
+              // Backend emits {"message": ...}; older paths use {"detail": ...}.
+              throw new Error(String(data.message || data.detail || 'stream error'))
             }
-          } catch {
-            // ignore bad JSON frame
+          } catch (frameErr) {
+            // Re-throw stream `error` events; swallow only JSON-parse noise.
+            if (eventName === 'error') throw frameErr
           }
         }
       }
-      setStreamingPhase('finalizing')
+      setStreamingStep('finalizing')
       // Final reconciliation — refetch real session to pick up server-side
       // message_ids, citations, follow_ups, etc.
       if (reasoningPath) {
@@ -486,7 +516,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
         setMessages(prev =>
           prev.filter(m => !(m.id === aiPlaceholderId && !m.content))
         )
-        toast.info(t('chat.stopped') || 'Generation stopped')
+        toast.info('Generation stopped')
       } else {
         console.warn('streaming failed, falling back to non-streaming:', err)
         // Drop the placeholder bubbles and fall back to the existing path.
@@ -495,7 +525,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       }
     } finally {
       setIsSending(false)
-      setStreamingPhase('idle')
+      setStreamingStep('idle')
+      setStreamingTool(null)
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null
       }
@@ -617,7 +648,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     currentSessionId,
     messages,
     isSending,
-    streamingPhase,
+    streamingStep,
+    streamingTool,
     loadingSessions,
     tokenCount,
     charCount,

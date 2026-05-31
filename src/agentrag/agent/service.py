@@ -635,8 +635,13 @@ class AgentService:
         else:
             verbose = _is_verbose_followup(question)
         length_directive = (
-            "LENGTH: thorough, multi-paragraph. For summary/overview requests use "
-            "sections: Định nghĩa, Phân loại, Nguyên nhân, Chẩn đoán, Điều trị, Tiên lượng. "
+            "LENGTH: thorough, multi-paragraph. STRUCTURE (required): start each "
+            "section with a Markdown H2 heading on its own line (e.g. `## Định nghĩa`), "
+            "then the body below it. For medical/overview topics use these sections "
+            "when relevant: Tổng quan, Định nghĩa, Phân loại, Nguyên nhân, Chẩn đoán, "
+            "Điều trị, Tiên lượng. Use NUMBERED lists (`1.` `2.` `3.`) for "
+            "classifications, causes, steps and ranked items; bullets only for "
+            "non-sequential parallel facts. Bold key terms. "
             if verbose
             else
             "LENGTH: concise — focus on the question. Still use **bold** and bullets when appropriate. "

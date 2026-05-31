@@ -73,8 +73,21 @@ def _model_row(
 
 
 def _agent_model() -> dict[str, Any]:
-    provider = settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER
+    # "Default" must reflect the model that actually answers a no-override chat:
+    # the LLM_TASK_MODEL_MAP 'answer' entry when routing is on, else AGENT_MODEL.
+    # (AGENT_MODEL is only the fallback for unmapped internal tasks.)
+    import json
+
     name = settings.AGENT_MODEL or settings.EXTRACTION_MODEL
+    provider = settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER
+    if settings.LLM_ROUTING_ENABLED:
+        try:
+            answer = json.loads(settings.LLM_TASK_MODEL_MAP or "{}").get("answer")
+            if answer:
+                name = str(answer)
+                provider = _provider_for_model(name)
+        except (json.JSONDecodeError, TypeError):
+            pass
     return _model_row(
         model_id=f"agent::{provider}::{name}",
         name=name,
@@ -154,8 +167,15 @@ def _task_map_models() -> list[dict[str, Any]]:
 
 
 def _all_models() -> list[dict[str, Any]]:
-    out = [_agent_model(), _extraction_model(), _embedding_model()]
-    out.extend(_task_map_models())
+    # End-user picker: Default (the real answer model) + cloud answer-grade chat
+    # models from the task map (deepseek/openai/gemini). Internal routing models
+    # (llama3.2:3b) and the extraction/coder model are hidden — they confuse users
+    # and aren't meaningful chat choices.
+    out = [_agent_model()]
+    for m in _task_map_models():
+        if m["provider"] in ("deepseek", "openai", "gemini"):
+            out.append(m)
+    out.append(_embedding_model())
     v = _vision_model()
     if v:
         out.append(v)

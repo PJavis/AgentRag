@@ -45,6 +45,10 @@ def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
     specs = filters.get("specialties") or []
     if specs:
         clauses.append({"terms": {"specialty_tag": list(specs)}})
+    # Document scope — restrict to a ticked subset of sources (by title).
+    doc_titles = filters.get("document_titles") or []
+    if doc_titles:
+        clauses.append({"terms": {"document_title.keyword": list(doc_titles)}})
     return clauses
 
 

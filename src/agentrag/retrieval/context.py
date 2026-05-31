@@ -21,3 +21,20 @@ def set_domain_filter(value: dict[str, Any] | None):
 
 def get_domain_filter() -> dict[str, Any] | None:
     return _domain_filter.get()
+
+
+# Per-turn document scope — when the user ticks a subset of notebook sources,
+# every retrieval in the turn is restricted to those document titles (faster +
+# focused). Empty/None = search all documents.
+_document_scope: ContextVar[list[str] | None] = ContextVar(
+    "agentrag_document_scope", default=None
+)
+
+
+def set_document_scope(titles: list[str] | None):
+    """Restrict this turn's retrieval to the given document titles."""
+    return _document_scope.set(titles or None)
+
+
+def get_document_scope() -> list[str] | None:
+    return _document_scope.get()

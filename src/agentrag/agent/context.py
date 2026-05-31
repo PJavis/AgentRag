@@ -136,13 +136,40 @@ class ContextAssembler:
         if token_budget > 0:
             selected: list[dict[str, Any]] = []
             used = 0
-            for item in ranked:
+            deferred: list[dict[str, Any]] = []
+            per_bucket: dict[Any, int] = {}
+            # Coverage diversity: a long/detailed answer needs material from the
+            # WHOLE document, but pure relevance-order fill stacks the top-scoring
+            # section (e.g. the intro) and starves later parts. Cap how many chunks
+            # come from the same page/section in the first pass, then backfill any
+            # remaining budget. Spreads context across the doc so each part can be
+            # detailed instead of padding page 1.
+            def _bucket(it: dict[str, Any]) -> Any:
+                return (
+                    it.get("page_start")
+                    or it.get("section_path")
+                    or it.get("position")
+                    or id(it)
+                )
+
+            for item in ranked:  # relevance order
                 t = _estimate_tokens(item.get("content") or "")
+                b = _bucket(item)
+                if per_bucket.get(b, 0) >= 3:
+                    deferred.append(item)
+                    continue
                 if selected and used + t > token_budget:
-                    break
+                    continue
                 selected.append(item)
                 used += t
-            # Always keep at least 1 chunk if we have any candidates.
+                per_bucket[b] = per_bucket.get(b, 0) + 1
+            # Backfill leftover budget with the deferred (still relevance-ordered).
+            for item in deferred:
+                t = _estimate_tokens(item.get("content") or "")
+                if used + t > token_budget:
+                    continue
+                selected.append(item)
+                used += t
             if not selected and ranked:
                 selected = ranked[:1]
         else:

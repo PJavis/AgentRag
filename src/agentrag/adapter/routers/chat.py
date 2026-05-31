@@ -874,12 +874,17 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             from src.agentrag.retrieval.context import set_domain_filter
             set_domain_filter(effective_domain_filter)
             agent = get_agent_service()
+            # The picker sends a `prefix::provider::model` id — take the bare
+            # model name (e.g. deepseek-v4-pro) so AgentLLM prefix-routing applies.
+            _ov = body.model_override
+            _ov = _ov.split("::")[-1] if _ov and "::" in _ov else _ov
             collected: list[str] = []
             async for chunk in agent.chat_stream(
                 question=body.message,
                 document_title=document_title,
                 chat_history=history,
                 conversation_id=body.session_id,
+                model_override=_ov,
             ):
                 if "event: token" in chunk:
                     try:

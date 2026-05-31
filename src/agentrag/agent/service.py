@@ -199,6 +199,7 @@ class AgentService:
         document_title: str | None = None,
         chat_history: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        model_override: str | None = None,
     ) -> AsyncIterator[str]:
         """
         SSE generator. Yields chuỗi "data: <json>\\n\\n" theo Server-Sent Events format.
@@ -339,7 +340,12 @@ class AgentService:
                 user_payload["conversation_memory"] = memory_context
             user_prompt = json.dumps(user_payload, ensure_ascii=True)
 
-            client = self.llm_gateway._resolve_client("answer")
+            # UI model override (picker) wins for the answer step; else task routing.
+            if model_override:
+                from src.agentrag.agent.llm import AgentLLM
+                client = AgentLLM(model_override=model_override)
+            else:
+                client = self.llm_gateway._resolve_client("answer")
             async for token in client.stream_text(system_prompt, user_prompt):
                 yield _sse("token", {"text": token})
 

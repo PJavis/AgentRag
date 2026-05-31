@@ -145,12 +145,12 @@ class ContextAssembler:
             # remaining budget. Spreads context across the doc so each part can be
             # detailed instead of padding page 1.
             def _bucket(it: dict[str, Any]) -> Any:
-                return (
-                    it.get("page_start")
-                    or it.get("section_path")
-                    or it.get("position")
-                    or id(it)
-                )
+                # Key by (document, page/section) so coverage spreads across BOTH
+                # documents and within-document parts — multi-doc queries must not
+                # let one file's pages crowd out the others (doc A p1 ≠ doc B p1).
+                doc = it.get("document_title") or ""
+                part = it.get("page_start") or it.get("section_path") or it.get("position") or id(it)
+                return (doc, part)
 
             for item in ranked:  # relevance order
                 t = _estimate_tokens(item.get("content") or "")

@@ -519,12 +519,30 @@ async def delete_source(source_id: str):
         doc = await session.get(Document, _parse_source_id(source_id))
         if not doc:
             raise HTTPException(404, "Source not found")
+        title = doc.title
         await session.execute(
             delete(Segment).where(Segment.document_id == doc.id)
         )
         await session.delete(doc)
         await session.commit()
-        return {"message": "Source deleted"}
+
+    # Purge the search/memory layers so deleted content stops being retrievable.
+    es_result: dict = {}
+    if title:
+        try:
+            from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
+            es_result = await ElasticsearchStore().delete_document(title)
+        except Exception:
+            pass
+        # Remove the document's extracted-image folder (same sanitiser as image_parser).
+        try:
+            import re as _re
+            from pathlib import Path as _Path
+            safe_dir = _re.sub(r"[^\w\-]", "_", title)[:80]
+            shutil.rmtree(_Path(settings.IMAGE_STORAGE_DIR) / safe_dir, ignore_errors=True)
+        except Exception:
+            pass
+    return {"message": "Source deleted", "purged": es_result}
 
 
 @router.get("/{source_id}/status")

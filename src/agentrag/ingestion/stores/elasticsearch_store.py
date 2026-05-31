@@ -86,6 +86,31 @@ class ElasticsearchStore:
             return True
         return False
 
+    async def delete_document(self, document_title: str) -> dict[str, Any]:
+        """Purge every ES doc belonging to a source (by document_title) across the
+        segment, StructMem-memory, entity and relationship indices. Best-effort:
+        missing indices / fields are ignored. Returns per-index deleted counts."""
+        from src.agentrag.config import settings as _settings
+
+        query = {"query": {"term": {"document_title.keyword": document_title}}}
+        indices = [
+            self.index_name,
+            _settings.STRUCTMEM_INDEX,
+            self.entity_index_name,
+            self.relationship_index_name,
+        ]
+        result: dict[str, Any] = {}
+        for idx in indices:
+            try:
+                resp = await self.client.delete_by_query(
+                    index=idx, body=query, conflicts="proceed",
+                    refresh=True, ignore_unavailable=True,
+                )
+                result[idx] = resp.get("deleted", 0)
+            except Exception as exc:  # missing field/index → skip
+                result[idx] = f"skip:{type(exc).__name__}"
+        return result
+
     async def ensure_index(self, embedding_dims: int) -> None:
         await self._recreate_index_if_dims_changed(self.index_name, embedding_dims)
         exists = await self.client.indices.exists(index=self.index_name)

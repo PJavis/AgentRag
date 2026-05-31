@@ -664,7 +664,11 @@ class AgentService:
             # Markdown formatting — frontend renders ReactMarkdown + GFM + KaTeX.
             f"{MARKDOWN_FORMAT_RULES}"
             f"{length_directive}"
-            "When context contains multiple documents, focus on the document(s) directly relevant to the question; ignore unrelated documents. "
+            "MULTI-DOCUMENT: each context item has a 'document_title'. Attribute facts to "
+            "their source document (name it). When several documents are relevant — comparison, "
+            "'summarize all', or multi-source questions — cover EACH relevant document in detail "
+            "and explicitly RELATE them: note where they agree, differ, or complement, per topic/part. "
+            "Only ignore documents genuinely unrelated to the question. "
             "If the question is too vague to give a useful answer (e.g., which item, which document, or which aspect is missing), "
             "set answer to ONE focused clarifying question, citations to [], and highlights to []. "
             "Do not answer and ask at the same time. "

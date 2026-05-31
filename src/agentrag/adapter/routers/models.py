@@ -114,18 +114,59 @@ def _vision_model() -> dict[str, Any] | None:
     )
 
 
+def _provider_for_model(name: str) -> str:
+    """Infer provider from a model name's prefix — mirrors AgentLLM routing."""
+    m = (name or "").lower()
+    if m.startswith("gemini-") or m.startswith("gemma-"):
+        return "gemini"
+    if m.startswith("gpt-") or m.startswith("o1") or m.startswith("o3"):
+        return "openai"
+    if m.startswith("deepseek"):
+        return "deepseek"
+    return settings.AGENT_PROVIDER or settings.EXTRACTION_PROVIDER or "ollama"
+
+
+def _task_map_models() -> list[dict[str, Any]]:
+    """Surface every distinct model in LLM_TASK_MODEL_MAP (e.g. deepseek-v4-pro)
+    so the chat picker can select them — not just AGENT/EXTRACTION."""
+    import json
+
+    try:
+        task_map = json.loads(settings.LLM_TASK_MODEL_MAP or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for model in (str(v) for v in task_map.values() if v):
+        if model in seen:
+            continue
+        seen.add(model)
+        provider = _provider_for_model(model)
+        rows.append(
+            _model_row(
+                model_id=f"task::{provider}::{model}",
+                name=model,
+                provider=provider,
+                mtype="language",
+            )
+        )
+    return rows
+
+
 def _all_models() -> list[dict[str, Any]]:
     out = [_agent_model(), _extraction_model(), _embedding_model()]
+    out.extend(_task_map_models())
     v = _vision_model()
     if v:
         out.append(v)
-    # Dedupe by id
+    # Dedupe by (type, name) so the same model from agent + task-map shows once.
     seen = set()
     deduped = []
     for m in out:
-        if m["id"] in seen:
+        key = (m["type"], m["name"])
+        if key in seen:
             continue
-        seen.add(m["id"])
+        seen.add(key)
         deduped.append(m)
     return deduped
 

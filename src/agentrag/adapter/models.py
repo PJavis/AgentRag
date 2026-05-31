@@ -133,6 +133,8 @@ class ExecuteChatRequest(BaseModel):
     session_id: str
     message: str
     context: Any = None  # string (built context text) or dict — ignored, we do our own RAG
+    # Ticked source subset → restrict retrieval to these documents (speed + focus).
+    source_ids: list[str] | None = None
     model_override: str | None = None
     # S5 — UI dropdown override. {"system": "tim_mach", "specialties": [...]}
     domain_filter: dict[str, Any] | None = None

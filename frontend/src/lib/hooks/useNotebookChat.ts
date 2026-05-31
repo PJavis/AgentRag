@@ -445,6 +445,13 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
           session_id: sessionId,
           message,
           context: { sources: [], notes: [] },
+          // Ticked sources → scope retrieval to just those documents (speed + focus).
+          source_ids: sources
+            .filter(s => {
+              const m = contextSelections.sources[s.id]
+              return m === 'insights' || m === 'full'
+            })
+            .map(s => s.id),
           model_override: modelOverride ?? (currentSession?.model_override ?? undefined),
           domain_filter: normalizedDomainFilter,
           verbosity: verbosity ?? undefined,

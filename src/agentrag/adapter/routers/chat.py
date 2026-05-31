@@ -750,10 +750,22 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
 
     notebook_id = (conv.get("extra_metadata") or {}).get("notebook_id")
     document_title: str | None = None
-    try:
-        document_title = await _resolve_document_hint(body.message, notebook_id)
-    except Exception:
-        _log.exception("execute_chat_stream: _resolve_document_hint failed")
+    # Ticked source subset → restrict retrieval to those documents (speed + focus).
+    scope_titles: list[str] = []
+    if body.source_ids:
+        for sid in body.source_ids:
+            try:
+                t = await _get_document_title(sid)
+                if t:
+                    scope_titles.append(t)
+            except Exception:
+                pass
+    if not scope_titles:
+        # No explicit selection → keep the single-doc hint heuristic.
+        try:
+            document_title = await _resolve_document_hint(body.message, notebook_id)
+        except Exception:
+            _log.exception("execute_chat_stream: _resolve_document_hint failed")
 
     history: list[dict] = []
     try:
@@ -871,8 +883,9 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                 return
 
             # Semantic path — stream via agent.chat_stream.
-            from src.agentrag.retrieval.context import set_domain_filter
+            from src.agentrag.retrieval.context import set_domain_filter, set_document_scope
             set_domain_filter(effective_domain_filter)
+            set_document_scope(scope_titles)
             agent = get_agent_service()
             # The picker sends a `prefix::provider::model` id — take the bare
             # model name (e.g. deepseek-v4-pro) so AgentLLM prefix-routing applies.

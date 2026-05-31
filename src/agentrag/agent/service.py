@@ -437,7 +437,9 @@ class AgentService:
             ensure_ascii=False,
         )
         try:
-            client = self.llm_gateway._resolve_client("decide")
+            # Own task key so planning can route to a strong model (e.g. v4-pro)
+            # independently of the cheap reactive `decide` step.
+            client = self.llm_gateway._resolve_client("plan")
             result = await client.json_response(system, user)
         except Exception:
             return []

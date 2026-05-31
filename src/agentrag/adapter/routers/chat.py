@@ -885,6 +885,7 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                 chat_history=history,
                 conversation_id=body.session_id,
                 model_override=_ov,
+                verbosity=body.verbosity,
             ):
                 if "event: token" in chunk:
                     try:

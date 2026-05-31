@@ -492,6 +492,7 @@ class GraphAgentService:
         chat_history: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
         model_override: str | None = None,
+        verbosity: str | None = None,
     ) -> AsyncIterator[str]:
         """Streaming not yet implemented for v2 — fall back to inner."""
         async for chunk in _INNER.chat_stream(
@@ -500,5 +501,6 @@ class GraphAgentService:
             chat_history=chat_history or [],
             conversation_id=conversation_id,
             model_override=model_override,
+            verbosity=verbosity,
         ):
             yield chunk

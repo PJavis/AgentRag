@@ -103,6 +103,62 @@ _CHITCHAT_SYSTEM_PROMPT = (
 
 from src.agentrag.agent.context import _lost_in_middle_reorder
 from src.agentrag.config import settings
+
+
+def _answer_system_prompt(
+    question: str, verbose: bool, packed_context: list[dict[str, Any]] | None
+) -> str:
+    """Shared answer-prompt builder for the streaming chat (and reusable elsewhere).
+
+    Encodes: grounding, inline [n] citations keyed to each context item's
+    'source', length/format (detailed → H2 headings + numbered lists), and a
+    multi-document COMPARE mode (table + relations) when the packed context spans
+    ≥2 documents.
+    """
+    docs = {(c.get("document_title") or "").strip() for c in (packed_context or [])}
+    docs.discard("")
+    multi_doc = len(docs) >= 2
+
+    if verbose:
+        length = (
+            "LENGTH: thorough and detailed. Start each section with a Markdown H2 heading on "
+            "its own line (e.g. `## Định nghĩa`), body below. Use NUMBERED lists (`1.` `2.` `3.`) "
+            "for classifications, causes, steps and ranked items; bullets only for non-sequential "
+            "parallel facts. Cover EVERY relevant part — do not stop at the first section. "
+        )
+    else:
+        length = (
+            "LENGTH: concise — answer directly; 1–3 sentences for a lookup, a short structured "
+            "reply for an explanation. "
+        )
+
+    if multi_doc:
+        multidoc = (
+            "MULTI-DOCUMENT COMPARE MODE: the context spans multiple documents (each item has a "
+            "'document_title'). (1) Produce a GFM comparison table — one row per topic/part, one "
+            "column per document (column header = the document_title), each cell = that document's "
+            "content on that part (use '—' when a document doesn't cover it). (2) Then a "
+            "`## Mối liên hệ giữa các tài liệu` section stating where the documents agree, differ, "
+            "complement each other, or leave gaps. Attribute every fact to its source document. "
+        )
+    else:
+        multidoc = "Name the source document for key facts; focus on the document(s) relevant to the question. "
+
+    return (
+        f"{_lang_instruction(question)} "
+        "You are a knowledgeable research companion — warm, direct, intellectually honest. "
+        "PRIMARY RULE: factual claims must come ONLY from the provided context; do NOT invent "
+        "facts, pages, or quotations. ANTI-SYCOPHANCY: if the user is contradicted by the context, "
+        "push back and cite the contradicting passage. UNCERTAINTY: if context is thin or absent, "
+        "say so plainly instead of guessing. "
+        "INLINE CITATIONS: every context item has a numeric 'source' field; append the supporting "
+        "source number(s) in square brackets immediately after each factual sentence — e.g. "
+        "'Hà Nội là thủ đô [1].' Cite ONLY the source(s) that support the claim; never invent numbers. "
+        f"{length}{multidoc}{MARKDOWN_FORMAT_RULES} "
+        "CONVERSATIONAL: greetings / small talk → reply briefly without retrieval and no citations. "
+        "Do NOT return JSON. If the question is too vague to answer usefully, ask ONE focused "
+        "clarifying question (don't both answer and ask)."
+    )
 from src.agentrag.services import (
     ContextAssemblyService,
     KnowledgeService,
@@ -200,6 +256,7 @@ class AgentService:
         chat_history: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
         model_override: str | None = None,
+        verbosity: str | None = None,
     ) -> AsyncIterator[str]:
         """
         SSE generator. Yields chuỗi "data: <json>\\n\\n" theo Server-Sent Events format.
@@ -317,24 +374,23 @@ class AgentService:
 
             # ── Stream answer tokens ──────────────────────────────────────────
             yield _sse("status", {"step": "answer"})
-            system_prompt = (
-                f"{_lang_instruction(question)} "
-                "You are a knowledgeable research companion — warm, direct, and intellectually honest. Sound like a smart friend, not a corporate FAQ. "
-                "PRIMARY RULE: factual claims about the documents must come ONLY from the provided context. Do NOT invent facts, page numbers, or quotations. "
-                "ANTI-SYCOPHANCY: if the user states something contradicted by the context, push back politely and cite the contradicting passage. "
-                "Do NOT agree to be agreeable. It is better to disagree correctly than to flatter wrongly. "
-                "UNCERTAINTY: if context is thin or absent for the question, say so plainly (\"the document doesn't cover X\") instead of guessing. "
-                "Never fabricate citations. "
-                "LENGTH: match question intent — 'tóm tắt'/'explain'/'overview' → structured multi-paragraph with bullets; factual lookup → 1–3 sentences. "
-                "Surface concrete details (names, numbers, definitions, examples) from context — do NOT default to vague descriptions when specifics exist. "
-                "MULTI-DOC: focus only on the document(s) directly relevant; ignore unrelated documents. "
-                "CONVERSATIONAL: greetings / small talk / off-topic chat → reply briefly and warmly without retrieval; do NOT force-fit context. "
-                "Do NOT return JSON. If the question is too vague to answer usefully, ask ONE focused clarifying question (don't both answer and ask)."
-            )
+            packed = assembly["packed_context"]
+            if verbosity == "detailed":
+                verbose = True
+            elif verbosity == "concise":
+                verbose = False
+            else:
+                verbose = _is_verbose_followup(question)
+            system_prompt = _answer_system_prompt(question, verbose, packed)
+            # Lost-in-middle reorder for the prompt copy only; returned context
+            # stays in relevance order so inline [n] maps to retrieval_context[n-1].
+            prompt_context = packed
+            if settings.AGENT_LOST_IN_MIDDLE_REORDER and len(packed) > 2:
+                prompt_context = _lost_in_middle_reorder(packed)
             user_payload: dict[str, Any] = {
                 "question": question,
                 "chat_history": self.summarize_history(chat_history, limit=6),
-                "context": assembly["packed_context"],
+                "context": prompt_context,
             }
             if memory_context:
                 user_payload["conversation_memory"] = memory_context

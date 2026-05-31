@@ -116,6 +116,14 @@ services:
       POSTGRES_HOST: postgres
       ELASTICSEARCH_URL: http://elasticsearch:9200
       REDIS_URL: redis://valkey:6379/0
+      # GPU services (TEI embed + Ollama light tasks) run on the host → reach
+      # them via the docker host gateway, not the .env 127.0.0.1 values.
+      EMBEDDING_BASE_URL: http://host.docker.internal:8080/v1/
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1/
+      # Self-hosted Langfuse is on the compose network (observability profile).
+      LANGFUSE_HOST: http://langfuse:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,6 +153,11 @@ services:
       POSTGRES_HOST: postgres
       ELASTICSEARCH_URL: http://elasticsearch:9200
       REDIS_URL: redis://valkey:6379/0
+      EMBEDDING_BASE_URL: http://host.docker.internal:8080/v1/
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1/
+      LANGFUSE_HOST: http://langfuse:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       api:
         condition: service_healthy

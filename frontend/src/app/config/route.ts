@@ -44,11 +44,10 @@ export async function GET(request: NextRequest) {
     const hostHeader = request.headers.get('host')
 
     if (hostHeader) {
-      // Extract just the hostname (remove port if present)
-      const hostname = hostHeader.split(':')[0]
-
-      // Construct the API URL with port 5055
-      const apiUrl = `${proto}://${hostname}:5055`
+      // Same-origin: the browser calls the page origin and Next rewrites /api/*
+      // to INTERNAL_API_URL server-side. Keep the request's own host:port instead
+      // of hardcoding :5055 (which breaks any deploy not on that port).
+      const apiUrl = `${proto}://${hostHeader}`
 
       console.log(`[runtime-config] Auto-detected API URL: ${apiUrl} (proto=${proto}, host=${hostHeader})`)
 

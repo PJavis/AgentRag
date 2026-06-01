@@ -90,7 +90,11 @@ MARKDOWN_FORMAT_RULES = (
     "GFM tables `| a | b |` for comparisons; LaTeX `$...$` or `$$...$$` for formulas "
     "(eGFR, BMI, dose calc, ratios, statistics); "
     "`> blockquote` only for safety warnings or contraindications. "
-    "Each section heading on its own line, body below. Never inline heading with body."
+    "Each section heading on its own line, body below. Never inline heading with body. "
+    "For any answer longer than ~4 sentences: split it under `##`/`###` section headings, "
+    "use NUMBERED lists (`1.` `2.`) for sequences/steps/ranked items and `- ` bullets for "
+    "parallel facts. MIX prose passages with lists — never answer as one unbroken wall of "
+    "text, and never as pure bullets with no connecting prose."
 )
 
 
@@ -751,6 +755,8 @@ class AgentService:
             "Điều trị, Tiên lượng. Use NUMBERED lists (`1.` `2.` `3.`) for "
             "classifications, causes, steps and ranked items; bullets only for "
             "non-sequential parallel facts. Bold key terms. "
+            "Open each section with a 1-2 sentence prose passage before any list, so the "
+            "answer reads as mixed prose + bullets, not bullets alone. "
             if verbose
             else
             "LENGTH: concise — focus on the question. Still use **bold** and bullets when appropriate. "

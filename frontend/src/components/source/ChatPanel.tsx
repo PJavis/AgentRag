@@ -87,6 +87,9 @@ interface ChatPanelProps {
   streamingTool?: string | null
   // Cancel in-flight streaming (renders Stop button when present)
   onCancelStreaming?: () => void
+  // Document-aware starter suggestions for the empty state (owned by parent query)
+  dynamicStarters?: string[]
+  startersLoading?: boolean
 }
 
 export function ChatPanel({
@@ -111,7 +114,9 @@ export function ChatPanel({
   notebookId,
   streamingStep = 'idle',
   streamingTool,
-  onCancelStreaming
+  onCancelStreaming,
+  dynamicStarters = [],
+  startersLoading = false
 }: ChatPanelProps) {
   const { t } = useTranslation()
   const chatInputId = useId()
@@ -184,6 +189,19 @@ export function ChatPanel({
   const streamingMsgId =
     isStreaming && lastMessage?.type === 'ai' ? lastMessage.id : null
 
+  // Fixed universal starters (instant, client-side). `q` is the prompt sent.
+  const FIXED_STARTERS: { label: string; q: string }[] = [
+    { label: '📋 Tóm tắt tài liệu', q: 'Tóm tắt chi tiết tài liệu này' },
+    { label: '🔍 Các điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
+  ]
+  const sendStarter = (q: string) =>
+    onSendMessage(
+      q,
+      modelOverride,
+      contextType === 'notebook' ? domainFilter : undefined,
+      verbosity,
+    )
+
   return (
     <>
     <div className="relative flex flex-col h-full flex-1 overflow-hidden bg-background">
@@ -224,14 +242,48 @@ export function ChatPanel({
       <ScrollArea className="flex-1 min-h-0" ref={scrollAreaRef}>
         <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8">
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center text-center min-h-[60vh]">
-              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                <Bot className="h-6 w-6 text-primary" />
+            <div className="flex flex-col items-center justify-center text-center min-h-[60vh] gap-6">
+              <div className="flex flex-col items-center">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                  <Bot className="h-6 w-6 text-primary" />
+                </div>
+                <h2 className="text-xl font-semibold mb-2">
+                  {title || t('chat.startConversation').replace('{type}', contextType === 'source' ? t('navigation.sources') : t('common.notebook'))}
+                </h2>
+                <p className="text-sm text-muted-foreground">{t('chat.askQuestions')}</p>
               </div>
-              <h2 className="text-xl font-semibold mb-2">
-                {title || t('chat.startConversation').replace('{type}', contextType === 'source' ? t('navigation.sources') : t('common.notebook'))}
-              </h2>
-              <p className="text-sm text-muted-foreground">{t('chat.askQuestions')}</p>
+              {!isStreaming && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl" data-testid="chat-starters">
+                  {FIXED_STARTERS.map((chip) => (
+                    <button
+                      key={chip.label}
+                      type="button"
+                      onClick={() => sendStarter(chip.q)}
+                      className="text-left text-sm px-4 py-3 rounded-xl border bg-muted/40 hover:bg-accent transition-colors"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                  {startersLoading
+                    ? [0, 1, 2].map((i) => (
+                        <div
+                          key={`sk-${i}`}
+                          data-testid="starter-skeleton"
+                          className="h-[46px] rounded-xl border bg-muted/40 animate-pulse"
+                        />
+                      ))
+                    : dynamicStarters.map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => sendStarter(q)}
+                          className="text-left text-sm px-4 py-3 rounded-xl border bg-muted/40 hover:bg-accent transition-colors"
+                        >
+                          💡 {q}
+                        </button>
+                      ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-8">
@@ -400,32 +452,6 @@ export function ChatPanel({
       {/* Input Area: floating pill, centered */}
       <div className="flex-shrink-0 px-4 sm:px-6 pb-4 pt-2">
         <div className="max-w-3xl mx-auto w-full space-y-3">
-          {/* Quick-start chips — show when input is empty and no messages yet */}
-          {!input.trim() && messages.length === 0 && !isStreaming && (
-            <div className="flex flex-wrap gap-2 justify-center">
-              {[
-                { label: '📋 Tóm tắt tài liệu', q: 'Tóm tắt chi tiết tài liệu này' },
-                { label: '🔍 Các điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
-                { label: '❓ Câu hỏi thường gặp', q: 'Liệt kê các câu hỏi thường gặp về tài liệu này' },
-              ].map((chip) => (
-                <button
-                  key={chip.label}
-                  type="button"
-                  className="text-xs px-3 py-1.5 rounded-full border bg-muted/40 hover:bg-accent transition-colors"
-                  onClick={() =>
-                    onSendMessage(
-                      chip.q,
-                      modelOverride,
-                      contextType === 'notebook' ? domainFilter : undefined,
-                      verbosity,
-                    )
-                  }
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-          )}
           {/* Model selector + Verbosity + Domain filter */}
           {(onModelChange || contextType === 'notebook') && (
             <div className="flex items-center justify-between gap-2 text-xs">

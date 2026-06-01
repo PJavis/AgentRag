@@ -13,6 +13,7 @@ export const itIT = {
     light: "Chiaro",
     dark: "Scuro",
     system: "Sistema",
+    selected: "selezionati",
     loading: "Caricamento...",
     note: "Nota",
     insight: "Approfondimento",

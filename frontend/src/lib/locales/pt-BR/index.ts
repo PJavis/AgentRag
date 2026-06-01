@@ -13,6 +13,7 @@ export const ptBR = {
     light: "Claro",
     dark: "Escuro",
     system: "Sistema",
+    selected: "selecionados",
     loading: "Carregando...",
     note: "Nota",
     insight: "Insight",

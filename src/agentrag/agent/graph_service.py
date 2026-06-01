@@ -35,7 +35,7 @@ from typing import Any, AsyncIterator, Optional, TypedDict
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from src.agentrag.agent.service import AgentService, _is_chitchat, _lang_instruction, _CHITCHAT_SYSTEM_PROMPT
+from src.agentrag.agent.service import AgentService, _is_chitchat, _lang_instruction, _CHITCHAT_SYSTEM_PROMPT, _attach_source_ids
 from src.agentrag.config import settings
 
 
@@ -338,10 +338,11 @@ async def ground(state: ChatState) -> dict[str, Any]:
             "timings_ms": {"total": round(elapsed, 2)},
         }
 
-    grounded = _INNER._ground_citations(
-        citations=state.get("citations") or [],
-        packed_context=state.get("packed_context") or [],
-    )
+    # Cite by source number: the answer's inline [n] = packed_context position,
+    # so the UI citation list must be the full ordered packed context (tagged
+    # with `source` = n), not the model's free-form citation subset.
+    grounded = _INNER._build_packed_citations(state.get("packed_context") or [])
+    await _attach_source_ids(grounded)
     elapsed = (time.perf_counter() - state["total_started"]) * 1000
     timings = {
         "total": round(elapsed, 2),

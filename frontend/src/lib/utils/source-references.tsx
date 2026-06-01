@@ -2,6 +2,7 @@ import React from 'react'
 import { FileText, Lightbulb, FileEdit } from 'lucide-react'
 import { CitationHoverCard } from '@/components/source/CitationHoverCard'
 import type { Citation } from '@/lib/types/api'
+import { cn } from '@/lib/utils'
 
 export type ReferenceType = 'source' | 'note' | 'source_insight'
 
@@ -498,6 +499,7 @@ export function convertSourceReferencesLegacy(text: string): React.ReactNode {
  */
 export function createCompactReferenceHoverComponent(
   citations: Citation[],
+  onReferenceClick?: (type: string, id: string) => void,
 ) {
   const HoverComponent = ({
     href,
@@ -511,24 +513,46 @@ export function createCompactReferenceHoverComponent(
     const tail = href.substring(5)
     const dashIdx = tail.indexOf('-')
     const refId = dashIdx >= 0 ? tail.substring(dashIdx + 1) : tail
-    // Resolve by content_hash; fall back to numeric label
-    let idx = citations.findIndex((c) => c.content_hash === refId)
+    // Inline [n] cites by source number — resolve that first (the citation
+    // list is tagged with `source` = n). Fall back to content_hash, then
+    // positional index for legacy citations lacking a source number.
+    const n = parseInt(String(children), 10)
+    let idx = -1
+    if (!Number.isNaN(n)) {
+      idx = citations.findIndex((c) => c.source === n)
+    }
     if (idx < 0) {
-      const n = parseInt(String(children), 10)
-      if (!Number.isNaN(n) && n >= 1 && n <= citations.length) {
-        idx = n - 1
-      }
+      idx = citations.findIndex((c) => c.content_hash === refId)
+    }
+    if (idx < 0 && !Number.isNaN(n) && n >= 1 && n <= citations.length) {
+      idx = n - 1
     }
     if (idx < 0) {
       return <a href={href} {...rest}>{children}</a>
     }
     const citation = citations[idx]
+    const sourceId = citation.source_id
+    const clickable = Boolean(sourceId && onReferenceClick)
+    const handleClick = (e: React.MouseEvent | React.KeyboardEvent) => {
+      if (!clickable) return
+      e.preventDefault()
+      e.stopPropagation()
+      onReferenceClick!('source', String(sourceId))
+    }
     return (
       <CitationHoverCard index={idx + 1} citation={citation}>
         <span
           role="button"
           tabIndex={0}
-          className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded bg-primary/15 text-primary text-[10px] font-mono cursor-help align-middle border border-primary/30"
+          onClick={handleClick}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') handleClick(e)
+          }}
+          className={cn(
+            "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded bg-primary/15 text-primary text-[10px] font-mono align-middle border border-primary/30 transition-colors",
+            clickable ? "cursor-pointer hover:bg-primary/30" : "cursor-help",
+          )}
+          title={clickable ? citation.document_title : undefined}
         >
           {children}
         </span>

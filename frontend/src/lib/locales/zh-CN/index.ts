@@ -13,6 +13,7 @@ export const zhCN = {
     light: "浅色",
     dark: "深色",
     system: "系统",
+    selected: "已选择",
     loading: "加载中...",
     note: "笔记",
     insight: "洞察",

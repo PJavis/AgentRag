@@ -13,6 +13,7 @@ export const bnIN = {
     light: "হালকা",
     dark: "অন্ধকার",
     system: "সিস্টেম",
+    selected: "নির্বাচিত",
     loading: "লোড হচ্ছে...",
     note: "নোট",
     insight: "অন্তর্দৃষ্টি",

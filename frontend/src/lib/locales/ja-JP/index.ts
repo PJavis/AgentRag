@@ -13,6 +13,7 @@ export const jaJP = {
     light: "ライト",
     dark: "ダーク",
     system: "システム",
+    selected: "選択中",
     loading: "読み込み中...",
     note: "ノート",
     insight: "インサイト",

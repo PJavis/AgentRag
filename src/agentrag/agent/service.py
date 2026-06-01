@@ -175,6 +175,34 @@ _PRIMARY_ANSWER_KEYS = (
 )
 
 
+async def _attach_source_ids(citations: list[dict[str, Any]]) -> None:
+    """Mutate citations in place, adding `source_id` resolved from document_title.
+
+    The UI uses this to deep-link a citation badge to its source page. Titles
+    that don't resolve simply get no source_id (badge stays hover-only).
+    """
+    titles = {c.get("document_title") for c in citations if c.get("document_title")}
+    if not titles:
+        return
+    try:
+        from sqlalchemy import select
+
+        from src.agentrag.database import AsyncSessionLocal
+        from src.agentrag.database.models import Document
+
+        async with AsyncSessionLocal() as session:
+            rows = await session.execute(
+                select(Document.id, Document.title).where(Document.title.in_(titles))
+            )
+            title_to_id = {title: str(doc_id) for doc_id, title in rows.all()}
+    except Exception:  # noqa: BLE001 — best-effort enrichment, never break the answer
+        return
+    for c in citations:
+        sid = title_to_id.get(c.get("document_title"))
+        if sid:
+            c["source_id"] = sid
+
+
 def _find_answer_field(obj: Any, max_depth: int = 6) -> str | None:
     """Find first non-empty answer/summary/response string in nested dict/list.
 
@@ -406,27 +434,11 @@ class AgentService:
                 yield _sse("token", {"text": token})
 
             packed = assembly["packed_context"]
-            # Dedupe by content_hash, keep first occurrence
-            seen: set[str] = set()
-            deduped_citations = []
-            for c in packed:
-                h = c.get("content_hash", "")
-                if h and h not in seen:
-                    seen.add(h)
-                    page_start = c.get("page_start")
-                    page_end = c.get("page_end")
-                    entry = {
-                        "document_title": c.get("document_title"),
-                        "section_path": c.get("section_path"),
-                        "content_hash": h,
-                        "excerpt": (c.get("excerpt") or c.get("content") or "")[:300],
-                        "segment_type": c.get("segment_type", "text"),
-                    }
-                    if page_start is not None:
-                        entry["page"] = page_start if page_start == page_end else f"{page_start}-{page_end}"
-                        entry["page_start"] = page_start
-                        entry["page_end"] = page_end
-                    deduped_citations.append(entry)
+            # Cite by source number: inline [n] = packed_context position. Build
+            # the full ordered list (tagged `source` = n) so every [n] resolves,
+            # then attach source_id for deep-linking.
+            deduped_citations = self._build_packed_citations(packed)
+            await _attach_source_ids(deduped_citations)
             yield _sse("done", {
                 "citations": deduped_citations,
                 "highlights": [],
@@ -653,6 +665,45 @@ class AgentService:
         if title.endswith(".txt"):
             return "text/plain"
         return None
+
+    def _build_packed_citations(
+        self, packed_context: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Build the UI citation list directly from packed_context.
+
+        The answer prompt cites by source number [n] = position in
+        packed_context (1-based). Returning the full ordered list — each entry
+        tagged with `source` = n — guarantees every inline [n] resolves to the
+        right chunk, unlike grounding the model's free-form citation subset.
+        """
+        out: list[dict[str, Any]] = []
+        for idx, item in enumerate(packed_context):
+            seg_type = item.get("segment_type") or "text"
+            entry: dict[str, Any] = {
+                "source": idx + 1,
+                "document_title": item.get("document_title"),
+                "section_path": item.get("section_path"),
+                "position": item.get("position"),
+                "content_hash": item.get("content_hash"),
+                "excerpt": (item.get("excerpt") or item.get("content") or "")[:300],
+                "segment_type": seg_type,
+                "mime": self._mime_for_segment(item, seg_type),
+            }
+            page = item.get("page") or item.get("page_start")
+            if page is not None:
+                entry["page"] = page
+                entry["page_label"] = f"p.{page}"
+            if item.get("page_start") is not None:
+                entry["page_start"] = item["page_start"]
+            if item.get("page_end") is not None:
+                entry["page_end"] = item["page_end"]
+            if seg_type == "image":
+                meta = item.get("metadata") or {}
+                img = meta.get("image_url") or meta.get("image_path") or item.get("image_url")
+                if img:
+                    entry["image_url"] = self._normalize_image_url(img)
+            out.append(entry)
+        return out
 
     @staticmethod
     def _normalize_image_url(raw: str) -> str:

@@ -575,10 +575,22 @@ function AIMessageContent({
   // show up as a stray empty bar. The active-stream placeholder is handled by the
   // ThinkingIndicator branch upstream; here we just render nothing.
   if (!content.trim()) return null
-  const markdownWithCompactRefs = convertReferencesToCompactMarkdown(content, t('common.references'))
+  let markdownWithCompactRefs = convertReferencesToCompactMarkdown(content, t('common.references'))
+  // Turn the model's inline [n] markers into reference links so they render as
+  // clickable + hover-to-read citation badges (HoverComponent resolves [n] →
+  // citations[n-1]). Skip [n] already followed by '(' (already a link).
+  if (citations && citations.length > 0) {
+    markdownWithCompactRefs = markdownWithCompactRefs.replace(
+      /\[(\d{1,3})\](?!\()/g,
+      (m, n) => {
+        const num = parseInt(n, 10)
+        return num >= 1 && num <= citations.length ? `[${num}](#ref-c-${num})` : m
+      },
+    )
+  }
   // Prefer hover when citations are present; fall back to clickable when not.
   const LinkComponent = citations && citations.length > 0
-    ? createCompactReferenceHoverComponent(citations)
+    ? createCompactReferenceHoverComponent(citations, onReferenceClick)
     : createCompactReferenceLinkComponent(onReferenceClick)
   const imageCitations = (citations || []).filter((c) => c.segment_type === 'image' && c.image_url)
   return (
@@ -592,9 +604,9 @@ function AIMessageContent({
         components={{
           a: LinkComponent,
           p: ({ children }) => <p className="mb-4">{children}</p>,
-          h1: ({ children }) => <h1 className="mb-4 mt-6">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-3 mt-5">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-3 mt-4">{children}</h3>,
+          h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 pb-1 border-b border-border">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 mt-6">{children}</h2>,
+          h3: ({ children }) => <h3 className="text-lg font-semibold mb-2 mt-4">{children}</h3>,
           h4: ({ children }) => <h4 className="mb-2 mt-4">{children}</h4>,
           h5: ({ children }) => <h5 className="mb-2 mt-3">{children}</h5>,
           h6: ({ children }) => <h6 className="mb-2 mt-3">{children}</h6>,

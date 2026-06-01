@@ -45,6 +45,14 @@ export const sourceChatApi = {
     await apiClient.delete(`/sources/${sourceId}/chat/sessions/${sessionId}`)
   },
 
+  getStarters: async (sourceId: string): Promise<string[]> => {
+    const cleanId = sourceId.startsWith('source:') ? sourceId.slice(7) : sourceId
+    const response = await apiClient.get<{ starters: string[] }>(
+      `/sources/${cleanId}/chat/starters`
+    )
+    return response.data.starters ?? []
+  },
+
   // Messaging with streaming
   sendMessage: (sourceId: string, sessionId: string, data: SendMessageRequest) => {
     // Get auth token using the same logic as apiClient interceptor

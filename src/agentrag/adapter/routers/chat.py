@@ -15,11 +15,12 @@ from sqlalchemy import func, select
 
 from src.agentrag.adapter.auth import get_identity, is_admin
 from src.agentrag.observability.activity import record_event
-from src.agentrag.adapter.db import adapter_notebook_sources
+from src.agentrag.adapter.db import AdapterSourceInsight, adapter_notebook_sources
 from src.agentrag.adapter.models import (
     ChatMessage,
     ChatSessionResponse,
     ChatSessionWithMessagesResponse,
+    ChatStartersResponse,
     CreateSessionRequest,
     CreateSourceChatSessionRequest,
     ExecuteChatRequest,
@@ -31,7 +32,7 @@ from src.agentrag.adapter.models import (
 from src.agentrag.agent.factory import get_agent_service
 from src.agentrag.chat.history import ConversationStore
 from src.agentrag.database import AsyncSessionLocal
-from src.agentrag.database.models import Conversation, Document
+from src.agentrag.database.models import Conversation, Document, Segment
 
 router = APIRouter()
 
@@ -1410,6 +1411,119 @@ async def submit_chat_feedback(body: dict, request: Request):
     except Exception:
         pass
     return {"ok": True, "rating": rating_int}
+
+
+# ── Chat starters ─────────────────────────────────────────────────────────────
+
+
+def _parse_source_uuid(source_id: str) -> uuid.UUID:
+    return uuid.UUID(source_id.removeprefix("source:"))
+
+
+async def _load_source_starter_inputs(source_id: str) -> tuple[str, str]:
+    """Return (title, summary_text) for a source. summary_text prefers existing
+    insights; falls back to the first text segments. Best-effort — ('', '') on miss."""
+    try:
+        sid = _parse_source_uuid(source_id)
+    except (ValueError, TypeError):
+        return "", ""
+    async with AsyncSessionLocal() as session:
+        doc = await session.get(Document, sid)
+        if not doc:
+            return "", ""
+        title = doc.title or ""
+        insights = (
+            await session.execute(
+                select(AdapterSourceInsight.content)
+                .where(AdapterSourceInsight.source_id == sid)
+                .order_by(AdapterSourceInsight.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+        summary = "\n".join(c for c in insights if c)[:1500]
+        if not summary:
+            seg_rows = (
+                await session.execute(
+                    select(Segment.content)
+                    .where(Segment.document_id == sid)
+                    .order_by(Segment.position)
+                    .limit(8)
+                )
+            ).scalars().all()
+            summary = "\n".join(s for s in seg_rows if s)[:1500]
+        return title, summary
+
+
+async def _load_notebook_starter_inputs(notebook_id: str) -> tuple[list[str], str]:
+    """Return (titles, summary_text) for all sources linked to a notebook."""
+    try:
+        nb = uuid.UUID(notebook_id)
+    except (ValueError, TypeError):
+        return [], ""
+    async with AsyncSessionLocal() as session:
+        doc_ids = (
+            await session.execute(
+                select(adapter_notebook_sources.c.document_id)
+                .where(adapter_notebook_sources.c.notebook_id == nb)
+            )
+        ).scalars().all()
+        if not doc_ids:
+            return [], ""
+        titles: list[str] = []
+        for did in doc_ids:
+            doc = await session.get(Document, did)
+            if doc and doc.title:
+                titles.append(doc.title)
+        summaries = (
+            await session.execute(
+                select(AdapterSourceInsight.content)
+                .where(AdapterSourceInsight.source_id.in_(doc_ids))
+                .order_by(AdapterSourceInsight.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+        summary = "\n".join(c for c in summaries if c)[:1500]
+        return titles, summary
+
+
+@source_router.get("/sources/{source_id}/chat/starters")
+async def get_source_starters(source_id: str):
+    import logging
+    from src.agentrag.agent.starters import generate_starters
+    from src.agentrag.services.container import get_container
+    _log = logging.getLogger(__name__)
+    try:
+        title, summary = await _load_source_starter_inputs(source_id)
+        out = await generate_starters(
+            kind="source",
+            titles=[title],
+            summary_text=summary,
+            llm_gateway=get_container().llm,
+        )
+    except Exception:
+        _log.exception("get_source_starters failed")
+        out = []
+    return ChatStartersResponse(starters=out).model_dump()
+
+
+@notebook_router.get("/starters")
+async def get_notebook_starters(notebook_id: str):
+    import logging
+    from src.agentrag.agent.starters import generate_starters
+    from src.agentrag.services.container import get_container
+    _log = logging.getLogger(__name__)
+    try:
+        titles, summary = await _load_notebook_starter_inputs(notebook_id)
+        out = await generate_starters(
+            kind="notebook",
+            titles=titles,
+            summary_text=summary,
+            llm_gateway=get_container().llm,
+        )
+    except Exception:
+        _log.exception("get_notebook_starters failed")
+        out = []
+    return ChatStartersResponse(starters=out).model_dump()
 
 
 router.include_router(notebook_router)

@@ -96,6 +96,14 @@ export const chatApi = {
     )
     return response.data
   },
+
+  getStarters: async (notebookId: string): Promise<string[]> => {
+    const response = await apiClient.get<{ starters: string[] }>(
+      `/chat/starters`,
+      { params: { notebook_id: notebookId } }
+    )
+    return response.data.starters ?? []
+  },
 }
 
 export default chatApi

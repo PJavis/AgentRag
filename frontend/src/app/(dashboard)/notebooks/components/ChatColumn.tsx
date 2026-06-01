@@ -3,6 +3,7 @@
 import { useEffect, useMemo } from 'react'
 import { useNotebookChat } from '@/lib/hooks/useNotebookChat'
 import { useNotes } from '@/lib/hooks/use-notes'
+import { useChatStarters } from '@/lib/hooks/useChatStarters'
 import { ChatPanel } from '@/components/source/ChatPanel'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 import { Card, CardContent } from '@/components/ui/card'
@@ -32,6 +33,12 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
     sources,
     notes,
     contextSelections
+  })
+
+  const starters = useChatStarters({
+    kind: 'notebook',
+    id: notebookId,
+    enabled: chat.messages.length === 0,
   })
 
   // Calculate context stats for indicator
@@ -128,6 +135,8 @@ export function ChatColumn({ notebookId, contextSelections, sources, sourcesLoad
       loadingSessions={chat.loadingSessions}
       notebookContextStats={contextStats}
       notebookId={notebookId}
+      dynamicStarters={starters.starters}
+      startersLoading={starters.isLoading}
     />
   )
 }

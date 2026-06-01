@@ -238,3 +238,9 @@ class AdminUserEntry(BaseModel):
     name: str | None = None
     event_count: int = 0
     last_seen: str | None = None
+
+
+# ── Chat starters ─────────────────────────────────────────────────────────────
+
+class ChatStartersResponse(BaseModel):
+    starters: list[str] = []

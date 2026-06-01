@@ -7,6 +7,9 @@ import { useNotebookChat } from '@/lib/hooks/useNotebookChat'
 // Mock the hooks
 vi.mock('@/lib/hooks/use-notes')
 vi.mock('@/lib/hooks/useNotebookChat')
+vi.mock('@/lib/hooks/useChatStarters', () => ({
+  useChatStarters: () => ({ starters: [], isLoading: false }),
+}))
 vi.mock('@/components/source/ChatPanel', () => ({
   ChatPanel: () => <div data-testid="chat-panel" />
 }))

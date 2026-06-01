@@ -5,6 +5,7 @@ import { useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
 import { useSourceChat } from '@/lib/hooks/useSourceChat'
+import { useChatStarters } from '@/lib/hooks/useChatStarters'
 import { ChatPanel } from '@/components/source/ChatPanel'
 import { useNavigation } from '@/lib/hooks/use-navigation'
 import { SourceDetailContent } from '@/components/source/SourceDetailContent'
@@ -17,6 +18,12 @@ export default function SourceDetailPage() {
 
   // Initialize source chat
   const chat = useSourceChat(sourceId)
+
+  const starters = useChatStarters({
+    kind: 'source',
+    id: sourceId,
+    enabled: chat.messages.length === 0,
+  })
 
   const handleBack = useCallback(() => {
     const returnPath = navigation.getReturnPath()
@@ -70,6 +77,8 @@ export default function SourceDetailPage() {
             onUpdateSession={(sessionId, title) => chat.updateSession(sessionId, { title })}
             onDeleteSession={chat.deleteSession}
             loadingSessions={chat.loadingSessions}
+            dynamicStarters={starters.starters}
+            startersLoading={starters.isLoading}
           />
         </div>
       </div>

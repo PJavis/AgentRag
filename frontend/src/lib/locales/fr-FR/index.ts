@@ -13,6 +13,7 @@ export const frFR = {
     light: "Clair",
     dark: "Sombre",
     system: "Système",
+    selected: "sélectionnés",
     loading: "Chargement...",
     note: "Note",
     insight: "Aperçu",

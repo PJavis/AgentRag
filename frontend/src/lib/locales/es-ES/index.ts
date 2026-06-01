@@ -13,6 +13,7 @@ export const esES = {
     light: "Claro",
     dark: "Oscuro",
     system: "Sistema",
+    selected: "seleccionados",
     loading: "Cargando...",
     note: "Nota",
     insight: "Análisis",

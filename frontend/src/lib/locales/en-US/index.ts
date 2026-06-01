@@ -15,6 +15,7 @@ export const enUS = {
     light: "Light",
     dark: "Dark",
     system: "System",
+    selected: "selected",
     loading: "Loading...",
     note: "Note",
     insight: "Insight",

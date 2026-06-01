@@ -13,6 +13,7 @@ export const ruRU = {
     light: "Светлая",
     dark: "Тёмная",
     system: "Системная",
+    selected: "выбрано",
     loading: "Загрузка...",
     note: "Заметка",
     insight: "Инсайт",

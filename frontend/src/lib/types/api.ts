@@ -146,6 +146,8 @@ export interface SourceChatSession extends BaseChatSession {
 
 export interface Citation {
   document_title: string
+  source?: number | null
+  source_id?: string | null
   section_path?: string | null
   position?: number | null
   page?: number | null

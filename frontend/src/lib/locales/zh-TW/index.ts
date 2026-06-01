@@ -13,6 +13,7 @@ export const zhTW = {
     light: "亮色",
     dark: "暗色",
     system: "系統",
+    selected: "已選擇",
     loading: "載入中...",
     note: "筆記",
     insight: "洞察",

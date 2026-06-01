@@ -349,8 +349,10 @@ async def _load_notebook_starter_inputs(notebook_id: str) -> tuple[list[str], st
 
 @source_router.get("/sources/{source_id}/chat/starters")
 async def get_source_starters(source_id: str):
+    import logging
     from src.agentrag.agent.starters import generate_starters
     from src.agentrag.services.container import get_container
+    _log = logging.getLogger(__name__)
     try:
         title, summary = await _load_source_starter_inputs(source_id)
         out = await generate_starters(
@@ -367,8 +369,10 @@ async def get_source_starters(source_id: str):
 
 @notebook_router.get("/starters")
 async def get_notebook_starters(notebook_id: str):
+    import logging
     from src.agentrag.agent.starters import generate_starters
     from src.agentrag.services.container import get_container
+    _log = logging.getLogger(__name__)
     try:
         titles, summary = await _load_notebook_starter_inputs(notebook_id)
         out = await generate_starters(
@@ -383,9 +387,9 @@ async def get_notebook_starters(notebook_id: str):
     return ChatStartersResponse(starters=out).model_dump()
 ```
 
-Note: `_log`, `source_router`, and `notebook_router` already exist in this file
-(see `_log.exception(...)` usage at the `generate_followups` call site, and the
-router definitions at the top). Use the existing names; do not redefine them.
+Note: `source_router` and `notebook_router` already exist in this file (router
+definitions near the top). `_log` is NOT module-level — it is defined locally inside
+each function (as shown above with `_log = logging.getLogger(__name__)`); keep that.
 
 - [ ] **Step 5: Run test to verify it passes**
 

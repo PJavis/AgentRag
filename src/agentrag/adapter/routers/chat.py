@@ -1423,6 +1423,7 @@ async def _load_source_starter_inputs(source_id: str) -> tuple[str, str]:
                 select(AdapterSourceInsight.content)
                 .where(AdapterSourceInsight.source_id == sid)
                 .order_by(AdapterSourceInsight.created_at.desc())
+                .limit(20)
             )
         ).scalars().all()
         summary = "\n".join(c for c in insights if c)[:1500]

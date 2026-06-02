@@ -348,6 +348,16 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     except Exception:
         _log.exception("execute_chat: verbosity intent detection failed")
 
+    # Scope retrieval to this notebook's documents (NotebookLM-style isolation)
+    # unless a single-doc filename hint already narrowed it. Prevents cross-
+    # notebook leakage when the agent searches.
+    if not document_title:
+        try:
+            from src.agentrag.retrieval.context import set_document_scope
+            set_document_scope(await _list_notebook_document_titles(notebook_id, limit=50))
+        except Exception:
+            _log.exception("execute_chat: notebook scope resolution failed")
+
     result: dict
     agent = get_agent_service()
     try:
@@ -558,6 +568,15 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
     except Exception:
         _log.exception("regenerate: verbosity intent detection failed")
 
+    # Scope to this notebook's documents (NotebookLM-style) unless a single-doc
+    # hint already narrowed it — prevents cross-notebook leakage on regenerate.
+    if not document_title:
+        try:
+            from src.agentrag.retrieval.context import set_document_scope
+            set_document_scope(await _list_notebook_document_titles(notebook_id, limit=50))
+        except Exception:
+            _log.exception("regenerate: notebook scope resolution failed")
+
     result: dict
     agent = get_agent_service()
     try:
@@ -681,6 +700,13 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             document_title = await _resolve_document_hint(body.message, notebook_id)
         except Exception:
             _log.exception("execute_chat_stream: _resolve_document_hint failed")
+    if not scope_titles and not document_title:
+        # Default: scope retrieval to ALL of this notebook's documents so chat
+        # never leaks other notebooks' sources (NotebookLM-style isolation).
+        try:
+            scope_titles = await _list_notebook_document_titles(notebook_id, limit=50)
+        except Exception:
+            _log.exception("execute_chat_stream: notebook scope resolution failed")
 
     history: list[dict] = []
     try:

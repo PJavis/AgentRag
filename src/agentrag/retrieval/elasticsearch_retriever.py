@@ -46,10 +46,12 @@ class ElasticsearchRetriever:
         filters: dict | None = None,
     ) -> dict:
         """Public entrypoint. Runs `_search_impl` once with the supplied
-        filters; if that returns zero hits AND filters were applied, retries
-        unfiltered so the agent still has something to ground the answer on
-        (fixes the 'empty retrieval → hallucination' path when domain tags
-        haven't been backfilled on existing chunks)."""
+        filters; if that returns zero hits, retries with only the SOFT domain
+        filters (systems/specialties) relaxed — so we still ground the answer
+        when domain tags haven't been backfilled — but NEVER drops the hard
+        `document_titles` scope. Dropping it would leak other notebooks' /
+        sources' documents into a scoped chat (e.g. an empty notebook returning
+        a different notebook's doc)."""
         payload = await self._search_impl(
             query=query,
             mode=mode,
@@ -60,6 +62,11 @@ class ElasticsearchRetriever:
             filters=filters,
         )
         if filters and not payload.get("results"):
+            # Keep the hard document scope; relax only soft domain filters.
+            hard = {k: v for k, v in filters.items() if k == "document_titles"}
+            # Nothing soft to relax → the scope itself is empty; do not fall back.
+            if hard == dict(filters):
+                return payload
             fallback = await self._search_impl(
                 query=query,
                 mode=mode,
@@ -67,7 +74,7 @@ class ElasticsearchRetriever:
                 document_title=document_title,
                 rerank=rerank,
                 dense_query=dense_query,
-                filters=None,
+                filters=hard or None,
             )
             fallback["domain_filter_fallback"] = True
             fallback["domain_filter_attempted"] = filters

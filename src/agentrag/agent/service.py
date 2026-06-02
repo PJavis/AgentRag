@@ -130,9 +130,9 @@ def _answer_system_prompt(
             "its own line (e.g. `## Định nghĩa`), body below. Use NUMBERED lists (`1.` `2.` `3.`) "
             "for classifications, causes, steps and ranked items; bullets only for non-sequential "
             "parallel facts. Aim for 4+ sections covering EVERY relevant part — do not stop at the "
-            "first section. WRITE THE ANSWER DIRECTLY: no self-introduction, do NOT describe "
-            "yourself or what you can do, do NOT offer further help, and do NOT ask a clarifying "
-            "question — the request is clear, so write the full detailed summary now. "
+            "first section. Begin the response immediately with the first `##` section heading — no "
+            "preamble, no meta-commentary, and do not ask a clarifying question. The request is "
+            "clear: write the full detailed summary of the document content now. "
         )
     else:
         length = (

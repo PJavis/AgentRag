@@ -187,15 +187,18 @@ export function useSourceChat(sourceId: string) {
               } else if (data.type === 'context_indicators') {
                 setContextIndicators(data.data)
               } else if (data.type === 'context') {
-                // Source chat streams citations on the final context event.
-                // Attach them to the AI message so inline [n] markers render as
-                // hover-cards (AIMessageContent only links [n] when citations exist).
-                if (aiMessage && Array.isArray(data.citations)) {
-                  aiMessage.citations = data.citations
-                  const cites = data.citations
+                // Source chat streams citations + follow-ups on the final context
+                // event. Attach to the AI message so inline [n] render as hover-cards
+                // (AIMessageContent only links [n] when citations exist) and the
+                // follow-up chips show under the answer.
+                if (aiMessage) {
+                  const cites = Array.isArray(data.citations) ? data.citations : aiMessage.citations
+                  const fups = Array.isArray(data.follow_ups) ? data.follow_ups : aiMessage.follow_ups
+                  aiMessage.citations = cites
+                  aiMessage.follow_ups = fups
                   setMessages(prev =>
                     prev.map(msg => msg.id === aiMessage!.id
-                      ? { ...msg, citations: cites }
+                      ? { ...msg, citations: cites, follow_ups: fups }
                       : msg
                     )
                   )

@@ -1101,6 +1101,7 @@ async def send_message(
             "insights": [],
             "notes": [],
             "highlights": highlights,
+            "citations": citations,
         }) + "\n"
 
         if admin and tool_trace:
@@ -1172,13 +1173,19 @@ async def _direct_rag(
     # Trim to keep the LLM context tight.
     hits = hits[: settings.AGENT_MAX_CONTEXT_CHUNKS]
 
+    # Number the context blocks so the model can cite them with [n] markers that
+    # line up 1:1 with citations[n-1] in the frontend hover-cards. Prefer hits
+    # with a content_hash (real, clickable sources); fall back to all hits.
+    source_hits = [h for h in hits if h.get("content_hash")] or hits
+
     context_parts = []
-    for h in hits:
+    for i, h in enumerate(source_hits, start=1):
         section = h.get("section_path", "")
         content = h.get("content", "")
         page = h.get("page_start")
-        prefix = f"[{section}" + (f" • p.{page}" if page else "") + "]" if section or page else ""
-        context_parts.append(f"{prefix}\n{content}" if prefix else content)
+        loc = f"{section}" + (f" • p.{page}" if page else "") if (section or page) else ""
+        header = f"[{i}]" + (f" ({loc})" if loc else "")
+        context_parts.append(f"{header}\n{content}")
     context_text = "\n\n---\n\n".join(context_parts)
 
     history_text = "\n".join(
@@ -1188,8 +1195,10 @@ async def _direct_rag(
     system_prompt = (
         "You are a helpful medical-study assistant. Answer ONLY from the provided context. "
         "Use the same language as the question (Vietnamese if question is Vietnamese). "
-        "Use **bold** for key terms. If page numbers appear in section headers, "
-        "cite them inline like (p.47). "
+        "Use **bold** for key terms. The context blocks are numbered like [1], [2]. "
+        "Cite the supporting block inline with its bracketed number right after the "
+        "claim it supports, e.g. [1]; combine like [1][2] when several apply. "
+        "Cite every factual claim. "
         "Return a JSON object with exactly two keys:\n"
         "  \"answer\": <full answer text in markdown>,\n"
         "  \"highlights\": [<3-5 key bullet points as strings>]\n"
@@ -1214,15 +1223,16 @@ async def _direct_rag(
 
     citations = [
         {
+            "source": i,
             "content_hash": h.get("content_hash", ""),
             "document_title": h.get("document_title", ""),
             "section_path": h.get("section_path", ""),
             "excerpt": (h.get("content") or "")[:300],
             "page": h.get("page_start"),
             "segment_type": h.get("segment_type", "text"),
+            "source_id": h.get("document_id") or h.get("source_id"),
         }
-        for h in hits
-        if h.get("content_hash")
+        for i, h in enumerate(source_hits, start=1)
     ]
     tool_trace = [
         {

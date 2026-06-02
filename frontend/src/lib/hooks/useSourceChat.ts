@@ -186,6 +186,20 @@ export function useSourceChat(sourceId: string) {
                 // optimistically — nothing to do here.
               } else if (data.type === 'context_indicators') {
                 setContextIndicators(data.data)
+              } else if (data.type === 'context') {
+                // Source chat streams citations on the final context event.
+                // Attach them to the AI message so inline [n] markers render as
+                // hover-cards (AIMessageContent only links [n] when citations exist).
+                if (aiMessage && Array.isArray(data.citations)) {
+                  aiMessage.citations = data.citations
+                  const cites = data.citations
+                  setMessages(prev =>
+                    prev.map(msg => msg.id === aiMessage!.id
+                      ? { ...msg, citations: cites }
+                      : msg
+                    )
+                  )
+                }
               } else if (data.type === 'error') {
                 throw new Error(data.message || 'Stream error')
               }

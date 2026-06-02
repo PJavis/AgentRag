@@ -125,10 +125,14 @@ def _answer_system_prompt(
 
     if verbose:
         length = (
-            "LENGTH: thorough and detailed. Start each section with a Markdown H2 heading on "
+            "LENGTH: thorough and detailed — produce a COMPLETE multi-section summary of the "
+            "document, not a brief overview. Start each section with a Markdown H2 heading on "
             "its own line (e.g. `## Định nghĩa`), body below. Use NUMBERED lists (`1.` `2.` `3.`) "
             "for classifications, causes, steps and ranked items; bullets only for non-sequential "
-            "parallel facts. Cover EVERY relevant part — do not stop at the first section. "
+            "parallel facts. Aim for 4+ sections covering EVERY relevant part — do not stop at the "
+            "first section. WRITE THE ANSWER DIRECTLY: no self-introduction, do NOT describe "
+            "yourself or what you can do, do NOT offer further help, and do NOT ask a clarifying "
+            "question — the request is clear, so write the full detailed summary now. "
         )
     else:
         length = (
@@ -160,8 +164,13 @@ def _answer_system_prompt(
         "'Hà Nội là thủ đô [1].' Cite ONLY the source(s) that support the claim; never invent numbers. "
         f"{length}{multidoc}{MARKDOWN_FORMAT_RULES} "
         "CONVERSATIONAL: greetings / small talk → reply briefly without retrieval and no citations. "
-        "Do NOT return JSON. If the question is too vague to answer usefully, ask ONE focused "
-        "clarifying question (don't both answer and ask)."
+        "Do NOT return JSON. "
+        + (
+            ""
+            if verbose
+            else "If the question is too vague to answer usefully, ask ONE focused "
+            "clarifying question (don't both answer and ask)."
+        )
     )
 from src.agentrag.services import (
     ContextAssemblyService,

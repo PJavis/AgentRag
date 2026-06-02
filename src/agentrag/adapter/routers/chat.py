@@ -1085,6 +1085,37 @@ async def send_message(
             },
         )
 
+        # Follow-up suggestions (best-effort), mirroring notebook chat so source
+        # chat also offers next-question chips. Failure never breaks the stream.
+        follow_ups: list[str] = []
+        try:
+            from src.agentrag.agent.followups import generate_followups
+            from src.agentrag.services.container import get_container
+            follow_ups = await generate_followups(
+                question=body.message,
+                answer=answer,
+                citations=citations,
+                llm_gateway=get_container().llm,
+            )
+        except Exception:
+            pass
+        # Persist follow_ups on the assistant turn so they survive a reload.
+        if follow_ups and isinstance(appended, dict):
+            try:
+                from src.agentrag.database import AsyncSessionLocal as _ASL
+                from src.agentrag.database.models import ChatMessage as _CM
+                _mid = appended.get("message_id")
+                if _mid:
+                    async with _ASL() as _s:
+                        _row = await _s.get(_CM, uuid.UUID(_mid))
+                        if _row is not None:
+                            meta = dict(_row.extra_metadata or {})
+                            meta["follow_ups"] = follow_ups
+                            _row.extra_metadata = meta
+                            await _s.commit()
+            except Exception:
+                pass
+
         on_sources = [
             {
                 "id": c.get("content_hash", ""),
@@ -1102,6 +1133,7 @@ async def send_message(
             "notes": [],
             "highlights": highlights,
             "citations": citations,
+            "follow_ups": follow_ups,
         }) + "\n"
 
         if admin and tool_trace:
@@ -1154,13 +1186,24 @@ async def _direct_rag(
     if cached is not None:
         return cached
 
+    # Summary / "detailed" intent → pull a wider slice of the document and ask
+    # for a thorough multi-section answer instead of a terse reply.
+    q_low = (question or "").lower()
+    detailed = any(
+        k in q_low
+        for k in (
+            "tóm tắt", "summary", "summarize", "chi tiết", "tổng quan",
+            "overview", "explain", "giải thích", "trình bày", "phân tích",
+        )
+    )
+
     retriever = ElasticsearchRetriever()
     # Use hybrid_kg if StructMem is enabled, otherwise plain hybrid.
     retrieval_mode = "hybrid_kg" if settings.STRUCTMEM_ENABLED else "hybrid"
     result = await retriever.search(
         query=question,
         mode=retrieval_mode,
-        top_k=12,  # bumped from 8 — reranker culls the long tail
+        top_k=30 if detailed else 12,  # detailed asks need broad coverage
         document_title=document_title,
         rerank=settings.RETRIEVAL_RERANK_ENABLED,
     )
@@ -1170,8 +1213,10 @@ async def _direct_rag(
         filtered = [h for h in hits if h.get("document_title") == document_title]
         hits = filtered if filtered else hits  # fall back if filter empties list
 
-    # Trim to keep the LLM context tight.
-    hits = hits[: settings.AGENT_MAX_CONTEXT_CHUNKS]
+    # Trim to keep the LLM context tight. Detailed/summary asks get a larger cap
+    # so the answer can cover the whole document, not just the top few chunks.
+    cap = max(settings.AGENT_MAX_CONTEXT_CHUNKS, 20) if detailed else settings.AGENT_MAX_CONTEXT_CHUNKS
+    hits = hits[:cap]
 
     # Number the context blocks so the model can cite them with [n] markers that
     # line up 1:1 with citations[n-1] in the frontend hover-cards. Prefer hits
@@ -1192,13 +1237,23 @@ async def _direct_rag(
         f"{m['role'].upper()}: {m['content']}" for m in (history or [])[-6:]
     )
 
+    length_directive = (
+        "This is a DETAILED request: write a thorough, multi-section answer. Use `##` "
+        "section headings on their own line, NUMBERED lists (`1.` `2.`) for sequences, "
+        "steps and ranked items, and `- ` bullets for parallel facts. MIX prose passages "
+        "with lists — open each section with 1-2 sentences of prose before any list. Cover "
+        "every major aspect present in the context; do not stop at a single intro paragraph. "
+        if detailed else
+        "Keep the answer focused on the question; still use **bold** and bullets when useful. "
+    )
     system_prompt = (
-        "You are a helpful medical-study assistant. Answer ONLY from the provided context. "
+        "You are a helpful study assistant. Answer ONLY from the provided context. "
         "Use the same language as the question (Vietnamese if question is Vietnamese). "
         "Use **bold** for key terms. The context blocks are numbered like [1], [2]. "
         "Cite the supporting block inline with its bracketed number right after the "
         "claim it supports, e.g. [1]; combine like [1][2] when several apply. "
         "Cite every factual claim. "
+        + length_directive +
         "Return a JSON object with exactly two keys:\n"
         "  \"answer\": <full answer text in markdown>,\n"
         "  \"highlights\": [<3-5 key bullet points as strings>]\n"

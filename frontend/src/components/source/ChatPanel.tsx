@@ -191,8 +191,8 @@ export function ChatPanel({
 
   // Fixed universal starters (instant, client-side). `q` is the prompt sent.
   const FIXED_STARTERS: { label: string; q: string }[] = [
-    { label: '📋 Tóm tắt tài liệu', q: 'Tóm tắt chi tiết tài liệu này' },
-    { label: '🔍 Các điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
+    { label: '📋 ' + t('chat.starterSummary'), q: 'Tóm tắt chi tiết tài liệu này' },
+    { label: '🔍 ' + t('chat.qaKeyPoints'), q: 'Liệt kê các điểm chính trong tài liệu' },
   ]
   const sendStarter = (q: string) =>
     onSendMessage(
@@ -204,17 +204,17 @@ export function ChatPanel({
 
   // Per-answer quick actions — one tap re-asks with a refined intent (new turn).
   const QUICK_ACTIONS: { label: string; q: string }[] = [
-    { label: '💡 Giải thích đơn giản', q: 'Giải thích lại câu trả lời trên một cách đơn giản, dễ hiểu hơn.' },
-    { label: '➕ Chi tiết hơn', q: 'Trình bày chi tiết hơn, đầy đủ hơn về nội dung trên.' },
-    { label: '🔑 Điểm chính', q: 'Liệt kê các điểm chính của nội dung trên dưới dạng gạch đầu dòng.' },
-    { label: '📌 Cho ví dụ', q: 'Cho ví dụ minh hoạ cụ thể cho nội dung trên.' },
+    { label: '💡 ' + t('chat.qaSimpler'), q: 'Giải thích lại câu trả lời trên một cách đơn giản, dễ hiểu hơn.' },
+    { label: '➕ ' + t('chat.qaDetail'), q: 'Trình bày chi tiết hơn, đầy đủ hơn về nội dung trên.' },
+    { label: '🔑 ' + t('chat.qaKeyPoints'), q: 'Liệt kê các điểm chính của nội dung trên dưới dạng gạch đầu dòng.' },
+    { label: '📌 ' + t('chat.qaExample'), q: 'Cho ví dụ minh hoạ cụ thể cho nội dung trên.' },
   ]
   // Always-on intent buttons near the input (available mid-conversation).
   const INTENT_BUTTONS: { label: string; q: string }[] = [
-    { label: 'Tóm tắt', q: 'Tóm tắt chi tiết tài liệu' },
-    { label: 'Giải thích', q: 'Giải thích chi tiết các khái niệm chính trong tài liệu' },
-    { label: 'Điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
-    { label: 'So sánh', q: 'So sánh và đối chiếu các nội dung/quan điểm chính trong tài liệu' },
+    { label: t('chat.intentSummarize'), q: 'Tóm tắt chi tiết tài liệu' },
+    { label: t('chat.intentExplain'), q: 'Giải thích chi tiết các khái niệm chính trong tài liệu' },
+    { label: t('chat.qaKeyPoints'), q: 'Liệt kê các điểm chính trong tài liệu' },
+    { label: t('chat.intentCompare'), q: 'So sánh và đối chiếu các nội dung/quan điểm chính trong tài liệu' },
   ]
 
   return (
@@ -340,9 +340,9 @@ export function ChatPanel({
                             notebookId={notebookId}
                           />
                           {readingMinutes(message.content) >= 2 && (
-                            <Badge variant="outline" className="text-[10px] h-5 gap-1" title="Thời gian đọc ước tính">
+                            <Badge variant="outline" className="text-[10px] h-5 gap-1" title={t('chat.readingTimeTitle')}>
                               <Clock className="h-3 w-3" />
-                              {readingMinutes(message.content)} phút đọc
+                              {t('chat.readingTime').replace('{min}', String(readingMinutes(message.content)))}
                             </Badge>
                           )}
                           {(message as { reasoning_path?: string }).reasoning_path && (

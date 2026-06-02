@@ -30,7 +30,7 @@ const baseProps = {
 describe('ChatPanel starters', () => {
   it('renders fixed chips and dynamic starters', () => {
     render(<ChatPanel {...baseProps} dynamicStarters={['Ai là tác giả?']} />)
-    expect(screen.getByText('📋 Tóm tắt tài liệu')).toBeInTheDocument()
+    expect(screen.getByText('📋 chat.starterSummary')).toBeInTheDocument()
     expect(screen.getByText('💡 Ai là tác giả?')).toBeInTheDocument()
   })
 
@@ -42,7 +42,7 @@ describe('ChatPanel starters', () => {
   it('sends the prompt when a fixed chip is clicked', () => {
     const onSendMessage = vi.fn()
     render(<ChatPanel {...baseProps} onSendMessage={onSendMessage} />)
-    fireEvent.click(screen.getByText('📋 Tóm tắt tài liệu'))
+    fireEvent.click(screen.getByText('📋 chat.starterSummary'))
     expect(onSendMessage).toHaveBeenCalledWith(
       'Tóm tắt chi tiết tài liệu này', undefined, undefined, null,
     )

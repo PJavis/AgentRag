@@ -202,6 +202,21 @@ export function ChatPanel({
       verbosity,
     )
 
+  // Per-answer quick actions — one tap re-asks with a refined intent (new turn).
+  const QUICK_ACTIONS: { label: string; q: string }[] = [
+    { label: '💡 Giải thích đơn giản', q: 'Giải thích lại câu trả lời trên một cách đơn giản, dễ hiểu hơn.' },
+    { label: '➕ Chi tiết hơn', q: 'Trình bày chi tiết hơn, đầy đủ hơn về nội dung trên.' },
+    { label: '🔑 Điểm chính', q: 'Liệt kê các điểm chính của nội dung trên dưới dạng gạch đầu dòng.' },
+    { label: '📌 Cho ví dụ', q: 'Cho ví dụ minh hoạ cụ thể cho nội dung trên.' },
+  ]
+  // Always-on intent buttons near the input (available mid-conversation).
+  const INTENT_BUTTONS: { label: string; q: string }[] = [
+    { label: 'Tóm tắt', q: 'Tóm tắt chi tiết tài liệu' },
+    { label: 'Giải thích', q: 'Giải thích chi tiết các khái niệm chính trong tài liệu' },
+    { label: 'Điểm chính', q: 'Liệt kê các điểm chính trong tài liệu' },
+    { label: 'So sánh', q: 'So sánh và đối chiếu các nội dung/quan điểm chính trong tài liệu' },
+  ]
+
   return (
     <>
     <div className="relative flex flex-col h-full flex-1 overflow-hidden bg-background">
@@ -324,6 +339,12 @@ export function ChatPanel({
                             content={message.content}
                             notebookId={notebookId}
                           />
+                          {readingMinutes(message.content) >= 2 && (
+                            <Badge variant="outline" className="text-[10px] h-5 gap-1" title="Thời gian đọc ước tính">
+                              <Clock className="h-3 w-3" />
+                              {readingMinutes(message.content)} phút đọc
+                            </Badge>
+                          )}
                           {(message as { reasoning_path?: string }).reasoning_path && (
                             <Badge
                               variant="outline"
@@ -371,6 +392,21 @@ export function ChatPanel({
                           answer={message.content}
                         />
                       </div>
+                      )}
+                      {!isActiveStream && message.content.trim() && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {QUICK_ACTIONS.map((qa) => (
+                            <button
+                              key={qa.label}
+                              type="button"
+                              disabled={isStreaming}
+                              onClick={() => sendStarter(qa.q)}
+                              className="text-[11px] px-2.5 py-1 rounded-full border bg-muted/30 hover:bg-accent disabled:opacity-50 transition-colors"
+                            >
+                              {qa.label}
+                            </button>
+                          ))}
+                        </div>
                       )}
                       {!isActiveStream && message.follow_ups && message.follow_ups.length > 0 && (
                         <div className="mt-3">
@@ -452,6 +488,23 @@ export function ChatPanel({
       {/* Input Area: floating pill, centered */}
       <div className="flex-shrink-0 px-4 sm:px-6 pb-4 pt-2">
         <div className="max-w-3xl mx-auto w-full space-y-3">
+          {/* Always-on intent buttons — quick ways to ask, shown once a chat is
+              underway (the empty state already shows the bigger starter cards). */}
+          {messages.length > 0 && !attachedImage && (
+            <div className="flex flex-wrap gap-1.5">
+              {INTENT_BUTTONS.map((b) => (
+                <button
+                  key={b.label}
+                  type="button"
+                  disabled={isStreaming}
+                  onClick={() => sendStarter(b.q)}
+                  className="text-[11px] px-2.5 py-1 rounded-full border bg-muted/30 hover:bg-accent disabled:opacity-50 transition-colors"
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Model selector + Verbosity + Domain filter */}
           {(onModelChange || contextType === 'notebook') && (
             <div className="flex items-center justify-between gap-2 text-xs">
@@ -687,6 +740,13 @@ function ThinkingIndicator({
   tool?: string | null
   onCancel?: () => void
 }) {
+  // Elapsed timer so a long detailed answer doesn't feel frozen.
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const t0 = Date.now()
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [])
   const label = (() => {
     switch (step) {
       case 'connecting':
@@ -723,6 +783,7 @@ function ThinkingIndicator({
         <span className="h-1.5 w-1.5 rounded-full bg-current animate-bounce" />
       </div>
       <span className="text-xs transition-opacity duration-150">{label}</span>
+      {elapsed >= 3 && <span className="text-[10px] tabular-nums opacity-60">{elapsed}s</span>}
       {onCancel && (
         <Button
           variant="ghost"
@@ -737,6 +798,12 @@ function ThinkingIndicator({
       )}
     </div>
   )
+}
+
+// Estimated reading time in minutes (~200 words/min) for an answer's markdown.
+function readingMinutes(text: string): number {
+  const words = (text || '').trim().split(/\s+/).filter(Boolean).length
+  return Math.max(1, Math.round(words / 200))
 }
 
 // Map raw backend tool identifiers to human-friendly names for the flow label.

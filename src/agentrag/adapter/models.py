@@ -76,6 +76,13 @@ class SourceResponse(BaseModel):
     command_id: str | None = None
     status: str | None = None
     notebooks: list[str] | None = None
+    # Granular ingest progress for the live status chip (Phase 2/3).
+    # ingest_stage: queued|parsing|searchable|enriching|done|done_partial|failed
+    ingest_stage: str | None = None
+    parse_total_pages: int | None = None
+    parse_done_pages: int | None = None
+    graph_total_chunks: int | None = None
+    graph_processed_chunks: int | None = None
 
 
 class SourceStatusResponse(BaseModel):

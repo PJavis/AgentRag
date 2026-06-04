@@ -48,12 +48,16 @@ class Document(Base):
     title = Column(String, nullable=False)
     content_hash = Column(String(64))
     graph_synced = Column(Boolean, default=False)
-    #: pending | queued | processing | done | failed (NULL = bản ghi cũ trước migration)
+    #: queued | parsing | searchable | enriching | done | done_partial | failed
+    #: (NULL = bản ghi cũ trước migration). searchable+ = usable for chat.
     graph_status = Column(String(32), nullable=True)
     graph_last_error = Column(Text, nullable=True)
     graph_total_chunks = Column(Integer, nullable=True, default=0)
     graph_processed_chunks = Column(Integer, nullable=True, default=0)
     graph_failed_chunks = Column(Integer, nullable=True, default=0)
+    #: parse-phase page progress (coarse; live per-page comes via SSE)
+    parse_total_pages = Column(Integer, nullable=True, default=0)
+    parse_done_pages = Column(Integer, nullable=True, default=0)
     modified_at = Column(DateTime(timezone=True))
     last_synced = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())

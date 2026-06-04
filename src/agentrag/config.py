@@ -239,6 +239,11 @@ class Settings(BaseSettings):
     #   *-http-client      — remote OpenAI-compatible VLM (set MINERU_URL)
     MINERU_BACKEND: str = "vlm-auto-engine"
     MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
+    # Whole-doc MinerU only kicks in when at least this fraction of pages have a
+    # thin text layer. Below it, the fast per-page path (PyMuPDF + Tesseract/
+    # vision on thin pages only) handles the doc — searchable in seconds rather
+    # than minutes of whole-doc VLM for a mostly-text PDF with a few figures.
+    PDF_MINERU_MIN_THIN_FRACTION: float = 0.4
     # MinerU lang (newer CLI vocab). Vietnamese → 'latin'.
     # Allowed: ch | en | korean | japan | chinese_cht | latin | arabic | …
     MINERU_LANG: str = "latin"

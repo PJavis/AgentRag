@@ -284,19 +284,26 @@ async def ingest_folder(
                     report["graph_chunks"] = len(chunks_graph)
                     report["entries_indexed"] = sm_stats["entries_indexed"]
                 else:
+                    # Text segments are in ES now → the doc is searchable. Mark
+                    # it so immediately (chat works); the StructMem extract +
+                    # any enrichment runs as the async tail (status → enriching
+                    # → done in the worker).
+                    _pages = int(report.get("pages") or 0)
                     await session.execute(
                         update(Document)
                         .where(Document.id == doc_id)
                         .values(
                             graph_synced=False,
-                            graph_status="queued",
+                            graph_status="searchable",
                             graph_last_error=None,
                             graph_total_chunks=len(chunks_graph),
                             graph_processed_chunks=0,
                             graph_failed_chunks=0,
+                            parse_total_pages=_pages,
+                            parse_done_pages=_pages,
                         )
                     )
-                    report["graph_status"] = "queued"
+                    report["graph_status"] = "searchable"
                     report["graph_chunks"] = len(chunks_graph)
                     timings["structmem_ms"] = 0.0
 

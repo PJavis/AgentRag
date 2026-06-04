@@ -90,7 +90,7 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
             update(Document)
             .where(Document.id == job.document_id)
             .values(
-                graph_status="processing",
+                graph_status="enriching",
                 graph_total_chunks=total_chunks,
                 graph_processed_chunks=0,
                 graph_failed_chunks=0,
@@ -106,7 +106,7 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
                     update(Document)
                     .where(Document.id == job.document_id)
                     .values(
-                        graph_status="processing",
+                        graph_status="enriching",
                         graph_total_chunks=payload["total"],
                         graph_processed_chunks=payload["completed"],
                         graph_failed_chunks=0,
@@ -147,12 +147,15 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
 
     except Exception as e:
         logger.exception("Graph ingest failed for document %s", job.document_id)
+        # The text segments were already indexed in the pipeline (status was
+        # 'searchable'), so the doc stays usable for chat — mark done_partial,
+        # not failed. Only the StructMem/graph enrichment is missing.
         async with AsyncSessionLocal() as session:
             await session.execute(
                 update(Document)
                 .where(Document.id == job.document_id)
                 .values(
-                    graph_status="failed",
+                    graph_status="done_partial",
                     graph_last_error=str(e)[:8000],
                     graph_synced=False,
                     graph_total_chunks=total_chunks,

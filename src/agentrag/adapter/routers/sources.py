@@ -33,9 +33,14 @@ def _parse_source_id(source_id: str) -> uuid.UUID:
 # queued = ES indexing done (searchable); only "pending" means still processing
 _STATUS_MAP = {
     "pending": "processing",
+    "parsing": "processing",
     "queued": "completed",
     "processing": "processing",
+    # searchable+ = text indexed → usable for chat (enrichment may still run).
+    "searchable": "completed",
+    "enriching": "completed",
     "done": "completed",
+    "done_partial": "completed",
     "failed": "failed",
     None: "processing",
 }
@@ -136,6 +141,11 @@ async def _doc_to_source(
         updated=(doc.updated_at or doc.created_at).isoformat() if (doc.updated_at or doc.created_at) else "",
         status=status,
         notebooks=notebook_ids,
+        ingest_stage=doc.graph_status,
+        parse_total_pages=doc.parse_total_pages,
+        parse_done_pages=doc.parse_done_pages,
+        graph_total_chunks=doc.graph_total_chunks,
+        graph_processed_chunks=doc.graph_processed_chunks,
     ).model_dump()
 
 

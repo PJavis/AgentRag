@@ -204,6 +204,21 @@ export function SourceCard({
   const isFailed: boolean = currentStatus === 'failed'
   const isCompleted: boolean = currentStatus === 'completed'
 
+  // Granular ingest stage chip (Phase 2/3): shown even when the doc is already
+  // usable ("searchable"/"enriching") so the user sees the background work.
+  const ingestStage = (source as SourceListResponse).ingest_stage
+  const _stageLabels = t('sources.ingestStages', { returnObjects: true }) as Record<string, string> | string
+  const stageLabel = (typeof _stageLabels === 'object' && ingestStage && _stageLabels[ingestStage]) || ingestStage || ''
+  const showStageChip = !!ingestStage && ['queued', 'parsing', 'searchable', 'enriching', 'done_partial'].includes(ingestStage)
+  const stageActive = ingestStage === 'parsing' || ingestStage === 'enriching' || ingestStage === 'queued'
+  const pTotal = source.parse_total_pages ?? 0
+  const pDone = source.parse_done_pages ?? 0
+  const cTotal = source.graph_total_chunks ?? 0
+  const cDone = source.graph_processed_chunks ?? 0
+  const stageDetail =
+    ingestStage === 'parsing' && pTotal > 0 ? ` ${pDone}/${pTotal}` :
+    ingestStage === 'enriching' && cTotal > 0 ? ` ${cDone}/${cTotal}` : ''
+
   return (
     <Card
       className={cn(
@@ -236,6 +251,20 @@ export function SourceCard({
                   <SourceTypeIcon className="h-3 w-3" />
                   <span className="text-xs capitalize">{t('common.source')}</span>
                 </div>
+              </div>
+            )}
+
+            {/* Granular ingest-stage chip — shows background progress even when
+                the doc is already searchable (usable for chat). */}
+            {showStageChip && (
+              <div className="flex items-center gap-1.5 mb-2 text-xs text-muted-foreground">
+                <span
+                  className={cn(
+                    'inline-block h-1.5 w-1.5 rounded-full',
+                    stageActive ? 'bg-primary animate-pulse' : 'bg-emerald-500'
+                  )}
+                />
+                <span>{stageLabel}{stageDetail}</span>
               </div>
             )}
 

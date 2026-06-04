@@ -416,6 +416,13 @@ export const enUS = {
     batchFailed: "Failed to create all {count} sources",
     batchPartial: "{success} succeeded, {failed} failed",
     submittingSource: "Submitting source for processing...",
+    ingestStages: {
+      queued: "Queued",
+      parsing: "Parsing",
+      searchable: "Searchable · enriching",
+      enriching: "Enriching",
+      done_partial: "Ready (text only)",
+    },
     processingBatchSources: "Processing {count} sources. This may take a few moments.",
     processingSource: "Your source is being processed. This may take a few moments.",
     maxFilesAllowed: "Maximum {count} files allowed per batch",

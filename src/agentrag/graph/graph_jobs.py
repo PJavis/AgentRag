@@ -85,7 +85,11 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
     chunks = chunker.chunk(content, metadata={"document_title": job.title})
     total_chunks = len(chunks)
 
+    from src.agentrag.common.progress import publish_progress
+
     async with AsyncSessionLocal() as session:
+        doc_row = await session.get(Document, job.document_id)
+        owner_id = str(doc_row.user_id) if doc_row and doc_row.user_id else None
         await session.execute(
             update(Document)
             .where(Document.id == job.document_id)
@@ -98,6 +102,7 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
             )
         )
         await session.commit()
+    await publish_progress(owner_id, str(job.document_id), "enriching")
 
     try:
         async def on_progress(payload: dict) -> None:
@@ -163,6 +168,7 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
                 )
             )
             await session.commit()
+        await publish_progress(owner_id, str(job.document_id), "done_partial")
         return
 
     async with AsyncSessionLocal() as session:
@@ -179,6 +185,7 @@ async def process_graph_job(job: GraphIngestJob, arq_pool: ArqRedis | None = Non
             )
         )
         await session.commit()
+    await publish_progress(owner_id, str(job.document_id), "done")
 
     if cache_path and cache_path.exists():
         try:

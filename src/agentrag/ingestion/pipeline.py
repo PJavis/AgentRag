@@ -41,6 +41,7 @@ _AUDIO_SOURCE_TYPES = {"audio"}
 async def ingest_folder(
     folder_path: str,
     graph_ingest_mode: Literal["sync", "async"] | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Ingest thư mục: hỗ trợ .md, .pdf, .docx, .xlsx, .xls, .csv
@@ -306,6 +307,11 @@ async def ingest_folder(
                     report["graph_status"] = "searchable"
                     report["graph_chunks"] = len(chunks_graph)
                     timings["structmem_ms"] = 0.0
+                    try:
+                        from src.agentrag.common.progress import publish_progress
+                        await publish_progress(user_id, str(doc_id), "searchable")
+                    except Exception:
+                        pass
 
                 await session.commit()
 

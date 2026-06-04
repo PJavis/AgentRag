@@ -9,7 +9,7 @@ import tempfile
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
@@ -233,7 +233,7 @@ async def _run_ingest_background(
     error_msg: str | None = None
     try:
         async with sem:
-            result = await ingest_folder(parent_dir)
+            result = await ingest_folder(parent_dir, user_id=user_id)
         docs = result.get("documents", [])
         if not docs:
             logger.error("Background ingest returned no documents for %s", file_path)
@@ -568,6 +568,57 @@ async def source_status(source_id: str):
             embedded=seg_count > 0,
             embedded_chunks=seg_count,
         ).model_dump()
+
+
+@router.get("/progress/stream")
+async def progress_stream(request: Request):
+    """SSE stream of ingest stage transitions for the current user.
+
+    Each `event: progress` carries `{source_id, stage}`; the frontend refreshes
+    its source list on receipt so status chips update live (no polling lag).
+    """
+    identity = getattr(request.state, "auth_identity", None)
+    user_id = identity.user_id if identity else "anonymous"
+    from src.agentrag.common.progress import channel_for
+
+    channel = channel_for(user_id)
+
+    async def gen():
+        if not settings.REDIS_URL:
+            yield ": progress-disabled\n\n"
+            return
+        from redis.asyncio import Redis
+
+        client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        ps = client.pubsub()
+        await ps.subscribe(channel)
+        try:
+            yield ": connected\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                msg = await ps.get_message(ignore_subscribe_messages=True, timeout=15.0)
+                if msg and msg.get("type") == "message":
+                    yield f"event: progress\ndata: {msg['data']}\n\n"
+                else:
+                    yield ": hb\n\n"  # heartbeat keeps the connection alive
+        finally:
+            try:
+                await ps.unsubscribe(channel)
+                await ps.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            await client.aclose()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.post("/{source_id}/retry")

@@ -54,6 +54,36 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── TEI: bge-m3 embeddings (OpenAI-compatible, :8080) ─────────────────────
+  # Default service — starts with `docker compose up -d`. Needs NVIDIA GPU.
+  # cuda-latest = all-arch PTX; required for Blackwell sm_120 (RTX 50xx).
+  # bge-m3 pre-downloaded at ./models/bge-m3 (HF_HUB_OFFLINE=1, no net pull).
+  # .env: EMBEDDING_PROVIDER=openai, EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+    container_name: agentrag-tei
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./models/bge-m3:/data
+    command:
+      - --model-id=/data
+      - --pooling=cls
+      - --max-batch-tokens=16384
+    environment:
+      - HF_HUB_OFFLINE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # No healthcheck: the cuda-latest image has no curl/wget and its /bin/sh
+    # lacks bash /dev/tcp, so any in-container probe false-fails. Readiness is
+    # verified externally via GET :8080/health.
+
   # ── Ollama (profile: local-llm) ───────────────────────────────────────────
   # Yêu cầu: NVIDIA GPU + NVIDIA Container Toolkit
   # Cài toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html

@@ -76,15 +76,26 @@ class PDFParser:
         vision_fallback = settings.PDF_OCR_VISION_FALLBACK
         vision_threshold = settings.PDF_OCR_VISION_THRESHOLD
 
-        # MinerU backend: if any page's text layer is below threshold,
-        # hand the whole PDF off to MinerU in one call (it does layout +
-        # OCR + formula + table in one pass) and skip per-page Tesseract.
+        # MinerU backend: only hand the WHOLE PDF to MinerU (slow VLM/layout
+        # pass) when the doc is *mostly* scanned. A mostly-text PDF with a few
+        # thin pages (a figure, a scanned appendix) falls through to the fast
+        # per-page path below (PyMuPDF text + Tesseract/vision only on the thin
+        # pages) — searchable in seconds instead of minutes of whole-doc VLM.
         if backend == "mineru" and ocr_enabled:
-            needs_mineru = any(
-                len((p.get_text("text", sort=True) or "").strip()) < ocr_min
+            page_count = doc.page_count
+            thin_count = sum(
+                1
                 for p in doc
+                if len((p.get_text("text", sort=True) or "").strip()) < ocr_min
             )
+            thin_fraction = (thin_count / page_count) if page_count else 0.0
+            needs_mineru = thin_fraction >= settings.PDF_MINERU_MIN_THIN_FRACTION
             if needs_mineru:
+                logger.info(
+                    "PDFParser: %d/%d pages thin (%.0f%% ≥ %.0f%%) — whole-doc MinerU",
+                    thin_count, page_count, thin_fraction * 100,
+                    settings.PDF_MINERU_MIN_THIN_FRACTION * 100,
+                )
                 doc.close()
                 try:
                     from src.agentrag.ingestion.parsers import mineru_parser

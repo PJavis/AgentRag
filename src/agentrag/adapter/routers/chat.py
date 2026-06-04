@@ -614,9 +614,38 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
         except Exception:
             _log.exception("regenerate: notebook scope resolution failed")
 
-    result: dict
-    agent = get_agent_service()
-    try:
+    result: dict | None = None
+
+    # Whole-doc summary → map-reduce over the ENTIRE doc (covers 100% of pages,
+    # not top-K), same routing as execute_chat_stream. Single-doc only.
+    _summary_doc = document_title
+    if not _summary_doc:
+        try:
+            _nb_titles = await _list_notebook_document_titles(notebook_id, limit=50)
+            if len(_nb_titles) == 1:
+                _summary_doc = _nb_titles[0]
+        except Exception:
+            _log.exception("regenerate: notebook titles for summary failed")
+    if _is_summary_request(user_question) and _summary_doc:
+        try:
+            from src.agentrag.generation.summary_service import SummaryService
+
+            _full = await SummaryService().generate_full(_summary_doc)
+            result = {
+                "answer": _summary_full_to_markdown(_full),
+                "citations": [],
+                "tool_trace": [],
+                "timings_ms": {},
+                "reasoning_path": "summary_mapreduce",
+                "plan_subqueries": [],
+                "sql_query": None,
+            }
+        except Exception:
+            _log.exception("regenerate: map-reduce summary failed; falling back to agent")
+
+    if result is None:
+      agent = get_agent_service()
+      try:
         result = await agent.chat(
             question=user_question,
             document_title=document_title,
@@ -625,7 +654,7 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
             domain_filter=effective_domain_filter,
             verbosity=forced_verbosity,
         )
-    except Exception as exc:
+      except Exception as exc:
         _log.exception("regenerate: agent.chat failed")
         result = {
             "answer": f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}",

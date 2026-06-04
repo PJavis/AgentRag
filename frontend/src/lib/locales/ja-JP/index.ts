@@ -412,6 +412,13 @@ export const jaJP = {
     batchFailed: "{count}件すべてのソース作成に失敗しました",
     batchPartial: "{success}件成功、{failed}件失敗",
     submittingSource: "ソースを処理に送信中...",
+    ingestStages: {
+      queued: "待機中",
+      parsing: "解析中",
+      searchable: "検索可能 · 拡充中",
+      enriching: "拡充中",
+      done_partial: "準備完了 (テキストのみ)",
+    },
     processingBatchSources: "{count}件のソースを処理中。しばらくお待ちください。",
     processingSource: "ソースを処理中です。しばらくお待ちください。",
     maxFilesAllowed: "一括処理は最大{count}件までです",

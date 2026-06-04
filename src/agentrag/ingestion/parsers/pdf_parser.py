@@ -83,31 +83,60 @@ class PDFParser:
         # pages) — searchable in seconds instead of minutes of whole-doc VLM.
         if backend == "mineru" and ocr_enabled:
             page_count = doc.page_count
-            thin_count = sum(
-                1
-                for p in doc
+            thin_pages = [
+                pnum
+                for pnum, p in enumerate(doc, start=1)
                 if len((p.get_text("text", sort=True) or "").strip()) < ocr_min
-            )
-            thin_fraction = (thin_count / page_count) if page_count else 0.0
+            ]
+            thin_fraction = (len(thin_pages) / page_count) if page_count else 0.0
             needs_mineru = thin_fraction >= settings.PDF_MINERU_MIN_THIN_FRACTION
-            if needs_mineru:
+            if needs_mineru and thin_pages:
+                # Per-page routing: PyMuPDF text for the good pages, MinerU
+                # (VLM/layout) for ONLY the thin pages — not the whole doc.
                 logger.info(
-                    "PDFParser: %d/%d pages thin (%.0f%% ≥ %.0f%%) — whole-doc MinerU",
-                    thin_count, page_count, thin_fraction * 100,
-                    settings.PDF_MINERU_MIN_THIN_FRACTION * 100,
+                    "PDFParser: %d/%d pages thin (%.0f%%) — MinerU on thin pages only",
+                    len(thin_pages), page_count, thin_fraction * 100,
                 )
-                doc.close()
                 try:
                     from src.agentrag.ingestion.parsers import mineru_parser
-                    result = mineru_parser.parse_pdf(str(path))
+                    mineru_result = mineru_parser.parse_pages(str(path), thin_pages)
                 except Exception as exc:
-                    logger.warning("mineru_parser raised: %s — falling back", exc)
-                    result = None
-                if result is not None:
-                    return result
-                # MinerU unavailable / failed → fall through to hybrid path.
-                doc = fitz.open(str(path))
-                logger.info("MinerU failed; falling back to Tesseract+vision path")
+                    logger.warning("mineru_parser.parse_pages raised: %s — falling back", exc)
+                    mineru_result = None
+
+                if mineru_result is not None:
+                    thin_set = set(thin_pages)
+                    merged: list[dict[str, Any]] = []
+                    # Good pages → PyMuPDF text.
+                    for pnum, page in enumerate(doc, start=1):
+                        if pnum in thin_set:
+                            continue
+                        text = page.get_text("text", sort=True)
+                        if text.strip():
+                            merged.append({"page_num": pnum, "text": text, "source": "text"})
+                    # Thin pages → MinerU (already remapped to original page nums).
+                    merged.extend(mineru_result.get("page_data", []))
+                    doc.close()
+                    merged.sort(key=lambda r: r.get("page_num", 0))
+                    parts = [
+                        f"{make_page_marker(r['page_num'])}\n{r['text']}"
+                        for r in merged
+                        if (r.get("text") or "").strip()
+                    ]
+                    summary = {
+                        s: sum(1 for r in merged if r.get("source") == s)
+                        for s in ("text", "ocr", "vision", "mineru")
+                    }
+                    logger.info(
+                        "PDFParser: %d pages from %s (per-page MinerU) — sources=%s",
+                        len(merged), path.name, summary,
+                    )
+                    return {
+                        "parsed_content": "\n\n".join(parts),
+                        "pages": max(len(merged), 1),
+                        "page_data": merged,
+                    }
+                logger.info("MinerU per-page failed; falling back to Tesseract+vision path")
 
         parts: list[str] = []
         page_data: list[dict[str, Any]] = []

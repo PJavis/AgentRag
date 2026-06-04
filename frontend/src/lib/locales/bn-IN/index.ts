@@ -412,6 +412,13 @@ export const bnIN = {
     batchFailed: "সব {count}টি উৎস তৈরি করতে ব্যর্থ",
     batchPartial: "{success}টি সফল, {failed}টি ব্যর্থ",
     submittingSource: "প্রক্রিয়াকরণের জন্য উৎস জমা দেওয়া হচ্ছে...",
+    ingestStages: {
+      queued: "সারিতে",
+      parsing: "পার্সিং",
+      searchable: "অনুসন্ধানযোগ্য · সমৃদ্ধ করা হচ্ছে",
+      enriching: "সমৃদ্ধ করা হচ্ছে",
+      done_partial: "প্রস্তুত (শুধু টেক্সট)",
+    },
     processingBatchSources: "{count}টি উৎস প্রক্রিয়াকরণ করা হচ্ছে। এটি কিছু মুহূর্ত সময় নিতে পারে।",
     processingSource: "আপনার উৎস প্রক্রিয়াকরণ করা হচ্ছে। এটি কিছু মুহূর্ত সময় নিতে পারে।",
     maxFilesAllowed: "ব্যাচে সর্বোচ্চ {count}টি ফাইল অনুমোদিত",

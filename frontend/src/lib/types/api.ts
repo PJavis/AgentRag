@@ -36,6 +36,12 @@ export interface SourceListResponse {
   command_id?: string
   status?: string
   processing_info?: Record<string, unknown>
+  // Granular ingest progress (Phase 2/3): live status chip.
+  ingest_stage?: string | null   // queued|parsing|searchable|enriching|done|done_partial|failed
+  parse_total_pages?: number | null
+  parse_done_pages?: number | null
+  graph_total_chunks?: number | null
+  graph_processed_chunks?: number | null
 }
 
 export interface SourceDetailResponse extends SourceListResponse {

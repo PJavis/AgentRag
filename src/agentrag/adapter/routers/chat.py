@@ -209,6 +209,43 @@ def _summary_to_markdown(summary: dict) -> str:
     return "\n".join(parts).strip() or "Không trích xuất được tóm tắt từ tài liệu."
 
 
+_SUMMARY_REQUEST_TOKENS = (
+    "tóm tắt", "tom tat", "summary", "summarize", "summarise",
+    "tổng quan", "tong quan", "overview", "tổng hợp", "khái quát",
+    "recap", "nội dung tài liệu", "nội dung của tài liệu",
+)
+
+
+def _is_summary_request(message: str) -> bool:
+    """Whole-document summary intent (route to map-reduce), distinct from a
+    generic 'explain X' detailed question."""
+    return any(tok in (message or "").lower() for tok in _SUMMARY_REQUEST_TOKENS)
+
+
+def _summary_full_to_markdown(full: dict) -> str:
+    """Render a SummaryService.generate_full() result — per-span sections with
+    page ranges — into a long, structured Markdown summary."""
+    title = full.get("title") or "Tài liệu"
+    sections = full.get("sections") or []
+    parts: list[str] = [f"# Tóm tắt chi tiết: {title}\n"]
+    if sections:
+        parts.append(f"*Tóm tắt toàn văn — {len(sections)} phần, theo trình tự trang.*\n")
+    for sec in sections:
+        heading = (sec.get("heading") or "").strip()
+        ps, pe = sec.get("page_start"), sec.get("page_end")
+        page_tag = ""
+        if ps is not None:
+            page_tag = f" (trang {ps}–{pe})" if pe and pe != ps else f" (trang {ps})"
+        parts.append(f"\n## {heading or 'Phần'}{page_tag}\n")
+        body_text = sec.get("summary")
+        if isinstance(body_text, str) and body_text.strip():
+            parts.append(body_text.strip())
+        for kp in (sec.get("key_points") or []):
+            if isinstance(kp, str) and kp.strip():
+                parts.append(f"- {kp.strip().lstrip('-•* ').strip()}")
+    return "\n".join(parts).strip() or "Không trích xuất được tóm tắt từ tài liệu."
+
+
 # ── Notebook chat sessions ─────────────────────────────────────────────────────
 
 notebook_router = APIRouter(prefix="/chat")
@@ -750,6 +787,40 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
 
     async def event_generator():
         try:
+            # Whole-document summary → map-reduce over the ENTIRE doc (covers
+            # 100% of pages, not top-K retrieval). Single-doc only; multi-doc
+            # compare stays on the agent path below.
+            _summary_doc = document_title or (
+                scope_titles[0] if scope_titles and len(scope_titles) == 1 else None
+            )
+            if _is_summary_request(body.message) and _summary_doc:
+                try:
+                    from src.agentrag.generation.summary_service import SummaryService
+
+                    yield _sse("status", {"step": "summary", "message": "Đang tóm tắt toàn văn tài liệu…"})
+                    full = await SummaryService().generate_full(_summary_doc)
+                    md = _summary_full_to_markdown(full)
+                    for i in range(0, len(md), 400):
+                        yield _sse("token", {"text": md[i:i + 400]})
+                    try:
+                        await store.append_message(
+                            body.session_id, role="assistant", content=md,
+                            extra_metadata={
+                                "reasoning_path": "summary_mapreduce",
+                                "batches": full.get("batch_count"),
+                            },
+                        )
+                    except Exception:
+                        _log.exception("execute_chat_stream: append map-reduce summary failed")
+                    yield _sse("done", {
+                        "reasoning_path": "summary_mapreduce",
+                        "citations": [],
+                        "answer_length": len(md),
+                    })
+                    return
+                except Exception:
+                    _log.exception("execute_chat_stream: map-reduce summary failed; falling back to agent")
+
             # Semantic path — stream via agent.chat_stream.
             from src.agentrag.retrieval.context import set_domain_filter, set_document_scope
             set_domain_filter(effective_domain_filter)

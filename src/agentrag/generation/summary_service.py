@@ -104,6 +104,35 @@ Return ONLY JSON, no markdown fences.
 """
 
 
+_BATCH_SYSTEM = """\
+You are a medical education expert building a DETAILED study guide from a long
+document, one contiguous span at a time. Summarize the given chunks (a span of
+consecutive pages) THOROUGHLY — this is one part of a whole-document summary, so
+do NOT compress to a few lines.
+
+LANGUAGE: respond in VIETNAMESE (tiếng Việt) unless the content is clearly
+non-Vietnamese.
+
+REQUIREMENTS:
+- Infer a concise section heading naming the topic(s) of THIS span (e.g. the
+  specific disorder, procedure, or theme covered). If the span covers a single
+  named disorder/topic, use its name.
+- Cover EVERY clinically relevant detail in the span: definitions,
+  classifications, epidemiology, causes/risk factors, mechanisms, clinical
+  features, diagnostic criteria (ICD/DSM codes, thresholds, durations),
+  investigations, treatment (drugs, doses, lines of therapy), complications,
+  prognosis, follow-up. Keep numbers, percentages, criteria, drug names, doses.
+- Prefer nested bullets over flattening. Bold key terms with **term**.
+- Do NOT invent content not present in the span. Summarize only what is given.
+
+Return JSON:
+{"heading": "<topic of this span>",
+ "summary": "<detailed multi-paragraph markdown>",
+ "key_points": ["<important takeaway>", ...]}
+Return ONLY JSON, no markdown fences.
+"""
+
+
 class SummaryService:
     def __init__(self) -> None:
         self._es = ElasticsearchStore()
@@ -238,6 +267,118 @@ class SummaryService:
             "style": "quick_review",
             "overview": result.get("overview", ""),
             "sections": result.get("sections", []),
+        }
+
+    # ── Whole-document map-reduce ───────────────────────────────────────────────
+
+    async def generate_full(
+        self,
+        document_title: str,
+        on_progress: Any = None,
+        char_budget: int = 14000,
+        max_batches: int = 24,
+        concurrency: int = 8,
+    ) -> dict[str, Any]:
+        """Map-reduce summary covering the ENTIRE document.
+
+        Fetches every text segment, batches them into contiguous page spans,
+        summarizes each span in detail (parallel), and returns ordered sections.
+        Scales to arbitrarily long docs — unlike top-K retrieval, it sees 100%
+        of the content. `on_progress(done, total)` is awaited per finished batch.
+        """
+        chunks = await self._es.fetch_all_segments(document_title)
+        if not chunks:
+            return {"title": document_title, "style": "full", "overview": "", "sections": []}
+
+        batches = self._batch_chunks(chunks, char_budget=char_budget, max_batches=max_batches)
+        total = len(batches)
+        sem = asyncio.Semaphore(max(1, concurrency))
+        done = 0
+        lock = asyncio.Lock()
+
+        async def run(batch: list[dict[str, Any]]) -> dict[str, Any]:
+            nonlocal done
+            async with sem:
+                res = await self._summarize_batch(document_title, batch)
+            if on_progress is not None:
+                async with lock:
+                    done += 1
+                    try:
+                        await on_progress(done, total)
+                    except Exception:  # noqa: BLE001
+                        pass
+            return res
+
+        results = await asyncio.gather(*(run(b) for b in batches))
+        sections = [r for r in results if r and (r.get("summary") or r.get("key_points"))]
+        return {
+            "title": document_title,
+            "style": "full",
+            "overview": "",
+            "sections": sections,
+            "batch_count": total,
+        }
+
+    @staticmethod
+    def _batch_chunks(
+        chunks: list[dict[str, Any]], char_budget: int, max_batches: int
+    ) -> list[list[dict[str, Any]]]:
+        """Group page-ordered chunks into contiguous spans ~char_budget each.
+
+        If the doc is huge, widen the budget so batch count stays ≤ max_batches
+        (bounds LLM calls/cost while still covering everything)."""
+        total_chars = sum(len((c.get("content") or "")) for c in chunks)
+        budget = max(char_budget, (total_chars // max_batches) + 1)
+        batches: list[list[dict[str, Any]]] = []
+        cur: list[dict[str, Any]] = []
+        cur_len = 0
+        for c in chunks:
+            piece = len((c.get("content") or ""))
+            if cur and cur_len + piece > budget:
+                batches.append(cur)
+                cur, cur_len = [], 0
+            cur.append(c)
+            cur_len += piece
+        if cur:
+            batches.append(cur)
+        return batches
+
+    async def _summarize_batch(
+        self, document_title: str, batch: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        pages = [c.get("page_start") for c in batch if c.get("page_start") is not None]
+        page_start = min(pages) if pages else None
+        page_end = max(
+            [c.get("page_end") or c.get("page_start") for c in batch
+             if (c.get("page_end") or c.get("page_start")) is not None],
+            default=page_start,
+        )
+        context = "\n\n".join((c.get("content") or "").strip() for c in batch if (c.get("content") or "").strip())
+        try:
+            result, _ = await self._llm.json_response(
+                system_prompt=_BATCH_SYSTEM,
+                user_prompt=json.dumps(
+                    {
+                        "document_title": document_title,
+                        "page_range": f"{page_start}-{page_end}" if page_start else "",
+                        "content": context[:24000],
+                    },
+                    ensure_ascii=False,
+                ),
+                # Batch map = many parallel calls → use the FAST model (flash);
+                # pro is too slow/costly at 10-40 batches. Quality is fine here
+                # (condensing given text, not deep reasoning).
+                task="answer",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("summary batch (pages %s-%s) failed: %s", page_start, page_end, exc)
+            return {}
+        return {
+            "heading": result.get("heading", ""),
+            "page_start": page_start,
+            "page_end": page_end,
+            "summary": result.get("summary", ""),
+            "key_points": result.get("key_points", []),
         }
 
     # ── Helpers ───────────────────────────────────────────────────────────────

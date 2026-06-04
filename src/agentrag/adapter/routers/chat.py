@@ -222,6 +222,23 @@ def _is_summary_request(message: str) -> bool:
     return any(tok in (message or "").lower() for tok in _SUMMARY_REQUEST_TOKENS)
 
 
+def _summary_section_to_markdown(sec: dict) -> str:
+    """Render one map-reduce span (heading + page range + summary + key points)."""
+    heading = (sec.get("heading") or "Phần").strip()
+    ps, pe = sec.get("page_start"), sec.get("page_end")
+    tag = ""
+    if ps is not None:
+        tag = f" (trang {ps}–{pe})" if pe and pe != ps else f" (trang {ps})"
+    out = [f"\n## {heading}{tag}\n"]
+    body_text = sec.get("summary")
+    if isinstance(body_text, str) and body_text.strip():
+        out.append(body_text.strip())
+    for kp in (sec.get("key_points") or []):
+        if isinstance(kp, str) and kp.strip():
+            out.append(f"- {kp.strip().lstrip('-•* ').strip()}")
+    return "\n".join(out)
+
+
 def _summary_full_to_markdown(full: dict) -> str:
     """Render a SummaryService.generate_full() result — per-span sections with
     page ranges — into a long, structured Markdown summary."""
@@ -826,25 +843,38 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                 try:
                     from src.agentrag.generation.summary_service import SummaryService
 
+                    svc = SummaryService()
+                    header = f"# Tóm tắt chi tiết: {_summary_doc}\n"
+                    collected: list[str] = [header]
                     yield _sse("status", {"step": "summary", "message": "Đang tóm tắt toàn văn tài liệu…"})
-                    full = await SummaryService().generate_full(_summary_doc)
-                    md = _summary_full_to_markdown(full)
-                    for i in range(0, len(md), 400):
-                        yield _sse("token", {"text": md[i:i + 400]})
+                    yield _sse("token", {"text": header})
+                    total = 0
+                    done = 0
+                    async for kind, payload in svc.iter_sections(_summary_doc):
+                        if kind == "meta":
+                            total = payload.get("total", 0)
+                            yield _sse("status", {"step": "summary", "total": total, "done": 0,
+                                                  "message": f"Tóm tắt {total} phần…"})
+                            continue
+                        done += 1
+                        md = _summary_section_to_markdown(payload)
+                        collected.append(md)
+                        for i in range(0, len(md), 400):
+                            yield _sse("token", {"text": md[i:i + 400]})
+                        yield _sse("status", {"step": "summary", "total": total, "done": done,
+                                              "message": f"Đã tóm tắt {done}/{total} phần"})
+                    full_md = "\n".join(collected).strip()
                     try:
                         await store.append_message(
-                            body.session_id, role="assistant", content=md,
-                            extra_metadata={
-                                "reasoning_path": "summary_mapreduce",
-                                "batches": full.get("batch_count"),
-                            },
+                            body.session_id, role="assistant", content=full_md,
+                            extra_metadata={"reasoning_path": "summary_mapreduce", "batches": total},
                         )
                     except Exception:
                         _log.exception("execute_chat_stream: append map-reduce summary failed")
                     yield _sse("done", {
                         "reasoning_path": "summary_mapreduce",
                         "citations": [],
-                        "answer_length": len(md),
+                        "answer_length": len(full_md),
                     })
                     return
                 except Exception:

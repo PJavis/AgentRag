@@ -319,6 +319,41 @@ class SummaryService:
             "batch_count": total,
         }
 
+    async def iter_sections(
+        self,
+        document_title: str,
+        char_budget: int = 14000,
+        max_batches: int = 24,
+        concurrency: int = 8,
+    ):
+        """Async generator: yields ('meta', {total}) then ('section', sec) per
+        page span, IN PAGE ORDER, as each batch finishes. All batches run
+        concurrently (capped) — so the chat can stream the summary live instead
+        of blocking ~2 min for the whole gather.
+        """
+        chunks = await self._es.fetch_all_segments(document_title)
+        if not chunks:
+            yield ("meta", {"total": 0})
+            return
+        batches = self._batch_chunks(chunks, char_budget=char_budget, max_batches=max_batches)
+        sem = asyncio.Semaphore(max(1, concurrency))
+
+        async def run(batch: list[dict[str, Any]]) -> dict[str, Any]:
+            async with sem:
+                return await self._summarize_batch(document_title, batch)
+
+        tasks = [asyncio.create_task(run(b)) for b in batches]
+        yield ("meta", {"total": len(tasks)})
+        # Await in page order; concurrency is already in flight via create_task.
+        for idx, task in enumerate(tasks):
+            try:
+                sec = await task
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("summary section %d failed: %s", idx, exc)
+                continue
+            if sec and (sec.get("summary") or sec.get("key_points")):
+                yield ("section", sec)
+
     @staticmethod
     def _batch_chunks(
         chunks: list[dict[str, Any]], char_budget: int, max_batches: int

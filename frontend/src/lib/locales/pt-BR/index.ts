@@ -412,6 +412,13 @@ export const ptBR = {
     batchFailed: "Falha ao criar todas as {count} fontes",
     batchPartial: "{success} sucesso, {failed} falhou(aram)",
     submittingSource: "Enviando fonte para processamento...",
+    ingestStages: {
+      queued: "Na fila",
+      parsing: "Processando",
+      searchable: "Pesquisável · enriquecendo",
+      enriching: "Enriquecendo",
+      done_partial: "Pronto (só texto)",
+    },
     processingBatchSources: "Processando {count} fontes. Isso pode levar alguns momentos.",
     processingSource: "Sua fonte está sendo processada. Isso pode levar alguns momentos.",
     maxFilesAllowed: "Máximo de {count} arquivos permitidos por lote",

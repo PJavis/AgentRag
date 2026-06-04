@@ -412,6 +412,13 @@ export const zhTW = {
     batchFailed: "全部 {count} 個來源新增失敗",
     batchPartial: "{success} 個成功，{failed} 個失敗",
     submittingSource: "正在提交來源進行處理...",
+    ingestStages: {
+      queued: "排隊中",
+      parsing: "解析中",
+      searchable: "可搜尋 · 擴充中",
+      enriching: "擴充中",
+      done_partial: "就緒 (僅文字)",
+    },
     processingBatchSources: "正在處理 {count} 個來源，請稍候...",
     processingSource: "正在處理您的來源，請稍候...",
     maxFilesAllowed: "每批最多允許 {count} 個檔案",

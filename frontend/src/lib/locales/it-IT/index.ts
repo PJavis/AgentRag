@@ -412,6 +412,13 @@ export const itIT = {
     batchFailed: "Impossibile creare tutte le {count} fonti",
     batchPartial: "{success} riuscite, {failed} fallite",
     submittingSource: "Invio fonte per l'elaborazione...",
+    ingestStages: {
+      queued: "In coda",
+      parsing: "Analisi",
+      searchable: "Ricercabile · arricchimento",
+      enriching: "Arricchimento",
+      done_partial: "Pronto (solo testo)",
+    },
     processingBatchSources: "Elaborazione di {count} fonti. Potrebbe richiedere qualche istante.",
     processingSource: "La tua fonte è in elaborazione. Potrebbe richiedere qualche istante.",
     maxFilesAllowed: "Massimo {count} file consentiti per batch",

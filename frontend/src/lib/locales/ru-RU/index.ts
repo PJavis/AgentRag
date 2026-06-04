@@ -412,6 +412,13 @@ export const ruRU = {
     batchFailed: "Не удалось создать все источники: {count}",
     batchPartial: "Успешно: {success}, не удалось: {failed}",
     submittingSource: "Отправка источника на обработку...",
+    ingestStages: {
+      queued: "В очереди",
+      parsing: "Разбор",
+      searchable: "Доступно · обогащение",
+      enriching: "Обогащение",
+      done_partial: "Готово (только текст)",
+    },
     processingBatchSources: "Обработка источников: {count}. Это может занять некоторое время.",
     processingSource: "Источник обрабатывается. Это может занять некоторое время.",
     maxFilesAllowed: "Максимальное количество файлов в пакете: {count}",

@@ -98,6 +98,63 @@ def parse_pdf(file_path: str) -> dict[str, Any] | None:
         return _collect_mineru_output(tmp_dir, src.stem)
 
 
+def parse_pages(file_path: str, page_numbers: list[int]) -> dict[str, Any] | None:
+    """Run MinerU on ONLY the given 1-based pages (via a temp sub-PDF), then
+    remap the sub-PDF page numbers back to the original page numbers.
+
+    Lets a mostly-text PDF route just its scanned/thin pages through the slow
+    VLM/layout pass instead of the whole document. Returns the same dict shape
+    as `parse_pdf` (page_data carries ORIGINAL page numbers), or None on failure.
+    """
+    if not page_numbers:
+        return None
+    if not is_available():
+        logger.warning("mineru CLI not found; install with: pip install -U mineru")
+        return None
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        logger.warning("PyMuPDF required for MinerU per-page routing")
+        return None
+
+    src = Path(file_path)
+    if not src.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    ordered = sorted(set(int(p) for p in page_numbers))
+    out_root = Path(settings.MINERU_OUTPUT_DIR).expanduser().resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(dir=out_root, prefix="mineru_sub_") as tmp:
+        sub_path = Path(tmp) / f"{src.stem}_sub.pdf"
+        try:
+            doc = fitz.open(str(src))
+            sub = fitz.open()
+            # fitz pages are 0-based; our page_numbers are 1-based.
+            sub.insert_pdf(doc, from_page=0, to_page=0)  # placeholder, replaced below
+            sub.delete_page(0)
+            for p in ordered:
+                idx = p - 1
+                if 0 <= idx < doc.page_count:
+                    sub.insert_pdf(doc, from_page=idx, to_page=idx)
+            sub.save(str(sub_path))
+            sub.close()
+            doc.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinerU sub-PDF build failed: %s — fall back", exc)
+            return None
+
+        result = parse_pdf(str(sub_path))
+        if result is None:
+            return None
+
+        # Remap sub-PDF page numbers (1..N, in `ordered` order) → originals.
+        remap = {i + 1: ordered[i] for i in range(len(ordered))}
+        for rec in result.get("page_data", []):
+            rec["page_num"] = remap.get(rec.get("page_num"), rec.get("page_num"))
+        return result
+
+
 def _collect_mineru_output(tmp_dir: Path, stem: str) -> dict[str, Any] | None:
     """Read MinerU outputs from its conventional tmp layout."""
     # Try the documented layout first; fall back to glob search.

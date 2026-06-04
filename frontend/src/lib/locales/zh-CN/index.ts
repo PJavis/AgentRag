@@ -412,6 +412,13 @@ export const zhCN = {
     batchFailed: "全部 {count} 个来源创建失败",
     batchPartial: "{success} 个成功，{failed} 个失败",
     submittingSource: "正在提交来源进行处理...",
+    ingestStages: {
+      queued: "排队中",
+      parsing: "解析中",
+      searchable: "可搜索 · 扩充中",
+      enriching: "扩充中",
+      done_partial: "就绪 (仅文本)",
+    },
     processingBatchSources: "正在处理 {count} 个来源，请稍候...",
     processingSource: "正在处理您的来源，请稍候...",
     maxFilesAllowed: "每批最多允许 {count} 个文件",

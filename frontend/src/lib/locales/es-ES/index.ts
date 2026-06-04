@@ -412,6 +412,13 @@ export const esES = {
     batchFailed: "Error al crear las {count} fuentes",
     batchPartial: "{success} exitosas, {failed} fallidas",
     submittingSource: "Enviando fuente para procesamiento...",
+    ingestStages: {
+      queued: "Cola",
+      parsing: "Procesando",
+      searchable: "Buscable · enriqueciendo",
+      enriching: "Enriqueciendo",
+      done_partial: "Listo (solo texto)",
+    },
     processingBatchSources: "Procesando {count} fuentes. Esto puede tomar unos momentos.",
     processingSource: "Tu fuente está siendo procesada. Esto puede tomar unos momentos.",
     maxFilesAllowed: "Máximo {count} archivos permitidos por lote",

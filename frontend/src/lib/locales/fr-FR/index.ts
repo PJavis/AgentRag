@@ -412,6 +412,13 @@ export const frFR = {
     batchFailed: "Échec de la création des {count} sources",
     batchPartial: "{success} réussies, {failed} échouées",
     submittingSource: "Soumission de la source pour traitement...",
+    ingestStages: {
+      queued: "En file",
+      parsing: "Analyse",
+      searchable: "Consultable · enrichissement",
+      enriching: "Enrichissement",
+      done_partial: "Prêt (texte seul)",
+    },
     processingBatchSources: "Traitement de {count} sources. Cela peut prendre quelques instants.",
     processingSource: "Votre source est en cours de traitement. Cela peut prendre quelques instants.",
     maxFilesAllowed: "Maximum {count} fichiers autorisés par lot",

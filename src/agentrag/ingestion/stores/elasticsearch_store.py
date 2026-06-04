@@ -402,6 +402,53 @@ class ElasticsearchStore:
                 f"Elasticsearch relationship indexing had errors: {response}"
             )
 
+    async def fetch_all_segments(
+        self,
+        document_title: str,
+        max_chunks: int = 3000,
+        include_images: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return every text segment of a document, ordered by page then
+        position — the full-coverage input for whole-doc map-reduce summary.
+
+        Paginates via search_after so it works past ES's 10k window. Image
+        segments are excluded unless include_images=True.
+        """
+        out: list[dict[str, Any]] = []
+        filter_clauses: list[dict[str, Any]] = [
+            {"term": {"document_title.keyword": document_title}}
+        ]
+        if not include_images:
+            # segment_type defaults to "text"; exclude image segments.
+            filter_clauses.append({"bool": {"must_not": [{"term": {"segment_type": "image"}}]}})
+        sort = [
+            {"page_start": {"order": "asc", "missing": "_last"}},
+            {"position": {"order": "asc", "missing": "_last"}},
+            {"_doc": {"order": "asc"}},
+        ]
+        page_size = 500
+        search_after: list[Any] | None = None
+        try:
+            while len(out) < max_chunks:
+                body: dict[str, Any] = {
+                    "size": min(page_size, max_chunks - len(out)),
+                    "query": {"bool": {"filter": filter_clauses}},
+                    "sort": sort,
+                }
+                if search_after is not None:
+                    body["search_after"] = search_after
+                response = await self.client.search(index=self.index_name, **body)
+                hits = response.get("hits", {}).get("hits", [])
+                if not hits:
+                    break
+                out.extend(self._normalize_hits(hits, "all"))
+                search_after = hits[-1].get("sort")
+                if len(hits) < body["size"] or search_after is None:
+                    break
+        except ESNotFoundError:
+            return []
+        return out
+
     async def sparse_search(
         self,
         query: str,

@@ -61,10 +61,31 @@ hai ngôn ngữ. Hệ thống RAG vận hành ổn định với tài liệu ti�
 1. Tải bộ `both` (4 bộ con, 20 câu/bộ = 80 câu).
 2. Nạp 370 đoạn ngữ cảnh gốc qua đúng pipeline thật (parse → chunk → nhúng TEI bge-m3 → index ES).
    *(Cơ sở dữ liệu đã bị xoá sạch trong phiên này nên đây là lần nạp mới hoàn toàn.)*
-3. Trả lời từng câu qua **đường đi agent thật** (`hybrid_kg` + rerank `bge-reranker-v2-m3` +
-   sinh câu trả lời bằng DeepSeek).
+3. Trả lời từng câu qua **đường đi agent thật**. Chế độ truy hồi đặt là `hybrid_kg`
+   (vì `STRUCTMEM_ENABLED=true`), nhưng xem mục **"StructMem KHÔNG hoạt động"** bên dưới —
+   thực tế truy hồi chạy = **hybrid (dense + sparse RRF) + rerank `bge-reranker-v2-m3`**, sinh
+   câu trả lời bằng DeepSeek.
 4. Chấm 5 chỉ số thang 1–5 bằng **bộ chấm DeepSeek** (DeepEval), kèm các chỉ số tính toán:
    tỷ lệ lỗi, freshness, chi phí, độ trễ.
+
+## ⚠️ StructMem KHÔNG hoạt động trong lần benchmark này
+
+Mặc dù `STRUCTMEM_ENABLED=true` và chế độ truy hồi là `hybrid_kg`, **StructMem / tri thức đồ thị
+(KG) không thực sự đóng góp** vào kết quả này. Lý do:
+
+- Benchmark nạp dữ liệu ở chế độ **async** (`STRUCTMEM_INGEST_MODE=async`): hàm `_ingest_gold`
+  gọi `ingest_folder(...)` rồi **không chờ** — phần trích xuất StructMem được đẩy vào ARQ worker
+  chạy nền, và thư mục tạm bị xoá ngay sau đó.
+- Hệ thống trả lời cả 80 câu **trước khi** worker kịp trích xuất xong cho 370 ngữ cảnh.
+- Kiểm chứng: trên Elasticsearch chỉ tồn tại index `agentrag_segments` (3031 đoạn); các index
+  `agentrag_entities` / `agentrag_relationships` / `agentrag_memory_doc` **rỗng/không tồn tại**.
+- Do đó `hybrid_kg` không có tín hiệu KG để thêm → thực chất chạy như **hybrid (dense + sparse) +
+  rerank**.
+
+**Hệ quả:** các con số ĐẠT ở trên phản ánh chất lượng truy hồi **không có** enrichment KG. Đây vừa
+là điểm tốt (đã đạt mọi ngưỡng chỉ với hybrid+rerank) vừa là điều cần lưu ý (chưa đo được phần
+đóng góp của StructMem). Muốn đo đúng nhánh KG, cần nạp **đồng bộ** (sync) hoặc chờ worker trích
+xuất xong trước khi chấm — xem khuyến nghị.
 
 ## Lưu ý quan trọng (đọc trước khi tin số chi phí / độ trễ)
 
@@ -85,3 +106,6 @@ hai ngôn ngữ. Hệ thống RAG vận hành ổn định với tài liệu ti�
 1. **An toàn để triển khai** — không có dấu hiệu suy giảm; chất lượng tốt trên cả 2 ngôn ngữ.
 2. **Cho Ollama chạy bền vững** (dịch vụ systemd) để benchmark sau chạy đúng cấu hình production và
    cho số chi phí/độ trễ chính xác, không cần ép điều phối lên cloud.
+3. **Đo đúng nhánh StructMem/KG:** chạy lại với nạp **đồng bộ** (`STRUCTMEM_INGEST_MODE=sync`) hoặc
+   chờ worker trích xuất xong rồi mới chấm, để `hybrid_kg` thực sự có index entity/memory. Khi đó
+   sẽ so được chất lượng có-KG vs không-KG (hiện kết quả này là không-KG).

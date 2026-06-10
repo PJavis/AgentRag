@@ -47,6 +47,15 @@ def _embed_input_for_chunk(chunk: dict[str, Any]) -> str:
     return chunk["content"]
 
 
+async def _build_and_index_raptor(builder: Any, es_store: Any, leaf_chunks: list[dict[str, Any]], document_title: str) -> int:
+    """Build RAPTOR summary nodes from leaves and index them. Returns count."""
+    summary_nodes = await builder.build(leaf_chunks, document_title)
+    if not summary_nodes:
+        return 0
+    await es_store.index_segments(summary_nodes, document_title)
+    return len(summary_nodes)
+
+
 async def ingest_folder(
     folder_path: str,
     graph_ingest_mode: Literal["sync", "async"] | None = None,
@@ -268,6 +277,16 @@ async def ingest_folder(
                 t0 = time.perf_counter()
                 await es_store.index_segments(chunks_search, doc["title"])
                 timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
+                if settings.RAPTOR_ENABLED:
+                    t0 = time.perf_counter()
+                    from src.agentrag.ingestion.raptor import RaptorBuilder
+                    from src.agentrag.services.llm_gateway import LLMGateway
+                    raptor_count = await _build_and_index_raptor(
+                        RaptorBuilder(LLMGateway(), embedder),
+                        es_store, chunks_search, doc["title"],
+                    )
+                    timings["raptor_ms"] = (time.perf_counter() - t0) * 1000
+                    report["raptor_summary_nodes"] = raptor_count
             else:
                 timings["elasticsearch_ms"] = 0.0
 

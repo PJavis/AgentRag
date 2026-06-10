@@ -21,6 +21,8 @@ class ClassifierOutput:
     confidence: float
     reasoning: str
     method: Literal["rule", "llm", "default"]
+    complexity: Literal["simple", "complex"] = "simple"
+    single_domain: bool = True
 
 
 _FLAG = re.IGNORECASE | re.UNICODE
@@ -162,12 +164,15 @@ class QueryIntentClassifier:
             return await self._classify_l2(question, chat_history)
 
         # Default: semantic
+        complexity, single_domain = self._classify_l1_complexity(question)
         return ClassifierOutput(
             intent="semantic",
             query_type=None,
             confidence=0.5,
             reasoning="No rule matched; defaulting to semantic path.",
             method="default",
+            complexity=complexity,
+            single_domain=single_domain,
         )
 
     def _classify_l1(self, question: str) -> ClassifierOutput | None:
@@ -178,14 +183,41 @@ class QueryIntentClassifier:
         for query_type, patterns in self._PATTERN_MAP:
             for pattern in patterns:
                 if pattern.search(question):
+                    complexity, single_domain = self._estimate_complexity(question)
+                    # Any structured query_type is treated as at least 'complex'
+                    # except a bare single-fact aggregation.
                     return ClassifierOutput(
                         intent="structured",
                         query_type=query_type,
                         confidence=0.95,
                         reasoning=f"L1 rule matched pattern for query_type='{query_type}'",
                         method="rule",
+                        complexity="complex" if query_type != "aggregation" else complexity,
+                        single_domain=single_domain,
                     )
         return None
+
+    # Markers that a question needs multi-step / multi-domain reasoning.
+    _COMPLEX_MARKERS: list[re.Pattern] = [
+        re.compile(p, _FLAG) for p in [
+            r"\bso sánh\b", r"\bcompare\b", r"\bvà\b.{0,40}\bkhác\b",
+            r"\btại sao\b", r"\bvì sao\b", r"\bwhy\b", r"\bcơ chế\b",
+            r"\bmối liên hệ\b", r"\brelationship\b", r"\bphân tích\b",
+            r"\bđánh giá\b", r"\btổng hợp\b", r"\bnhiều\b.{0,20}\bkhía cạnh\b",
+        ]
+    ]
+
+    def _estimate_complexity(self, question: str, intent: ClassifierOutput | None = None) -> tuple[str, bool]:
+        q = question.strip()
+        long_q = len(q) >= settings.AGENT_PLAN_TRIGGER_MIN_CHARS
+        has_marker = any(p.search(q) for p in self._COMPLEX_MARKERS)
+        multi_clause = (" và " in f" {q.lower()} ") or (";" in q) or (q.count("?") > 1)
+        complex_ = bool(has_marker or (long_q and multi_clause))
+        single_domain = not (has_marker or multi_clause)
+        return ("complex" if complex_ else "simple"), single_domain
+
+    def _classify_l1_complexity(self, question: str) -> tuple[str, bool]:
+        return self._estimate_complexity(question)
 
     async def _classify_l2(
         self,
@@ -209,7 +241,7 @@ class QueryIntentClassifier:
             "Classify the user question into one of two intents: 'semantic' or 'structured'.\n"
             "Structured intents require comparison, counting, aggregation, ranking, or multi-hop reasoning.\n"
             "Semantic intents are descriptive or explanatory questions.\n"
-            "Return JSON: {\"intent\": str, \"query_type\": str|null, \"confidence\": float, \"reasoning\": str}\n"
+            "Return JSON: {\"intent\": str, \"query_type\": str|null, \"confidence\": float, \"complexity\": \"simple\"|\"complex\", \"single_domain\": bool, \"reasoning\": str}\n"
             "query_type must be one of: comparison, aggregation, ranking, multi_filter, multi_hop, or null.\n\n"
             "Examples:\n"
             + json.dumps(self._L2_EXAMPLES, ensure_ascii=False, indent=2)
@@ -228,12 +260,17 @@ class QueryIntentClassifier:
             query_type = result.get("query_type")
             if query_type not in ("comparison", "aggregation", "ranking", "multi_filter", "multi_hop", None):
                 query_type = None
+            complexity = result.get("complexity")
+            if complexity not in ("simple", "complex"):
+                complexity, _sd = self._estimate_complexity(question)
             return ClassifierOutput(
                 intent=intent,
                 query_type=query_type,
                 confidence=float(result.get("confidence", 0.7)),
                 reasoning=result.get("reasoning", ""),
                 method="llm",
+                complexity=complexity,
+                single_domain=bool(result.get("single_domain", True)),
             )
         except Exception as exc:
             return ClassifierOutput(

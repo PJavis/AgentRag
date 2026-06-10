@@ -283,6 +283,45 @@ class Settings(BaseSettings):
     # Decompose: split complex questions into sub-queries for multi-hop retrieval
     QUERY_REWRITE_DECOMPOSE: bool = False
 
+    # ── WS1: Contextual Retrieval (Anthropic) ────────────────────────────────
+    #: When on, each chunk gets a 50–100 token LLM-generated context prepended
+    #: to the text that is embedded + BM25-indexed (original `content` still cited).
+    CONTEXTUAL_RETRIEVAL_ENABLED: bool = False
+    #: LLMGateway task name → routable to DeepSeek via LLM_TASK_MODEL_MAP.
+    CONTEXTUAL_RETRIEVAL_TASK: str = "contextualize"
+    #: Cap the document text sent as the cached situating prefix (chars).
+    CONTEXTUAL_MAX_DOC_CHARS: int = 48000
+    CONTEXTUAL_CACHE_DIR: str = ".cache/agentrag/context"
+
+    # ── WS2: RAPTOR summary layer ────────────────────────────────────────────
+    RAPTOR_ENABLED: bool = False
+    RAPTOR_MAX_LEVELS: int = 3
+    #: Documents with fewer leaf chunks than this skip RAPTOR (no value).
+    RAPTOR_MIN_LEAVES: int = 8
+    #: Target average cluster size when picking the number of GMM components.
+    RAPTOR_CLUSTER_SIZE: int = 5
+    RAPTOR_SUMMARY_TASK: str = "raptor_summary"
+    #: Max share of a result set that may be RAPTOR summary nodes.
+    RAPTOR_SUMMARY_MAX_RATIO: float = 0.4
+
+    # ── WS3: CRAG critique + multi-hop ───────────────────────────────────────
+    CRAG_ENABLED: bool = False
+    #: Min retrieved-hit count below which retrieval is judged "incorrect".
+    CRAG_MIN_HITS: int = 1
+    CRAG_GROUNDING_ENABLED: bool = True
+    AGENT_CRITIQUE_MAX_RETRIES: int = 1
+    AGENT_MULTIHOP_ENABLED: bool = False
+
+    # ── WS4: Adaptive routing ────────────────────────────────────────────────
+    ADAPTIVE_ROUTING_ENABLED: bool = False
+    ADAPTIVE_FASTPATH_MIN_CONFIDENCE: float = 0.85
+
+    # ── WS5: Semantic retrieval cache ────────────────────────────────────────
+    SEMANTIC_CACHE_ENABLED: bool = False
+    SEMANTIC_CACHE_THRESHOLD: float = 0.97
+    SEMANTIC_CACHE_TTL_SECONDS: int = 120
+    SEMANTIC_CACHE_MAX_ITEMS: int = 256
+
     # Observability (ADR 0001 Phase B)
     OBSERVABILITY_TRACE_ENABLED: bool = True
 

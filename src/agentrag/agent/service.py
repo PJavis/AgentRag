@@ -734,6 +734,8 @@ class AgentService:
                 "content_hash": item.get("content_hash"),
                 "excerpt": (item.get("excerpt") or item.get("content") or "")[:300],
                 "segment_type": seg_type,
+                "node_level": item.get("node_level", 0),
+                "context_text": item.get("context_text"),
                 "mime": self._mime_for_segment(item, seg_type),
             }
             page = item.get("page") or item.get("page_start")

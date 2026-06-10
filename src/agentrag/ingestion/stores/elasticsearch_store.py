@@ -151,6 +151,9 @@ class ElasticsearchStore:
                     "system_tag": {"type": "keyword"},
                     "specialty_tag": {"type": "keyword"},
                     "canonical_terms": {"type": "keyword"},
+                    "context_text": {"type": "text"},
+                    "node_level": {"type": "integer"},
+                    "child_ids": {"type": "keyword"},
                     "metadata": {"type": "object", "enabled": True},
                     "embedding": {
                         "type": "dense_vector",
@@ -194,6 +197,9 @@ class ElasticsearchStore:
                         "system_tag": {"type": "keyword"},
                         "specialty_tag": {"type": "keyword"},
                         "canonical_terms": {"type": "keyword"},
+                        "context_text": {"type": "text"},
+                        "node_level": {"type": "integer"},
+                        "child_ids": {"type": "keyword"},
                         "image_embedding": {
                             "type": "dense_vector",
                             "dims": settings.VISUAL_EMBEDDING_DIMS,
@@ -337,6 +343,9 @@ class ElasticsearchStore:
                 "system_tag": chunk.get("system_tag"),
                 "specialty_tag": chunk.get("specialty_tag") or [],
                 "canonical_terms": chunk.get("canonical_terms") or [],
+                "context_text": chunk.get("context_text"),
+                "node_level": chunk.get("node_level", 0),
+                "child_ids": chunk.get("child_ids") or [],
                 "metadata": chunk.get("metadata", {}),
             }
             # P0.2: image segments also carry a CLIP visual vector.
@@ -460,7 +469,7 @@ class ElasticsearchStore:
         query_body: dict[str, Any] = {
             "multi_match": {
                 "query": query,
-                "fields": ["content^2", "document_title^1.5", "section_path"],
+                "fields": ["content^2", "context_text^1.5", "document_title^1.5", "section_path"],
                 "type": "best_fields",
             }
         }
@@ -645,6 +654,8 @@ class ElasticsearchStore:
                     "segment_type": payload.get("segment_type", "text"),
                     "page_start": payload.get("page_start"),
                     "page_end": payload.get("page_end"),
+                    "context_text": payload.get("context_text"),
+                    "node_level": payload.get("node_level", 0),
                     "metadata": payload.get("metadata", {}),
                 }
             )

@@ -15,7 +15,8 @@ domain-aware retrieval + reasoning trace + cost dashboard.
 - **Cost & token dashboard** (S1) — `/cost` page, per-task / per-model summary
   với p50/p95 latency, recent-calls feed.
 - **Reasoning trace** (S2) — Nút "Trace" trên mỗi AI bubble → LangGraph-style
-  node graph (`plan → decide → tool → assemble → answer → critique`) +
+  node graph (`classify → {fast_answer | plan} → bootstrap → decide ⇄ tool →
+  assemble → answer → critique → {ground | corrective_retrieve}`) +
   expandable tool I/O + plan sub-queries + SQL.
 - **Embedding cache** (S3) — TTL 600s cho query path; ES result cache 60s đã có.
 - **Semantic + Structured paths** — Hybrid (BM25 + kNN + RRF + KG) hoặc SQL
@@ -96,7 +97,11 @@ POST /chat
             ├── KnowledgeService.bootstrap_search()  (hybrid_kg)
             │       ├── ES hybrid (BM25 + kNN) → chunk hits
             │       └── ES entries + synthesis → structmem hits (RRF fused)
-            ├── Agent loop: decide → tool → context assembly
+            ├── [adaptive, ADAPTIVE_ROUTING_ENABLED] high-conf simple single-domain
+            │       Q → fast_answer (1 retrieve + 1 answer, skip decide loop)
+            ├── Agent loop: bootstrap → decide ⇄ tool_exec → assemble → answer
+            ├── critique [CRAG_ENABLED] → ground | corrective_retrieve
+            │       (step-back re-retrieve, bounded by AGENT_CRITIQUE_MAX_RETRIES)
             └── LLMGateway.json_response(task="answer")
             │
             └── [async] ARQ: enqueue chat_memory job → ChatMemoryService.process_turn()
@@ -511,7 +516,7 @@ STRUCTMEM_ENABLED=true
 STRUCTMEM_INGEST_MODE=async          # sync | async
 STRUCTMEM_CONSOLIDATION_THRESHOLD=20
 STRUCTMEM_CONSOLIDATION_HISTORY_TOP_K=15
-STRUCTMEM_MAX_CONCURRENCY=3
+STRUCTMEM_MAX_CONCURRENCY=1           # giữ 1 cho local Ollama (tránh GPU thrash)
 STRUCTMEM_CHUNK_TIMEOUT_SECONDS=300
 STRUCTMEM_CHUNK_RETRIES=3
 STRUCTMEM_ENABLE_CACHE=true
@@ -745,12 +750,15 @@ AGENT_PLAN_MAX_SUBQUERIES=4
 ```
 
 **Orchestrator** — single backend: `GraphAgentService` (LangGraph `StateGraph`,
-13 nodes: validate → memory → chitchat_check → classify → structured/semantic →
-plan → bootstrap → decide ⇄ tool_exec → assemble → answer → ground) with
-`InMemorySaver` checkpoint. Each turn's state is persisted by
-`thread_id = conversation_id` → resume from any node, inspect state via
-`_GRAPH.aget_state(config)`. (Self-critique pass from the deleted hand-rolled
-loop is not currently ported — re-introduce as a graph node if needed.)
+16 nodes: validate → memory → chitchat_check → classify → {structured_run |
+fast_answer | semantic_plan} → bootstrap → decide ⇄ tool_exec → assemble →
+answer → critique → {ground | corrective_retrieve}) with `InMemorySaver`
+checkpoint. Each turn's state is persisted by `thread_id = conversation_id` →
+resume from any node, inspect state via `_GRAPH.aget_state(config)`.
+Self-critique is the `critique` node (active when `CRAG_ENABLED=true`); on a
+failed grounding check it loops through `corrective_retrieve` up to
+`AGENT_CRITIQUE_MAX_RETRIES` times before grounding. `fast_answer` is the
+adaptive fast-path (when `ADAPTIVE_ROUTING_ENABLED=true`).
 
 **Chit-chat fast-path**: short messages with greeting/thanks tokens
 (`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...) skip retrieval and
@@ -1201,12 +1209,14 @@ Cooldown 30s giữa các lần rescale để tránh thrashing.
 
 ## 11. Structured SQL Reasoning
 
-Tự động kích hoạt cho câu hỏi so sánh, thống kê, xếp hạng.
+Kích hoạt theo *ý định* (so sánh, thống kê, xếp hạng) — nhưng chỉ chạy SQL khi
+corpus có **dữ liệu bảng** (xem cổng corpus-aware bên dưới).
 
-### Pipeline 5 bước
+### Pipeline 6 bước
 
 ```
-Classify → Schema discovery → Extract (CLEAR A+B) → SQL compile → Synthesize
+Classify → Retrieval → [corpus-aware tabular gate] → Schema discovery →
+Extract (CLEAR A+B) → SQL compile → Synthesize
 ```
 
 | `query_type` | Ví dụ |
@@ -1215,7 +1225,20 @@ Classify → Schema discovery → Extract (CLEAR A+B) → SQL compile → Synthe
 | `aggregation` | "Tổng doanh thu là bao nhiêu?" |
 | `ranking` | "Top 5 sản phẩm bán chạy nhất" |
 
-Fallback về semantic path nếu bất kỳ bước nào thất bại.
+**Cổng dữ liệu bảng (corpus-aware gate, `STRUCTURED_REQUIRE_TABULAR`, mặc định
+bật).** Classifier chỉ định tuyến theo *ý định* — nó không thấy corpus. Sau bước
+retrieval, pipeline kiểm tra `has_tabular_evidence()` (`structured/pipeline.py`):
+chỉ chạy các bước SQL khi bằng chứng truy hồi thực sự chứa dữ liệu bảng — chunk
+`segment_type="table"` (Excel/CSV được gắn tag lúc ingest), marker `### Sheet:`,
+` ```csv ` fence, bảng markdown, hay `<table>` (MinerU). Corpus chỉ có văn xuôi
+(sách y khoa) → **fallback semantic *trước* các bước schema-discovery / extract /
+SQL tốn kém** (`_fallback_reason = "no_tabular_evidence"`). Đặt
+`STRUCTURED_REQUIRE_TABULAR=false` để khôi phục hành vi cũ (luôn thử SQL). / The
+classifier routes by intent and cannot see the corpus; after retrieval the gate
+skips the expensive SQL stages unless tabular evidence is present.
+
+Ngoài ra, fallback về semantic path nếu bất kỳ bước nào sau đó thất bại
+(schema rỗng, extraction rỗng, SQL lỗi/không có kết quả).
 
 ---
 
@@ -1418,8 +1441,9 @@ Cần bật `LLM_COST_TRACKING_ENABLED=true` trong `.env`.
 Mỗi assistant message trong notebook chat hiện nút **"Trace"** (nếu có
 `tool_trace` / `timings_ms`). Click mở dialog gồm:
 
-- Pipeline graph: `plan → decide → tool → assemble → answer → critique`
-  với latency mỗi stage
+- Pipeline graph: `classify → {fast_answer | plan} → bootstrap → decide ⇄ tool
+  → assemble → answer → critique → {ground | corrective_retrieve}` với latency
+  mỗi stage (chips: fast-path / cached / verified / self-corrected / domain)
 - Sub-queries từ planner
 - Generated SQL (structured path)
 - Tool calls list (expandable): input + truncated output JSON
@@ -1622,7 +1646,8 @@ make dev
 | `Connection refused :9200` | Elasticsearch chưa sẵn sàng | Chờ 30s sau `docker compose up` |
 | `ARQ pool not initialized` | Chạy app trước khi Valkey sẵn sàng | Đảm bảo Valkey đang chạy |
 | `unsupported value: NaN` | Embedding không ổn định | Đổi sang `nomic-embed-text` |
-| Structured path luôn fallback | Model quá nhỏ | Dùng model ≥7B |
+| Structured path luôn fallback (`no_tabular_evidence`) | Corpus chỉ có văn xuôi, không có bảng | **Đúng hành vi** — cổng `STRUCTURED_REQUIRE_TABULAR`; chỉ Excel/CSV/bảng mới chạy SQL. Tắt cổng: `STRUCTURED_REQUIRE_TABULAR=false` |
+| Structured path luôn fallback (bước SQL) | Model quá nhỏ | Dùng model ≥7B |
 | `agentrag_memory_doc` rỗng (kind=entry) | `STRUCTMEM_ENABLED=false` hoặc worker chưa chạy | Chạy `arq worker` hoặc `python scaler.py` |
 
 ---

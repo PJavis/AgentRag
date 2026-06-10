@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppShell } from '@/components/layout/AppShell'
+import { CostCharts } from '@/components/cost/CostCharts'
 import {
   useCostSummary,
   useRecentCostCalls,
@@ -178,6 +179,7 @@ export default function CostDashboardPage() {
           <TabsTrigger value="task">By task</TabsTrigger>
           <TabsTrigger value="model">By model</TabsTrigger>
           <TabsTrigger value="recent">Recent calls</TabsTrigger>
+          <TabsTrigger value="charts">Charts</TabsTrigger>
         </TabsList>
 
         <TabsContent value="task" className="mt-3">
@@ -252,6 +254,9 @@ export default function CostDashboardPage() {
               </ScrollArea>
             </CardContent>
           </Card>
+        </TabsContent>
+        <TabsContent value="charts" className="mt-3">
+          <CostCharts perModel={s?.per_model ?? {}} recent={r ?? []} />
         </TabsContent>
       </Tabs>
         </div>

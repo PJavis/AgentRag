@@ -10,7 +10,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { ChevronRight, Activity, Clock, ListTree } from 'lucide-react'
+import { ChevronRight, Activity, Clock, ListTree, RotateCcw } from 'lucide-react'
 import type {
   NotebookChatMessage,
   ChatTimings,
@@ -30,6 +30,19 @@ type StageKey =
   | 'assemble'
   | 'answer'
   | 'critique'
+
+export interface TaggedTrace extends ToolTraceEntry {
+  isMultiHop: boolean
+  isCorrective: boolean
+}
+
+export function groupMultiHop(entries: ToolTraceEntry[]): TaggedTrace[] {
+  return (entries ?? []).map((e) => ({
+    ...e,
+    isMultiHop: (e as Record<string, unknown>).multihop === true,
+    isCorrective: (e as Record<string, unknown>).corrective === true,
+  }))
+}
 
 const STAGE_ORDER: StageKey[] = ['plan', 'decide', 'tool', 'assemble', 'answer', 'critique']
 const STAGE_LABEL: Record<StageKey, string> = {
@@ -84,9 +97,10 @@ function ToolTraceList({ entries }: { entries: ToolTraceEntry[] }) {
   if (!entries?.length) {
     return <div className="text-xs text-muted-foreground">No tool calls.</div>
   }
+  const tagged = groupMultiHop(entries)
   return (
     <div className="space-y-2">
-      {entries.map((e, i) => {
+      {tagged.map((e, i) => {
         const isOpen = expanded === i
         const name = e.tool_name || 'unknown'
         const subq = (e.sub_query as string | undefined) ?? null
@@ -103,6 +117,16 @@ function ToolTraceList({ entries }: { entries: ToolTraceEntry[] }) {
                   className={`h-3 w-3 shrink-0 transition ${isOpen ? 'rotate-90' : ''}`}
                 />
                 <span className="text-xs font-mono shrink-0">{name}</span>
+                {e.isCorrective && (
+                  <Badge variant="outline" className="text-[10px] gap-0.5 text-blue-600 dark:text-blue-300">
+                    <RotateCcw className="h-2.5 w-2.5" />corrective
+                  </Badge>
+                )}
+                {e.isMultiHop && (
+                  <Badge variant="outline" className="text-[10px] text-violet-600 dark:text-violet-300">
+                    hop
+                  </Badge>
+                )}
                 {subq && (
                   <span className="text-[10px] text-muted-foreground truncate">
                     “{subq}”
@@ -194,6 +218,17 @@ export function TraceDialog({ open, onOpenChange, message }: TraceDialogProps) {
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Tin nhắn ngắn / xã giao — bỏ qua retrieval, dùng model rẻ trả lời trực tiếp.
+                </div>
+              </div>
+            )}
+            {path === 'fast' && (
+              <div className="border rounded-lg p-3 bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200/60 dark:border-emerald-900/40 text-sm">
+                <div className="font-medium text-emerald-900 dark:text-emerald-200 mb-1">
+                  ⚡ Fast path
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Simple, single-domain question — answered with one retrieve + one LLM call,
+                  skipping the plan→decide→tool loop for lower latency.
                 </div>
               </div>
             )}

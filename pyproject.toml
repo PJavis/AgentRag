@@ -55,6 +55,8 @@ dependencies = [
     "mineru[all]>=3.1.14",
     # Audio transcription (Whisper) for mp3/wav/m4a ingest
     "faster-whisper>=1.0.3",
+    "umap-learn>=0.5.6",
+    "scikit-learn>=1.5.0",
 ]
 
 [project.optional-dependencies]

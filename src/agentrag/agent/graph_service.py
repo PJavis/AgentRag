@@ -232,6 +232,38 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
     }
 
 
+async def fast_answer(state: ChatState) -> dict[str, Any]:
+    """Adaptive fast path: single retrieve + single-shot answer, skipping the
+    plan->decide->tool loop. Used only for high-confidence simple single-domain
+    questions (WS4)."""
+    doc_title = state.get("document_title")
+    co = state.get("classifier_output")
+    boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
+        query=state["question"], document_title=doc_title, intent=co,
+    )
+    boot_out = _INNER.security.filter_tool_results(tool_output=boot_out, document_title=doc_title)
+    trace = [{"tool_name": "search_hybrid_kg", "tool_input": boot_in, "tool_output": boot_out}]
+
+    assembled = await _INNER.context.assemble(state["question"], [boot_out])
+    packed = assembled.get("packed_context", []) if isinstance(assembled, dict) else assembled
+
+    started = time.perf_counter()
+    out = await _INNER._answer(
+        question=state["question"], packed_context=packed, tool_trace=trace,
+        final_answer=None, chat_history=state.get("chat_history"),
+        memory_context=state.get("memory_context"), verbosity=state.get("verbosity"),
+    )
+    return {
+        "tool_trace": trace,
+        "packed_context": packed,
+        "answer": out.get("answer", ""),
+        "citations": out.get("citations", []),
+        "highlights": out.get("highlights", []),
+        "answer_latency_ms": (time.perf_counter() - started) * 1000,
+        "reasoning_path": "fast",
+    }
+
+
 async def decide(state: ChatState) -> dict[str, Any]:
     started = time.perf_counter()
     decision = await _INNER._decide(
@@ -366,7 +398,18 @@ def _route_chitchat(state: ChatState) -> str:
 
 
 def _route_intent(state: ChatState) -> str:
-    return "structured_run" if state.get("intent") == "structured" else "semantic_plan"
+    if state.get("intent") == "structured":
+        return "structured_run"
+    co = state.get("classifier_output")
+    if (
+        settings.ADAPTIVE_ROUTING_ENABLED
+        and co is not None
+        and getattr(co, "complexity", "complex") == "simple"
+        and getattr(co, "single_domain", False)
+        and getattr(co, "confidence", 0.0) >= settings.ADAPTIVE_FASTPATH_MIN_CONFIDENCE
+    ):
+        return "fast_answer"
+    return "semantic_plan"
 
 
 def _route_structured(state: ChatState) -> str:
@@ -396,6 +439,7 @@ def _build_graph():
     g.add_node("structured_run", structured_run)
     g.add_node("semantic_plan", semantic_plan)
     g.add_node("bootstrap", bootstrap)
+    g.add_node("fast_answer", fast_answer)
     g.add_node("decide", decide)
     g.add_node("tool_exec", tool_exec)
     g.add_node("assemble", assemble)
@@ -409,7 +453,9 @@ def _build_graph():
                             {"chitchat_answer": "chitchat_answer", "classify": "classify"})
     g.add_edge("chitchat_answer", END)
     g.add_conditional_edges("classify", _route_intent,
-                            {"structured_run": "structured_run", "semantic_plan": "semantic_plan"})
+                            {"structured_run": "structured_run",
+                             "semantic_plan": "semantic_plan",
+                             "fast_answer": "fast_answer"})
     g.add_conditional_edges("structured_run", _route_structured,
                             {"ground": "ground", "semantic_plan": "semantic_plan"})
     g.add_edge("semantic_plan", "bootstrap")
@@ -419,6 +465,7 @@ def _build_graph():
     g.add_edge("tool_exec", "decide")
     g.add_edge("assemble", "answer")
     g.add_edge("answer", "ground")
+    g.add_edge("fast_answer", "ground")
     g.add_edge("ground", END)
     return g.compile(checkpointer=_CHECKPOINTER)
 

@@ -62,6 +62,8 @@ class ChatState(TypedDict, total=False):
     step_count: int
     decide_decision: Optional[dict[str, Any]]
     packed_context: list[dict[str, Any]]
+    critique_decision: Optional[dict[str, Any]]
+    critique_retries: int
 
     # Timings
     decide_latency_ms: float
@@ -356,6 +358,51 @@ async def answer_node(state: ChatState) -> dict[str, Any]:
     }
 
 
+async def critique(state: ChatState) -> dict[str, Any]:
+    if not settings.CRAG_ENABLED:
+        return {"critique_decision": {"grounded": True, "reason": "disabled"}}
+    decision = _INNER._critique(
+        answer=state.get("answer", ""),
+        citations=state.get("citations", []),
+        packed_context=state.get("packed_context", []),
+    )
+    return {"critique_decision": decision}
+
+
+async def corrective_retrieve(state: ChatState) -> dict[str, Any]:
+    """One bounded CRAG correction: step-back query rewrite + re-retrieve +
+    re-answer. Appends new evidence to the trace, then loops to critique."""
+    doc_title = state.get("document_title")
+    co = state.get("classifier_output")
+    # Step-back: broaden the query to recover when the first retrieval missed.
+    stepback = f"{state['question']} (bối cảnh tổng quát, định nghĩa, nguyên nhân)"
+    boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
+        query=stepback, document_title=doc_title, intent=co,
+    )
+    boot_out = _INNER.security.filter_tool_results(tool_output=boot_out, document_title=doc_title)
+    trace = list(state.get("tool_trace") or [])
+    trace.append({"tool_name": "search_hybrid_kg", "tool_input": boot_in,
+                  "tool_output": boot_out, "corrective": True})
+
+    assembled = await _INNER.context.assemble(
+        state["question"], [s["tool_output"] for s in trace]
+    )
+    packed = assembled.get("packed_context", []) if isinstance(assembled, dict) else assembled
+    out = await _INNER._answer(
+        question=state["question"], packed_context=packed, tool_trace=trace,
+        final_answer=None, chat_history=state.get("chat_history"),
+        memory_context=state.get("memory_context"), verbosity=state.get("verbosity"),
+    )
+    return {
+        "tool_trace": trace,
+        "packed_context": packed,
+        "answer": out.get("answer", ""),
+        "citations": out.get("citations", []),
+        "highlights": out.get("highlights", []),
+        "critique_retries": state.get("critique_retries", 0) + 1,
+    }
+
+
 async def ground(state: ChatState) -> dict[str, Any]:
     # Structured path bypasses ground (already has citations).
     if state.get("structured_result"):
@@ -427,6 +474,17 @@ def _route_decide(state: ChatState) -> str:
     return "tool_exec"
 
 
+def _route_critique(state: ChatState) -> str:
+    if not settings.CRAG_ENABLED:
+        return "ground"
+    decision = state.get("critique_decision") or {}
+    if decision.get("grounded", True):
+        return "ground"
+    if state.get("critique_retries", 0) >= settings.AGENT_CRITIQUE_MAX_RETRIES:
+        return "ground"
+    return "corrective_retrieve"
+
+
 # ── Build graph ──────────────────────────────────────────────────────────────
 
 def _build_graph():
@@ -444,6 +502,8 @@ def _build_graph():
     g.add_node("tool_exec", tool_exec)
     g.add_node("assemble", assemble)
     g.add_node("answer", answer_node)
+    g.add_node("critique", critique)
+    g.add_node("corrective_retrieve", corrective_retrieve)
     g.add_node("ground", ground)
 
     g.add_edge(START, "validate")
@@ -464,8 +524,11 @@ def _build_graph():
                             {"tool_exec": "tool_exec", "assemble": "assemble"})
     g.add_edge("tool_exec", "decide")
     g.add_edge("assemble", "answer")
-    g.add_edge("answer", "ground")
-    g.add_edge("fast_answer", "ground")
+    g.add_edge("answer", "critique")
+    g.add_conditional_edges("critique", _route_critique,
+                            {"ground": "ground", "corrective_retrieve": "corrective_retrieve"})
+    g.add_edge("corrective_retrieve", "critique")
+    g.add_edge("fast_answer", "critique")
     g.add_edge("ground", END)
     return g.compile(checkpointer=_CHECKPOINTER)
 

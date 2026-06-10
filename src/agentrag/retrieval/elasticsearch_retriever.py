@@ -163,6 +163,7 @@ class ElasticsearchRetriever:
             )
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
             hits = self._balance_segment_types_for_query(query, hits, size)
+            hits = self._cap_summary_nodes(hits, size)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
             payload = {
@@ -195,6 +196,7 @@ class ElasticsearchRetriever:
             )
             hits = self._apply_query_intent_ranking(query=query, hits=hits)
             hits = self._balance_segment_types_for_query(query, hits, size)
+            hits = self._cap_summary_nodes(hits, size)
             hits = self._finalize_ranks(hits)
             rerank_reason = self._last_rerank_reason
             payload = {
@@ -271,6 +273,7 @@ class ElasticsearchRetriever:
         )
         hits = self._apply_query_intent_ranking(query=query, hits=hits)
         hits = self._balance_segment_types_for_query(query, hits, size)
+        hits = self._cap_summary_nodes(hits, size)
         hits = self._finalize_ranks(hits)
         rerank_reason = self._last_rerank_reason
         payload = {
@@ -467,6 +470,26 @@ class ElasticsearchRetriever:
         we relax the image-ratio cap so retrieval surfaces images first."""
         q = (query or "").lower()
         return any(tok in q for tok in cls._IMAGE_INTENT_TOKENS)
+
+    def _cap_summary_nodes(self, hits: list[dict], size: int) -> list[dict]:
+        """Keep RAPTOR summary nodes (node_level>=1) to at most
+        RAPTOR_SUMMARY_MAX_RATIO of the result set so a query can't return only
+        summaries; leaves backfill the freed slots. Preserves order."""
+        max_summary = int(settings.RAPTOR_SUMMARY_MAX_RATIO * size)
+        kept: list[dict] = []
+        summary_seen = 0
+        overflow: list[dict] = []
+        for h in hits:
+            if h.get("node_level", 0) >= 1:
+                if summary_seen < max_summary:
+                    kept.append(h)
+                    summary_seen += 1
+                else:
+                    overflow.append(h)
+            else:
+                kept.append(h)
+        kept.extend(overflow)  # demoted summaries go last (backfill)
+        return kept[: size if size else len(kept)]
 
     @classmethod
     def _balance_segment_types_for_query(

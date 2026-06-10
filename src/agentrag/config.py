@@ -127,6 +127,12 @@ class Settings(BaseSettings):
     STRUCTURED_MAX_CHUNKS_FOR_EXTRACT: int = 20
     STRUCTURED_SQL_MAX_RETRIES: int = 2
     STRUCTURED_CONFIDENCE_THRESHOLD: float = 0.7
+    #: Corpus-aware gate — only run the SQL pipeline when the retrieved evidence
+    #: actually contains tabular data (excel/csv sheets, markdown/HTML tables).
+    #: Prose-only corpora (medical textbooks) fall back to semantic BEFORE the
+    #: expensive schema-discovery/extract/SQL stages. Set false to force the old
+    #: always-try-SQL behavior.
+    STRUCTURED_REQUIRE_TABULAR: bool = True
 
     # Chat StructMem — áp dụng dual-perspective memory cho lịch sử hội thoại.
     # Single index, rows discriminated by `kind` ∈ {"entry","synthesis"}.

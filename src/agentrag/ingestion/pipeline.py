@@ -38,6 +38,15 @@ _IMAGE_SOURCE_TYPES = {"image"}
 _AUDIO_SOURCE_TYPES = {"audio"}
 
 
+def _embed_input_for_chunk(chunk: dict[str, Any]) -> str:
+    """Text to embed/BM25: contextualized when WS1 produced a context_text,
+    else the raw content. The original `content` is always what gets cited."""
+    ctx = chunk.get("context_text")
+    if ctx:
+        return f"{ctx}\n\n{chunk['content']}"
+    return chunk["content"]
+
+
 async def ingest_folder(
     folder_path: str,
     graph_ingest_mode: Literal["sync", "async"] | None = None,
@@ -224,8 +233,19 @@ async def ingest_folder(
                 chunks_search = [await _tagger.tag_chunk(c) for c in chunks_search]
                 timings["tagging_ms"] = (time.perf_counter() - t0) * 1000
 
+            # WS1 — Contextual Retrieval: add a situating context sentence per
+            # chunk BEFORE embedding so dense + BM25 see the contextualized text.
+            if settings.CONTEXTUAL_RETRIEVAL_ENABLED:
+                t0 = time.perf_counter()
+                from src.agentrag.ingestion.contextualizer import Contextualizer
+                from src.agentrag.services.llm_gateway import LLMGateway
+                chunks_search = await Contextualizer(LLMGateway()).contextualize_chunks(
+                    doc_text=content, chunks=chunks_search, document_title=doc["title"]
+                )
+                timings["contextualize_ms"] = (time.perf_counter() - t0) * 1000
+
             t0 = time.perf_counter()
-            texts = [c["content"] for c in chunks_search]
+            texts = [_embed_input_for_chunk(c) for c in chunks_search]
             embeddings = await embedder.embed(texts)
             for c, emb in zip(chunks_search, embeddings):
                 c["embedding"] = emb

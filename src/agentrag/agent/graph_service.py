@@ -100,6 +100,26 @@ def _chain_query(subquery: str, prior_output: dict[str, Any] | None) -> str:
     return f"Bối cảnh: {snippet}\n\nCâu hỏi: {subquery}"
 
 
+def _message_signals(tool_trace: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Derive UI message-level signals from the tool trace: whether the first
+    retrieval was a semantic-cache hit, the retrieval mode, and the domain
+    route. All default-absent so the UI chips stay hidden when unavailable."""
+    cache_hit = False
+    mode: str | None = None
+    domain: str | None = None
+    for entry in tool_trace or []:
+        out = entry.get("tool_output") or {}
+        if not isinstance(out, dict):
+            continue
+        if out.get("semantic_cache_hit"):
+            cache_hit = True
+        if mode is None and out.get("mode"):
+            mode = out.get("mode")
+        if domain is None and out.get("domain_route"):
+            domain = out.get("domain_route")
+    return {"semantic_cache_hit": cache_hit, "retrieval_mode": mode, "domain_route": domain}
+
+
 # ── Nodes ────────────────────────────────────────────────────────────────────
 
 async def validate(state: ChatState) -> dict[str, Any]:
@@ -631,6 +651,7 @@ class GraphAgentService:
             # Retrieved+packed passages used to synthesize the answer. Exposed so
             # eval (RAGAS contexts) and clients can inspect grounding evidence.
             "context": state.get("packed_context", []),
+            **_message_signals(state.get("tool_trace")),
         }
 
     async def chat_stream(

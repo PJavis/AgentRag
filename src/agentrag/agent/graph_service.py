@@ -63,6 +63,7 @@ class ChatState(TypedDict, total=False):
     decide_decision: Optional[dict[str, Any]]
     packed_context: list[dict[str, Any]]
     critique_decision: Optional[dict[str, Any]]
+    critique_latency_ms: float
     critique_retries: int
 
     # Timings
@@ -115,8 +116,13 @@ def _message_signals(tool_trace: list[dict[str, Any]] | None) -> dict[str, Any]:
             cache_hit = True
         if mode is None and out.get("mode"):
             mode = out.get("mode")
-        if domain is None and out.get("domain_route"):
-            domain = out.get("domain_route")
+        dr = out.get("domain_route")
+        if domain is None and dr:
+            if isinstance(dr, dict):
+                systems = dr.get("systems") or []
+                domain = ", ".join(str(s) for s in systems) or None
+            else:
+                domain = str(dr)
     return {"semantic_cache_hit": cache_hit, "retrieval_mode": mode, "domain_route": domain}
 
 
@@ -418,12 +424,14 @@ async def answer_node(state: ChatState) -> dict[str, Any]:
 async def critique(state: ChatState) -> dict[str, Any]:
     if not settings.CRAG_ENABLED:
         return {"critique_decision": {"grounded": True, "reason": "disabled"}}
+    started = time.perf_counter()
     decision = _INNER._critique(
         answer=state.get("answer", ""),
         citations=state.get("citations", []),
         packed_context=state.get("packed_context", []),
     )
-    return {"critique_decision": decision}
+    elapsed = max((time.perf_counter() - started) * 1000, 0.01)
+    return {"critique_decision": decision, "critique_latency_ms": elapsed}
 
 
 async def corrective_retrieve(state: ChatState) -> dict[str, Any]:
@@ -487,6 +495,7 @@ async def ground(state: ChatState) -> dict[str, Any]:
         "assemble": round(state.get("assemble_latency_ms", 0.0), 2),
         "answer": round(state.get("answer_latency_ms", 0.0), 2),
         "plan": round(state.get("plan_latency_ms", 0.0), 2),
+        "critique": round(state.get("critique_latency_ms", 0.0), 4),
     }
     return {
         "citations": grounded,

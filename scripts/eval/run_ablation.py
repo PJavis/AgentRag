@@ -114,6 +114,34 @@ def wipe_corpus_indices() -> None:
             print(f"[ABLATION] wipe {idx} failed: {type(exc).__name__}: {exc}")
 
 
+def wipe_corpus_db() -> None:
+    """Delete Postgres documents + segments so re-ingest is truly fresh.
+
+    CRITICAL: wiping ES alone is not enough. `save_document_and_segments`
+    dedupes against Postgres (source_id, content_hash); a prior run's docs
+    (graph_status='done') would make the re-ingest return 'skipped' and
+    `ingest_folder` then skips `index_segments` — leaving ES empty (recall 0).
+    Clearing the PG corpus forces a real re-index under each config's flags.
+    """
+    import asyncio
+
+    async def _wipe() -> None:
+        from sqlalchemy import delete
+        from src.agentrag.database import AsyncSessionLocal
+        from src.agentrag.database.models import Document, Segment
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(Segment))
+            await session.execute(delete(Document))
+            await session.commit()
+
+    try:
+        asyncio.run(_wipe())
+        print("[ABLATION] wiped Postgres documents + segments")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ABLATION] wipe PG failed: {type(exc).__name__}: {exc}")
+
+
 def build_cmd(suite: str, n: int, judge_provider: str, out_path: str) -> list[str]:
     """argv to run the benchmark as a child process (re-ingests per config)."""
     return [
@@ -221,7 +249,11 @@ def main() -> None:
 
         # Clean rebuild per config — otherwise leftover chunks (or a deduped
         # no-op re-ingest) make CR/RAPTOR configs silently identical to baseline.
+        # Must wipe BOTH ES indices AND the Postgres corpus: the PG
+        # (source_id, content_hash) dedupe in save_document_and_segments would
+        # otherwise return 'skipped' and the ES re-index would never run.
         wipe_corpus_indices()
+        wipe_corpus_db()
 
         try:
             subprocess.run(cmd, env=env, cwd=str(ROOT), check=False)

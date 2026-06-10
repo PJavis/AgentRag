@@ -77,11 +77,41 @@ def build_env(base: dict, overrides: dict) -> dict:
 
     Never mutates ``base``. STRUCTMEM_INGEST_MODE is forced to "sync" so the
     index is fully built (StructMem/RAPTOR/CR extraction done) before scoring.
+    UPLOAD_DEDUPE_BY_HASH is forced off so each config's re-ingest actually
+    rebuilds the index with that config's CR/RAPTOR fields — otherwise an
+    already-present gold corpus dedupes the re-ingest to a no-op and CR/RAPTOR
+    silently never apply (the index stays flat == baseline).
     """
     env = dict(base)
     env.update(overrides)
     env["STRUCTMEM_INGEST_MODE"] = "sync"
+    env["UPLOAD_DEDUPE_BY_HASH"] = "false"
     return env
+
+
+def wipe_corpus_indices() -> None:
+    """Delete the corpus ES indices so each config rebuilds clean (no leftover
+    chunks from a previous config / prior run mixing into retrieval). Best
+    effort — a missing index is fine."""
+    import urllib.error
+    import urllib.request
+
+    es = os.environ.get("ELASTICSEARCH_URL", "http://localhost:9200").rstrip("/")
+    for idx in (
+        os.environ.get("ELASTICSEARCH_INDEX_NAME", "agentrag_segments"),
+        os.environ.get("STRUCTMEM_INDEX", "agentrag_memory_doc"),
+        os.environ.get("ELASTICSEARCH_ENTITY_INDEX_NAME", "agentrag_entities"),
+        os.environ.get("ELASTICSEARCH_RELATIONSHIP_INDEX_NAME", "agentrag_relationships"),
+    ):
+        try:
+            req = urllib.request.Request(f"{es}/{idx}", method="DELETE")
+            urllib.request.urlopen(req, timeout=30).read()
+            print(f"[ABLATION] wiped index {idx}")
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                print(f"[ABLATION] wipe {idx} HTTP {e.code}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ABLATION] wipe {idx} failed: {type(exc).__name__}: {exc}")
 
 
 def build_cmd(suite: str, n: int, judge_provider: str, out_path: str) -> list[str]:
@@ -188,6 +218,10 @@ def main() -> None:
         print(f"[ABLATION] {name}  overrides={overrides or '{}'}")
         print(f"[ABLATION] {' '.join(cmd)}")
         print("=" * 70)
+
+        # Clean rebuild per config — otherwise leftover chunks (or a deduped
+        # no-op re-ingest) make CR/RAPTOR configs silently identical to baseline.
+        wipe_corpus_indices()
 
         try:
             subprocess.run(cmd, env=env, cwd=str(ROOT), check=False)

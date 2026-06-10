@@ -1,7 +1,7 @@
 'use client'
 
 import * as HoverCard from '@radix-ui/react-hover-card'
-import { FileText, Image as ImageIcon } from 'lucide-react'
+import { FileText, Image as ImageIcon, Layers } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -14,6 +14,21 @@ interface CitationHoverCardProps {
   index: number
   citation: Citation
   children: React.ReactNode
+}
+
+export function RaptorBadge({ nodeLevel }: { nodeLevel?: number | null }) {
+  if (!nodeLevel || nodeLevel < 1) return null
+  return (
+    <Badge variant="outline" className="text-[10px] px-1 py-0 gap-0.5 text-violet-600 dark:text-violet-300 border-violet-300/50">
+      <Layers className="h-2.5 w-2.5" />Summary · L{nodeLevel}
+    </Badge>
+  )
+}
+
+export function CitationContextLine({ text }: { text?: string | null }) {
+  const t = (text || '').trim()
+  if (!t) return null
+  return <div className="text-[10px] text-muted-foreground italic mb-1 line-clamp-2">{t}</div>
 }
 
 function renderExcerptBody(citation: Citation) {
@@ -70,6 +85,7 @@ export function CitationHoverCard({ index, citation, children }: CitationHoverCa
                     {citation.page_label}
                   </Badge>
                 )}
+                <RaptorBadge nodeLevel={citation.node_level} />
               </div>
               {citation.section_path && (
                 <div className="text-[10px] text-muted-foreground truncate">
@@ -78,7 +94,10 @@ export function CitationHoverCard({ index, citation, children }: CitationHoverCa
               )}
             </div>
           </div>
-          <div className="border-t pt-2">{renderExcerptBody(citation)}</div>
+          <div className="border-t pt-2">
+            <CitationContextLine text={citation.context_text} />
+            {renderExcerptBody(citation)}
+          </div>
         </HoverCard.Content>
       </HoverCard.Portal>
     </HoverCard.Root>

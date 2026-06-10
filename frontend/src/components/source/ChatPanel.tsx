@@ -27,6 +27,7 @@ import { Network } from 'lucide-react'
 import { ContextIndicator } from '@/components/common/ContextIndicator'
 import { SessionManager } from '@/components/source/SessionManager'
 import { MessageActions } from '@/components/source/MessageActions'
+import { MessageSignals } from './MessageSignals'
 import { FeedbackButtons } from '@/components/source/FeedbackButtons'
 import { FollowupChips } from '@/components/source/FollowupChips'
 import { InlineImageCitation } from '@/components/source/InlineImageCitation'
@@ -345,15 +346,7 @@ export function ChatPanel({
                               {t('chat.readingTime').replace('{min}', String(readingMinutes(message.content)))}
                             </Badge>
                           )}
-                          {(message as { reasoning_path?: string }).reasoning_path && (
-                            <Badge
-                              variant="outline"
-                              className="text-[10px] h-5 font-mono"
-                              title="Reasoning path used for this answer"
-                            >
-                              {(message as { reasoning_path?: string }).reasoning_path}
-                            </Badge>
-                          )}
+                          <MessageSignals message={message} />
                           {(message.tool_trace?.length || message.timings_ms) && (
                             <Button
                               variant="ghost"

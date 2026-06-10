@@ -163,7 +163,9 @@ export interface Citation {
   excerpt?: string
   content_hash?: string
   mime?: string | null
-  segment_type?: 'text' | 'image' | 'table'
+  segment_type?: 'text' | 'image' | 'table' | 'raptor_summary'
+  node_level?: number | null
+  context_text?: string | null
   image_url?: string | null
 }
 
@@ -179,6 +181,9 @@ export interface SourceChatMessage {
   plan_subqueries?: unknown[]
   sql_query?: string | null
   follow_ups?: string[]
+  semantic_cache_hit?: boolean | null
+  domain_route?: string | null
+  retrieval_mode?: string | null
 }
 
 export interface SourceChatContextIndicator {
@@ -254,6 +259,9 @@ export interface NotebookChatMessage {
   plan_subqueries?: unknown[]
   sql_query?: string | null
   follow_ups?: string[]
+  semantic_cache_hit?: boolean | null
+  domain_route?: string | null
+  retrieval_mode?: string | null
 }
 
 export interface NotebookChatSessionWithMessages extends NotebookChatSession {

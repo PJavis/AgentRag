@@ -19,3 +19,10 @@ def test_message_signals_defaults_when_absent():
     assert sig["semantic_cache_hit"] is False
     assert sig["retrieval_mode"] is None
     assert sig["domain_route"] is None
+
+
+def test_message_signals_coerces_dict_domain_route_to_string():
+    tool_trace = [{"tool_name": "search_hybrid_kg",
+                   "tool_output": {"domain_route": {"systems": ["tim_mach", "ho_hap"], "confidence": 0.8}}}]
+    sig = _message_signals(tool_trace)
+    assert sig["domain_route"] == "tim_mach, ho_hap"

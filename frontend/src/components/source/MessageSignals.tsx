@@ -8,7 +8,7 @@ import type { NotebookChatMessage, SourceChatMessage } from '@/lib/types/api'
 type ChatMsg = NotebookChatMessage | SourceChatMessage
 
 export function deriveCritiqueState(message: ChatMsg): 'verified' | 'corrected' | null {
-  const ranCritique = typeof message.timings_ms?.critique === 'number'
+  const ranCritique = (message.timings_ms?.critique ?? 0) > 0
   if (!ranCritique) return null
   const corrected = (message.tool_trace ?? []).some(
     (e) => (e as Record<string, unknown>).corrective === true,

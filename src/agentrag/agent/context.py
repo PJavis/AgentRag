@@ -210,6 +210,8 @@ class ContextAssembler:
                 "position": item.get("position"),
                 "content_hash": item.get("content_hash"),
                 "segment_type": item.get("segment_type", "text"),
+                "node_level": item.get("node_level", 0),
+                "context_text": item.get("context_text"),
                 "page_start": page_start,
                 "page_end": page_end,
                 "excerpt": (item.get("content") or "")[:1500],

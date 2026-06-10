@@ -81,10 +81,10 @@ class Contextualizer:
         return self._cache_dir / f"{key}.txt"
 
     def _load(self, doc_hash: str, chunk_hash: str) -> str | None:
-        p = self._path(doc_hash, chunk_hash)
-        if not p.exists():
-            return None
         try:
+            p = self._path(doc_hash, chunk_hash)
+            if not p.exists():
+                return None
             return p.read_text(encoding="utf-8")
         except Exception:
             return None

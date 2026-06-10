@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
 import { AppShell } from '@/components/layout/AppShell'
 import { CostCharts } from '@/components/cost/CostCharts'
 import {
@@ -150,29 +151,38 @@ export default function CostDashboardPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SummaryCard
-          icon={Activity}
-          label="Total calls"
-          value={fmtInt(s?.total_calls ?? 0)}
-        />
-        <SummaryCard
-          icon={Cpu}
-          label="Input tokens"
-          value={fmtInt(s?.total_in_tokens ?? 0)}
-        />
-        <SummaryCard
-          icon={Cpu}
-          label="Output tokens"
-          value={fmtInt(s?.total_out_tokens ?? 0)}
-        />
-        <SummaryCard
-          icon={DollarSign}
-          label="Estimated cost"
-          value={fmtUsd(s?.total_usd ?? 0)}
-          hint={s?.note ? 'USD estimate' : undefined}
-        />
-      </div>
+      {summary.isLoading ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <SummaryCard
+            icon={Activity}
+            label="Total calls"
+            value={fmtInt(s?.total_calls ?? 0)}
+          />
+          <SummaryCard
+            icon={Cpu}
+            label="Input tokens"
+            value={fmtInt(s?.total_in_tokens ?? 0)}
+          />
+          <SummaryCard
+            icon={Cpu}
+            label="Output tokens"
+            value={fmtInt(s?.total_out_tokens ?? 0)}
+          />
+          <SummaryCard
+            icon={DollarSign}
+            label="Estimated cost"
+            value={fmtUsd(s?.total_usd ?? 0)}
+            hint={s?.note ? 'USD estimate' : undefined}
+          />
+        </div>
+      )}
 
       <Tabs defaultValue="task" className="w-full">
         <TabsList>

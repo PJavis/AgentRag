@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MessageSignals, deriveCritiqueState } from './MessageSignals'
 import type { NotebookChatMessage } from '@/lib/types/api'
+
+vi.mock('@/lib/hooks/use-translation', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}))
 
 function msg(over: Partial<NotebookChatMessage>): NotebookChatMessage {
   return { id: '1', type: 'ai', content: 'a', ...over }
@@ -25,8 +29,8 @@ describe('deriveCritiqueState', () => {
 describe('MessageSignals', () => {
   it('shows fast-path + cache chips', () => {
     render(<MessageSignals message={msg({ reasoning_path: 'fast', semantic_cache_hit: true })} />)
-    expect(screen.getByText(/fast path/i)).toBeInTheDocument()
-    expect(screen.getByText(/instant/i)).toBeInTheDocument()
+    expect(screen.getByText('ragSignals.fastPath')).toBeInTheDocument()
+    expect(screen.getByText('ragSignals.instantCached')).toBeInTheDocument()
   })
   it('renders nothing when no signals present', () => {
     const { container } = render(<MessageSignals message={msg({})} />)

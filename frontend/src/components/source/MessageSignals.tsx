@@ -2,6 +2,7 @@
 
 import { Zap, Brain, Database, RotateCcw, Hospital, Sparkles } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { useTranslation } from '@/lib/hooks/use-translation'
 import type { NotebookChatMessage, SourceChatMessage } from '@/lib/types/api'
 
 type ChatMsg = NotebookChatMessage | SourceChatMessage
@@ -15,13 +16,14 @@ export function deriveCritiqueState(message: ChatMsg): 'verified' | 'corrected' 
   return corrected ? 'corrected' : 'verified'
 }
 
-const PATH_META: Record<string, { label: string; icon: typeof Zap }> = {
-  fast: { label: 'Fast path', icon: Zap },
-  semantic: { label: 'Semantic', icon: Brain },
-  structured: { label: 'Structured', icon: Database },
+const PATH_META: Record<string, { labelKey: string; icon: typeof Zap }> = {
+  fast: { labelKey: 'ragSignals.fastPath', icon: Zap },
+  semantic: { labelKey: 'ragSignals.semantic', icon: Brain },
+  structured: { labelKey: 'ragSignals.structured', icon: Database },
 }
 
 export function MessageSignals({ message }: { message: ChatMsg }) {
+  const { t } = useTranslation()
   const path = message.reasoning_path || ''
   const pathMeta = PATH_META[path]
   const critique = deriveCritiqueState(message)
@@ -31,8 +33,8 @@ export function MessageSignals({ message }: { message: ChatMsg }) {
     const Icon = pathMeta.icon
     chips.push(
       <Badge key="path" variant="outline" className="text-[10px] h-5 gap-1 animate-in fade-in"
-        title="Reasoning path used for this answer">
-        <Icon className="h-3 w-3" />{pathMeta.label}
+        title={t('ragSignals.fastPathTitle')}>
+        <Icon className="h-3 w-3" />{t(pathMeta.labelKey)}
       </Badge>,
     )
   } else if (path) {
@@ -47,8 +49,8 @@ export function MessageSignals({ message }: { message: ChatMsg }) {
     chips.push(
       <Badge key="cache" variant="secondary"
         className="text-[10px] h-5 gap-1 animate-in fade-in text-amber-700 dark:text-amber-300"
-        title="Served from semantic cache — near-instant">
-        <Sparkles className="h-3 w-3" />Instant · cached
+        title={t('ragSignals.cacheTitle')}>
+        <Sparkles className="h-3 w-3" />{t('ragSignals.instantCached')}
       </Badge>,
     )
   }
@@ -56,15 +58,15 @@ export function MessageSignals({ message }: { message: ChatMsg }) {
   if (critique === 'verified') {
     chips.push(
       <Badge key="crit" variant="outline" className="text-[10px] h-5 gap-1 animate-in fade-in text-emerald-700 dark:text-emerald-300 border-emerald-300/50"
-        title="Answer passed the CRAG grounding check">
-        <Brain className="h-3 w-3" />Verified
+        title={t('ragSignals.verifiedTitle')}>
+        <Brain className="h-3 w-3" />{t('ragSignals.verified')}
       </Badge>,
     )
   } else if (critique === 'corrected') {
     chips.push(
       <Badge key="crit" variant="outline" className="text-[10px] h-5 gap-1 animate-in fade-in text-blue-700 dark:text-blue-300 border-blue-300/50"
-        title="Answer was re-retrieved + revised by CRAG correction">
-        <RotateCcw className="h-3 w-3" />Self-corrected
+        title={t('ragSignals.correctedTitle')}>
+        <RotateCcw className="h-3 w-3" />{t('ragSignals.selfCorrected')}
       </Badge>,
     )
   }
@@ -72,7 +74,7 @@ export function MessageSignals({ message }: { message: ChatMsg }) {
   if (message.domain_route) {
     chips.push(
       <Badge key="domain" variant="outline" className="text-[10px] h-5 gap-1 animate-in fade-in"
-        title="Domain the query was routed to">
+        title={t('ragSignals.domainTitle')}>
         <Hospital className="h-3 w-3" />{message.domain_route}
       </Badge>,
     )

@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { CitationContextLine, RaptorBadge } from './CitationHoverCard'
+
+vi.mock('@/lib/hooks/use-translation', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}))
 
 describe('citation hover helpers', () => {
   it('RaptorBadge shows level for node_level>=1', () => {

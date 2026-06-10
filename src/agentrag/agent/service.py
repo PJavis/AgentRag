@@ -51,6 +51,19 @@ def _lang_instruction(question: str) -> str:
     return "Response language: English."
 
 
+_UNCERTAINTY_MARKERS = (
+    "không tìm thấy", "không có thông tin", "không đủ thông tin",
+    "không thể trả lời", "tôi không biết", "chưa có dữ liệu",
+    "i don't have", "i do not have", "no information", "cannot answer",
+    "not enough information", "unable to answer",
+)
+
+
+def _has_uncertainty(answer: str) -> bool:
+    low = (answer or "").lower()
+    return any(m in low for m in _UNCERTAINTY_MARKERS)
+
+
 _VERBOSE_TOKENS = (
     "dài hơn", "chi tiết", "kỹ hơn", "kỹ càng", "tỉ mỉ", "đầy đủ hơn",
     "mở rộng", "giải thích thêm", "nói rõ", "rõ hơn", "sâu hơn",
@@ -601,6 +614,27 @@ class AgentService:
             "reason": decision.get("reason"),
             "reflection": decision.get("reflection"),  # self-reflection reasoning
         }
+
+    def _critique(
+        self,
+        answer: str,
+        citations: list[dict[str, Any]],
+        packed_context: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """CRAG relevance + grounding check (no extra LLM call).
+
+        Relevance: retrieval must have returned at least CRAG_MIN_HITS passages.
+        Grounding: the answer must cite a source and not be an uncertainty
+        ('khong tim thay ...') response. Returns {grounded: bool, reason: str}.
+        """
+        if len(packed_context) < settings.CRAG_MIN_HITS:
+            return {"grounded": False, "reason": "insufficient_context"}
+        if settings.CRAG_GROUNDING_ENABLED:
+            if not citations:
+                return {"grounded": False, "reason": "no_citations"}
+            if _has_uncertainty(answer):
+                return {"grounded": False, "reason": "uncertain_answer"}
+        return {"grounded": True, "reason": "ok"}
 
     def _ground_citations(
         self,

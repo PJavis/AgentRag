@@ -532,6 +532,25 @@ Rerank backends:
 | `local_cross_encoder` | `dengcao/bge-reranker-v2-m3` | bundled (`sentence-transformers`) | free | **Default.** Local CPU/GPU, no API. Lifts relevant chunks to the top. |
 | `llm_chat` | any chat model | none | varies | Rank via a chat LLM (slow); fallback when no cross-encoder available. |
 
+#### RAG enhancement (2026-06)
+
+Năm workstream nâng cao chất lượng/độ trễ retrieval. **Tất cả mặc định OFF** —
+bật từng cờ để A/B. Thiết kế chi tiết: `docs/superpowers/specs/2026-06-10-rag-enhancement-design.md`.
+
+- **Contextual Retrieval** (`CONTEXTUAL_RETRIEVAL_ENABLED`) — mỗi chunk được LLM
+  thêm câu ngữ cảnh trước khi embed/BM25 (cite vẫn dùng `content` gốc). Cần
+  re-ingest; route task `contextualize` sang DeepSeek qua `LLM_TASK_MODEL_MAP`
+  để tận dụng doc-prefix cache rẻ.
+- **RAPTOR** (`RAPTOR_ENABLED`) — lớp tóm tắt đa tầng (cluster + summarize đệ
+  quy), node `node_level>=1` nằm trong cùng index. Cần re-ingest.
+- **CRAG critique** (`CRAG_ENABLED`) — node kiểm tra grounding/relevance sau
+  answer, re-retrieve sửa lỗi có giới hạn (`AGENT_CRITIQUE_MAX_RETRIES`); kèm
+  multi-hop chaining (`AGENT_MULTIHOP_ENABLED`).
+- **Adaptive routing** (`ADAPTIVE_ROUTING_ENABLED`) — câu hỏi đơn giản, một
+  domain, độ tự tin cao → fast-path bỏ qua vòng lặp agent (giảm latency).
+- **Semantic cache** (`SEMANTIC_CACHE_ENABLED`) — cache kết quả retrieval theo
+  độ tương đồng embedding (chỉ cho truy vấn không filter).
+
 ### 5.6 LLM Routing & Cost Tracking
 
 ```env

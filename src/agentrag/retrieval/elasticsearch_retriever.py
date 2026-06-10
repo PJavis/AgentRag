@@ -14,6 +14,7 @@ from src.agentrag.graph.structmem_service import StructMemService
 from src.agentrag.ingestion.embedders.factory import build_embedding_provider
 from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
 from src.agentrag.retrieval.reranker import LLMReranker
+from src.agentrag.services.semantic_cache import SemanticCache
 
 
 # Module-level result cache shared across retriever instances. 60-second TTL
@@ -34,6 +35,15 @@ class ElasticsearchRetriever:
         self.embedder = build_embedding_provider(settings)
         self.reranker = LLMReranker()
         self._last_rerank_reason = "not_attempted"
+        self._semantic_cache = (
+            SemanticCache(
+                threshold=settings.SEMANTIC_CACHE_THRESHOLD,
+                ttl_seconds=settings.SEMANTIC_CACHE_TTL_SECONDS,
+                max_items=settings.SEMANTIC_CACHE_MAX_ITEMS,
+            )
+            if settings.SEMANTIC_CACHE_ENABLED
+            else None
+        )
 
     async def search(
         self,
@@ -45,14 +55,14 @@ class ElasticsearchRetriever:
         dense_query: str | None = None,
         filters: dict | None = None,
     ) -> dict:
-        """Public entrypoint. Runs `_search_impl` once with the supplied
+        """Public entrypoint. Runs `_search_uncached` once with the supplied
         filters; if that returns zero hits, retries with only the SOFT domain
         filters (systems/specialties) relaxed — so we still ground the answer
         when domain tags haven't been backfilled — but NEVER drops the hard
         `document_titles` scope. Dropping it would leak other notebooks' /
         sources' documents into a scoped chat (e.g. an empty notebook returning
         a different notebook's doc)."""
-        payload = await self._search_impl(
+        payload = await self.search_cached(
             query=query,
             mode=mode,
             top_k=top_k,
@@ -67,7 +77,7 @@ class ElasticsearchRetriever:
             # Nothing soft to relax → the scope itself is empty; do not fall back.
             if hard == dict(filters):
                 return payload
-            fallback = await self._search_impl(
+            fallback = await self._search_uncached(
                 query=query,
                 mode=mode,
                 top_k=top_k,
@@ -81,7 +91,32 @@ class ElasticsearchRetriever:
             return fallback
         return payload
 
-    async def _search_impl(
+    async def search_cached(self, query: str | None = None, **kwargs: Any) -> dict:
+        """Semantic-cache wrapper around the per-query search. Only consulted
+        for unfiltered, default-scope queries (domain/document filters bypass
+        the semantic cache to avoid cross-scope leaks)."""
+        if query is not None:
+            kwargs["query"] = query
+        if (
+            self._semantic_cache is None
+            or kwargs.get("filters")
+            or kwargs.get("document_title")
+        ):
+            return await self._search_uncached(**kwargs)
+        query = kwargs["query"]
+        embed_text = kwargs.get("dense_query") or query
+        try:
+            q_emb = (await self.embedder.embed([embed_text]))[0]
+        except Exception:
+            return await self._search_uncached(**kwargs)
+        hit = self._semantic_cache.get(q_emb)
+        if hit is not None:
+            return {**hit, "semantic_cache_hit": True}
+        result = await self._search_uncached(**kwargs)
+        self._semantic_cache.put(q_emb, result)
+        return result
+
+    async def _search_uncached(
         self,
         query: str,
         mode: str = "hybrid_kg",

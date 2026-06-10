@@ -25,6 +25,18 @@ domain-aware retrieval + reasoning trace + cost dashboard.
 - **Vision LLM** — Mô tả ảnh y tế trong PDF + ảnh standalone.
 - **MinerU backend (opt-in)** — Layout + OCR + formula → LaTeX + table → HTML một lượt. PPTX cũng có thể đi qua libreoffice → PDF → MinerU.
 - **Mindmap & Summary** — Mermaid mindmap + cấu trúc tóm tắt y khoa.
+- **RAG enhancement (2026-06, mặc định OFF)** — bật từng cờ để A/B
+  ([§5.5](#55-retrieval--reranking)):
+  - **Contextual Retrieval** — LLM thêm câu ngữ cảnh vào mỗi chunk trước khi
+    embed/BM25 (cite vẫn dùng `content` gốc).
+  - **RAPTOR** — lớp tóm tắt đa tầng (cluster + summarize đệ quy) trong cùng index.
+  - **CRAG critique + multi-hop** — node kiểm tra grounding/relevance,
+    re-retrieve sửa lỗi có giới hạn + chuỗi multi-hop.
+  - **Adaptive routing** — fast-path bỏ qua vòng lặp agent cho câu hỏi đơn giản.
+  - **Semantic retrieval cache** — cache kết quả theo độ tương đồng embedding.
+- **UI signal surfacing** — MessageSignals chips, TraceDialog nâng cấp,
+  RAPTOR/contextual citation hover, cost-dashboard recharts charts làm lộ các
+  tín hiệu RAG enhancement trên UI.
 
 ---
 
@@ -535,7 +547,10 @@ Rerank backends:
 #### RAG enhancement (2026-06)
 
 Năm workstream nâng cao chất lượng/độ trễ retrieval. **Tất cả mặc định OFF** —
-bật từng cờ để A/B. Thiết kế chi tiết: `docs/superpowers/specs/2026-06-10-rag-enhancement-design.md`.
+bật từng cờ để A/B. Thiết kế chi tiết / Design specs (2026-06):
+`docs/superpowers/specs/2026-06-10-rag-enhancement-design.md` (RAG backend) +
+`docs/superpowers/specs/2026-06-10-ui-enhancement-design.md` (UI signal surfacing:
+MessageSignals chips, TraceDialog, RAPTOR/contextual citation hovers, cost charts).
 
 - **Contextual Retrieval** (`CONTEXTUAL_RETRIEVAL_ENABLED`) — mỗi chunk được LLM
   thêm câu ngữ cảnh trước khi embed/BM25 (cite vẫn dùng `content` gốc). Cần
@@ -1740,6 +1755,11 @@ Architecture overview: [`ARCHITECTURE.md`](./ARCHITECTURE.md) (S4 plane split).
 | CLI | — | [src/agentrag/cli/README.md](src/agentrag/cli/README.md) |
 | MCP Server | — | [src/agentrag/mcp/README.md](src/agentrag/mcp/README.md) |
 | Common Utilities | — | [src/agentrag/common/README.md](src/agentrag/common/README.md) |
+| Domain Router (orchestration) | R | [src/agentrag/orchestration/README.md](src/agentrag/orchestration/README.md) |
+| Database (engine + ORM models) | E | [src/agentrag/database/README.md](src/agentrag/database/README.md) |
+| Health diagnostics | — | [src/agentrag/health/README.md](src/agentrag/health/README.md) |
+| Observability (cost ledger + event log) | E | [src/agentrag/observability/README.md](src/agentrag/observability/README.md) |
+| Eval (offline RAG quality harness) | — | [src/agentrag/eval/README.md](src/agentrag/eval/README.md) |
 
 R = Reasoning Plane, E = Execution Plane.
 

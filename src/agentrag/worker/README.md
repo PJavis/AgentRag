@@ -1,197 +1,130 @@
-# Module: `worker` — ARQ Background Worker
+# worker — ARQ background-job runtime (enqueue, run, scale)
 
-**Vị trí:** `src/agentrag/worker/`
+## Mục đích / Purpose
 
-Quản lý background jobs qua **ARQ** (Async Redis Queue). Jobs được persist trong Redis — survive process restart và có thể chạy trên nhiều worker processes song song.
+Quản lý **background jobs** qua [ARQ](https://arq-docs.helpmanual.io/) (Async Redis
+Queue). Module này không chứa business logic — nó chỉ là **runtime glue**: định nghĩa
+4 task functions (mỗi loại job một hàm), giữ một ARQ Redis pool singleton để API process
+enqueue jobs, và khai báo `WorkerSettings` cho `arq` CLI khởi động worker process. Jobs
+được persist trong Redis nên survive process restart và có thể chạy song song trên nhiều
+worker processes. Logic thật nằm ở các module downstream (`graph.*`, `chat.structmem`).
 
----
+## Plane
 
-## Files
+**Infrastructure.** Đây là job-queue plumbing: nó move work off the request path và
+delegate sang các module khác. Bản thân `functions.py` chỉ unpack kwargs thành dataclass
+job rồi gọi `process_*` — không tự ra quyết định (Reasoning) và không tự làm IO nghiệp vụ
+(Execution); các plane đó nằm ở module được gọi.
 
-| File | Mô tả |
+## Key files
+
+| File | Responsibility |
 |---|---|
-| `pool.py` | ARQ pool singleton — `init_pool`, `get_pool`, `close_pool` |
-| `functions.py` | 4 ARQ task functions: `graph_ingest`, `consolidate`, `chat_memory`, `vision_extract` |
-| `settings.py` | `WorkerSettings` — config cho `arq` CLI |
+| `functions.py` | 4 ARQ task functions: `graph_ingest`, `vision_extract`, `consolidate`, `chat_memory`. Mỗi hàm `async def name(ctx, *, ...kwargs)`; chỉ build job dataclass + gọi downstream `process_*`. Lazy-imports để worker boot nhanh. |
+| `settings.py` | `WorkerSettings` — class mà `arq` CLI đọc: danh sách `functions`, `redis_settings`, `max_jobs`, `job_timeout`, `keep_result`, `max_tries`. |
+| `pool.py` | ARQ Redis pool singleton: `init_pool()`, `get_pool()`, `close_pool()`. Dùng bởi API process để enqueue. |
+| `__init__.py` | Rỗng (package marker). |
 
----
+## Public interface
 
-## Chạy worker
+**Pool (gọi từ API process — `main.py`, `ingestion/pipeline.py`):** import trực tiếp, KHÔNG
+qua `ServiceContainer`.
+
+```python
+from src.agentrag.worker.pool import init_pool, get_pool, close_pool
+
+await init_pool(redis_url)                     # 1 lần trong FastAPI lifespan startup
+await get_pool().enqueue_job("graph_ingest", document_id=..., ...)   # bất kỳ đâu
+await close_pool()                             # lifespan shutdown
+```
+
+`get_pool()` raises `RuntimeError` nếu chưa `init_pool()`.
+
+**Task functions** không được gọi trực tiếp; chúng được **đặt tên (string) trong
+`enqueue_job(...)`** và do worker process invoke. Chữ ký:
+
+```python
+async def graph_ingest(ctx, *, document_id, folder_path, source_id, title,
+                       parsed_cache_path=None) -> None
+async def vision_extract(ctx, *, document_id, title, image_records) -> None
+async def consolidate(ctx, *, group_id, document_id, trigger_chunk_count) -> None
+async def chat_memory(ctx, *, conversation_id, user_message, assistant_message,
+                      turn_id, turn_timestamp) -> None
+```
+
+`ctx["redis"]` là ArqRedis pool bên trong worker — dùng để chain jobs (xem `graph_ingest`).
+
+**Start a worker process:**
 
 ```bash
-# Single worker process
 arq src.agentrag.worker.settings.WorkerSettings
-
-# Multiple workers (scale manual)
-arq src.agentrag.worker.settings.WorkerSettings &
-arq src.agentrag.worker.settings.WorkerSettings &
-
-# Auto-scale theo queue depth (xem scaler.py ở root)
-python scaler.py
 ```
 
----
+`scaler.py` (repo root) quản lý số worker processes theo queue depth.
 
-## Job types
+## Data flow
 
-### `graph_ingest`
-
-Parse, chunk, extract StructMem entries, và index một document vào Elasticsearch.
-
-**Enqueue từ:** `ingestion/pipeline.py` sau khi lưu document (async mode)
-
-```python
-await get_pool().enqueue_job(
-    "graph_ingest",
-    document_id=str(doc_id),
-    folder_path="/path/to/folder",
-    source_id="filename.pdf",
-    title="Document Title",
-)
+```
+API process (enqueue, không block request)        Worker process (arq CLI)
+────────────────────────────────────────         ──────────────────────────────
+ingestion/pipeline.py ─ "graph_ingest"  ┐
+main.py /chat,/chat/stream ─ "chat_memory"│  Redis   functions.py → process_*(job)
+ingestion/pipeline.py ─ "vision_extract" ┘ ───────▶  graph_jobs / vision_jobs /
+graph_jobs.py ─ "consolidate" (chained)               consolidation_jobs / chat.structmem
 ```
 
-**Processing:** `graph.graph_jobs.process_graph_job()`
-- Parse file → chunk (1536 tok) → StructMem extraction (2 parallel LLM calls) → index ES
-- Cập nhật trạng thái document trong PostgreSQL (`processing` → `done` / `failed`)
-- Nếu `total_chunks >= STRUCTMEM_CONSOLIDATION_THRESHOLD` → tự enqueue job `consolidate`
+- **`graph_ingest`** — enqueue từ `ingestion/pipeline.py` (async mode) sau khi lưu document.
+  → `graph.graph_jobs.process_graph_job(job, arq_pool=ctx["redis"])`: parse → chunk →
+  StructMem extraction → index ES, cập nhật `Document` status trong PostgreSQL. Nếu
+  `total_chunks >= STRUCTMEM_CONSOLIDATION_THRESHOLD` thì **chained-enqueue** `consolidate`.
+- **`vision_extract`** — enqueue từ `ingestion/pipeline.py` khi `VISION_PROVIDER` được set và
+  `VISION_INGEST_MODE=async`. → `graph.vision_jobs.process_vision_job(job)`: describe page-image
+  bitmaps qua vision LLM (RPM/concurrency-bounded, batch-flush), upsert image segments vào PG + ES.
+- **`consolidate`** — chained từ `graph_ingest` (không enqueue trực tiếp từ API).
+  → `graph.consolidation_jobs.process_consolidation_job(job)`: lấy unconsolidated entries →
+  embed + cosine search seeds → LLM synthesis cross-chunk hypotheses → index `agentrag_synthesis`
+  → mark `consolidated=true`.
+- **`chat_memory`** — enqueue từ `main.py` sau mỗi `/chat` và `/chat/stream` response khi
+  `CHAT_STRUCTMEM_ENABLED=true`. → `chat.structmem.ChatMemoryService.process_turn()` (2 parallel
+  LLM calls: factual + relational → embed → index). Hàm này tự gọi `count_unconsolidated()` và,
+  nếu `>= CHAT_MEMORY_CONSOLIDATION_THRESHOLD`, gọi `svc.consolidate(conversation_id)` **in-line**
+  (không qua một ARQ job riêng).
 
----
+## Config
 
-### `consolidate`
+Đọc từ `src/agentrag/config.py` (qua `app_settings` / `settings`):
 
-Cross-chunk synthesis — tổng hợp entries từ nhiều chunks thành higher-level hypotheses.
+| Key | Default | Đọc ở đâu | Mô tả |
+|---|---|---|---|
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | `settings.py` (+ `pool.py` caller) | Redis dùng chung cho cache + ARQ queue |
+| `STRUCTMEM_WORKER_MAX_JOBS` | `1` | `settings.py` → `max_jobs` | Số document jobs đồng thời / worker process |
+| `STRUCTMEM_JOB_TIMEOUT_SECONDS` | `3600` | `settings.py` → `job_timeout` | Timeout / job (cả document, không phải 1 chunk) |
+| `CHAT_MEMORY_CONSOLIDATION_THRESHOLD` | `10` | `functions.py` (`chat_memory`) | Ngưỡng unconsolidated entries trước khi consolidate |
 
-**Enqueue từ:** `graph_ingest` job (chained tự động)
+Các flag liên quan nhưng đọc ở **module downstream**, không phải trong `worker/` (để tham khảo):
+`STRUCTMEM_MAX_CONCURRENCY` (1), `STRUCTMEM_CHUNK_TIMEOUT_SECONDS` (300),
+`STRUCTMEM_CONSOLIDATION_THRESHOLD` (20, dùng trong `graph_jobs.py` để quyết định chain `consolidate`),
+`VISION_PROVIDER` / `VISION_INGEST_MODE` / `VISION_MAX_CONCURRENCY` (4) / `VISION_MAX_RPM` (10) /
+`VISION_PER_IMAGE_RETRIES` (3) / `VISION_FLUSH_BATCH_SIZE` (10), `CHAT_STRUCTMEM_ENABLED` (`True`).
 
-```python
-await arq_pool.enqueue_job(
-    "consolidate",
-    group_id="normalized_source_id",
-    document_id=str(doc_id),
-    trigger_chunk_count=42,
-)
-```
+## Recent additions (2026-06)
 
-**Processing:** `graph.consolidation_jobs.process_consolidation_job()`
-1. Lấy unconsolidated entries từ `agentrag_entries`
-2. Embed buffer → cosine search → top-K historical seeds
-3. LLM synthesis → cross-chunk hypotheses
-4. Index vào `agentrag_synthesis`
-5. Mark entries `consolidated=true`
+Không có. Module `worker/` **không bị chạm** bởi đợt RAG-enhancement / UI-signal gần đây
+(Contextual Retrieval, RAPTOR, CRAG critique/corrective, adaptive routing, semantic cache).
+Những tính năng đó nằm trong agent/ingestion/retrieval path, không qua background queue này.
 
----
+## Gotchas
 
-### `vision_extract`
-
-Describe page-image bitmaps extracted from PDFs via a vision LLM, then upsert
-image segments to Postgres + Elasticsearch.
-
-**Enqueue từ:** `ingestion/pipeline.py` (sau text-segment indexing) when
-`VISION_PROVIDER` is set and `VISION_INGEST_MODE=async` (default).
-
-```python
-await get_pool().enqueue_job(
-    "vision_extract",
-    document_id=str(doc_id),
-    title="Document Title",
-    image_records=[{"page": 1, "path": "data/images/title/p1_0.jpg",
-                    "url": "/images/title/p1_0.jpg", "mime": "image/jpeg"}],
-)
-```
-
-**Processing:** `graph.vision_jobs.process_vision_job()`
-- `asyncio.gather` describes images in parallel, bounded by `VISION_MAX_CONCURRENCY`
-- `_RpmBucket` 60s sliding-window token bucket caps describe calls at `VISION_MAX_RPM`
-- Per-image transient retry (429 / 5xx / timeout) up to `VISION_PER_IMAGE_RETRIES`
-- Flushes batches of `VISION_FLUSH_BATCH_SIZE` to PG + ES so ES `docs.count`
-  climbs while the job runs (instead of one bulk write at the end)
-- Returns `{described, indexed}` count
-
-For image-heavy PDFs (e.g. 100-page scanned thesis), free Gemini 2.5-flash
-(10 RPM) takes ~10 min for 100 images. Paid tier (`VISION_MAX_RPM=1000`)
-finishes in seconds.
-
----
-
-### `chat_memory`
-
-Extract dual-perspective memory entries từ một chat turn.
-
-**Enqueue từ:** `main.py` sau mỗi `/chat` hoặc `/chat/stream` response (khi `CHAT_STRUCTMEM_ENABLED=true`)
-
-```python
-await get_pool().enqueue_job(
-    "chat_memory",
-    conversation_id="<uuid>",
-    user_message="Câu hỏi người dùng",
-    assistant_message="Câu trả lời assistant",
-    turn_id="<id>",
-    turn_timestamp="2024-01-01T00:00:00+00:00",
-)
-```
-
-**Processing:** `chat.structmem.ChatMemoryService`
-1. `process_turn()` — 2 parallel LLM calls (factual + relational) → embed → index
-2. `count_unconsolidated()` — nếu ≥ `CHAT_MEMORY_CONSOLIDATION_THRESHOLD` → `consolidate()`
-
----
-
-## `pool.py` — ARQ Pool Singleton
-
-Được init một lần trong FastAPI lifespan, dùng lại trong toàn bộ app.
-
-```python
-# Khởi tạo (main.py lifespan)
-await init_pool("redis://127.0.0.1:6379/0")
-
-# Enqueue job (bất kỳ đâu trong app)
-await get_pool().enqueue_job("graph_ingest", ...)
-
-# Dọn dẹp (main.py lifespan shutdown)
-await close_pool()
-```
-
----
-
-## `settings.py` — WorkerSettings
-
-```python
-class WorkerSettings:
-    functions = [graph_ingest, consolidate, chat_memory, vision_extract]
-    redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
-    max_jobs = settings.STRUCTMEM_WORKER_MAX_JOBS
-    job_timeout = settings.STRUCTMEM_JOB_TIMEOUT_SECONDS
-    keep_result = 3600   # giữ job result 1 giờ
-    max_tries = 2        # retry 1 lần khi fail
-```
-
----
-
-## Tương tác
-
-| Module | Vai trò |
-|---|---|
-| `ingestion.pipeline` | Enqueue `graph_ingest` sau khi lưu document |
-| `graph.graph_jobs` | Logic xử lý `graph_ingest` |
-| `graph.consolidation_jobs` | Logic xử lý `consolidate` |
-| `chat.structmem` | Logic xử lý `chat_memory` |
-| `main.py` | Init pool trong lifespan; enqueue `chat_memory` sau chat turns |
-| `scaler.py` | Quản lý số lượng worker processes theo queue depth |
-
----
-
-## Config liên quan
-
-| Key | Default | Mô tả |
-|---|---|---|
-| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis connection (dùng chung cho cache + ARQ queue) |
-| `STRUCTMEM_MAX_CONCURRENCY` | `1` | Max concurrent extraction chunks within a single graph_ingest job |
-| `STRUCTMEM_WORKER_MAX_JOBS` | `1` | Max concurrent document jobs per worker process |
-| `STRUCTMEM_CHUNK_TIMEOUT_SECONDS` | `300` | Per-chunk timeout (giây) |
-| `STRUCTMEM_JOB_TIMEOUT_SECONDS` | `3600` | Per-job timeout (giây) |
-| `VISION_MAX_CONCURRENCY` | `4` | Parallel describe calls in vision_extract |
-| `VISION_MAX_RPM` | `10` | Token-bucket RPM cap (0 = disable) |
-| `VISION_PER_IMAGE_RETRIES` | `3` | Per-image transient retry budget |
-| `VISION_FLUSH_BATCH_SIZE` | `10` | Commit described images to PG+ES every N |
-| `CHAT_STRUCTMEM_ENABLED` | `false` | Bật enqueue `chat_memory` jobs |
-| `CHAT_MEMORY_CONSOLIDATION_THRESHOLD` | `10` | Số turns trước khi consolidate |
+- **Hai process khác nhau.** API server (`uvicorn main:app`) chỉ **enqueue**; phải chạy
+  `arq ...WorkerSettings` (hoặc `scaler.py`) ở process riêng để jobs thực sự được run. Quên
+  worker → jobs nằm yên trong Redis, document kẹt ở status `processing`.
+- **Lazy imports trong `functions.py` là cố ý** — giữ import nặng (graph/chat) ra khỏi
+  module top-level để worker boot nhanh và tránh import cycles; đừng "dọn" lên đầu file.
+- **`max_jobs=1` mặc định** để an toàn với local Ollama (1 GPU/CPU-bound LLM tại một thời điểm).
+  Tăng `STRUCTMEM_WORKER_MAX_JOBS` chỉ khi backend LLM chịu được concurrency.
+- **`max_tries=2`** → mỗi job retry đúng **1 lần** khi fail. Downstream `process_*` phải
+  idempotent-an-toàn (re-parse / re-index) vì có thể chạy lại.
+- **`consolidate` không phải lúc nào cũng chạy** — chỉ chained khi document đủ lớn
+  (`total_chunks >= STRUCTMEM_CONSOLIDATION_THRESHOLD`). Document nhỏ sẽ không có synthesis layer.
+- **`job_timeout` bao trùm cả document**, không phải 1 chunk; PDF nhiều hình + vision LLM chậm
+  có thể chạm `STRUCTMEM_JOB_TIMEOUT_SECONDS` (3600s) — chỉnh lên nếu cần.

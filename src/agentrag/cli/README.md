@@ -1,153 +1,96 @@
-# Module: `cli` — Command-Line Interface
+# cli — Interactive Typer + Rich command-line front-end for the agent
 
-**Vị trí:** `src/agentrag/cli/`
+## Mục đích / Purpose
+CLI tương tác kiểu Claude CLI, xây bằng **Typer + Rich**. Cung cấp một `chat` REPL streaming (spinner + token streaming + citations) và một nhóm lệnh `conversations` để CRUD hội thoại. CLI gọi agent **trong tiến trình** (in-process) qua `get_agent_service()` — KHÔNG gọi HTTP API. Active-conversation được persist vào `~/.agentrag/state.json` để giữ ngữ cảnh giữa các lần chạy.
 
-CLI tương tác theo phong cách Claude CLI, xây dựng bằng **Typer + Rich**. Hỗ trợ chat streaming với spinner, quản lý conversations, và persistent active-conversation state.
+## Plane
+**Infrastructure** (presentation / entrypoint). Đây là lớp trình bày: nó không chứa logic reasoning hay IO worker, mà chỉ điều phối input người dùng → gọi `AgentService.chat_stream(...)` (Reasoning Plane) và `ConversationStore` (Execution Plane), rồi render kết quả bằng Rich.
 
----
-
-## Files
-
-| File | Mô tả |
+## Key files
+| File | Responsibility |
 |---|---|
-| `app.py` | CLI entry point — đăng ký commands |
-| `chat.py` | Interactive chat loop với SSE streaming và Rich display |
-| `conversations.py` | Conversation management: list, new, switch, delete, show |
-| `state.py` | Persistent state (`~/.agentrag/state.json`) |
+| `app.py` | Typer entrypoint. Tạo `cli_app`, đăng ký `chat` command và sub-app `conversations`. `main()` là console-script target. |
+| `chat.py` | Interactive chat REPL: vòng lặp `_chat_loop`, parse SSE (`_parse_sse`), stream một lượt (`_stream_turn`), render answer/citations, xử lý inline-commands. |
+| `conversations.py` | Sub-app Typer quản lý hội thoại: `list`, `new`, `switch`, `delete`, `show`. Mỗi command bọc một coroutine `asyncio.run(...)`. |
+| `state.py` | Persistent local state ở `~/.agentrag/state.json`: `load_state`/`save_state`, `get/set/clear_active_conversation`. |
+| `__init__.py` | Rỗng (package marker). |
 
----
+## Public interface
+Module được dùng như một **entrypoint**, không phải import qua `ServiceContainer`.
 
-## Cách chạy
+- `app.main()` — gọi `cli_app()`. Đây là target của console script `agentrag` (xem `pyproject.toml [project.scripts] agentrag = "agentrag.cli.app:main"`) và của file root `cli.py` (`from src.agentrag.cli.app import main`).
+- `app.cli_app: typer.Typer` — Typer app với 2 nhánh: command `chat` và sub-app `conversations`.
+- `chat.chat(new, title, document, conversation_id)` — hàm command cho `agentrag chat` (xem options bên dưới).
+- `conversations.app: typer.Typer` — sub-app, gắn vào `cli_app` với tên `conversations`.
+- `state.get_active_conversation() -> tuple[str|None, str|None]`, `state.set_active_conversation(conversation_id, title)`, `state.clear_active_conversation()` — dùng nội bộ bởi cả `chat.py` và `conversations.py`.
 
+Cách chạy:
 ```bash
-# Từ root project
-python cli.py chat
-python cli.py conversations list
-
-# Hoặc nếu cài package
-agentrag chat
+python cli.py chat                 # qua file root cli.py
+agentrag chat                      # nếu đã cài package (console script)
 agentrag conversations list
 ```
 
----
+## Data flow
+1. `chat` command → `_chat_loop(conversation_id, document_title)`.
+2. `_chat_loop` tạo `ConversationStore` (từ `src.agentrag.chat.history`), resolve active conversation qua `state`, và lấy agent qua `get_agent_service()` (từ `src.agentrag.agent.factory` → trả về `GraphAgentService`, delegate stream về inner `AgentService`).
+3. Mỗi lượt: lưu user message (`store.append_message`), lấy lịch sử (`store.list_messages(limit=settings.CHAT_HISTORY_WINDOW)`), rồi gọi `agent.chat_stream(question, document_title, chat_history)`.
+4. `chat_stream` yield các dòng SSE; `_stream_turn` parse bằng `_parse_sse` và render trong một `rich.live.Live` block với `Spinner`.
+5. Sau khi xong: render answer (`rich.markdown.Markdown`), citations table, và nếu có thì in `SQL: ...` / `path: ...`; cuối cùng lưu assistant message kèm citations.
 
-## `chat` command
+Upstream caller: người dùng / file root `cli.py` / console script.
+Downstream deps: `agent.factory.get_agent_service`, `agent.graph_service.GraphAgentService.chat_stream` (delegate sang `agent.service.AgentService`), `chat.history.ConversationStore`, `config.settings`.
 
-```bash
-python cli.py chat [OPTIONS]
+### SSE events mà `_stream_turn` xử lý
+Khớp với các event do `AgentService.chat_stream` phát ra (`event: <type>\ndata: <json>\n\n`):
 
-Options:
-  --new / --no-new          Tạo conversation mới thay vì dùng conversation hiện tại
-  --title TEXT              Tiêu đề cho conversation mới
-  --document TEXT           Lọc theo document_title (tùy chọn)
-  --conversation-id TEXT    ID conversation cụ thể để tiếp tục
-```
-
-**Ví dụ:**
-```bash
-# Chat với conversation đang active
-python cli.py chat
-
-# Bắt đầu conversation mới về một document
-python cli.py chat --new --title "Phân tích Q4" --document "annual_report"
-
-# Tiếp tục conversation cụ thể
-python cli.py chat --conversation-id "abc123"
-```
-
-### Inline commands trong chat
-
-| Command | Mô tả |
+| Event | Xử lý trong CLI |
 |---|---|
-| `/new [title]` | Tạo conversation mới |
-| `/switch <id>` | Chuyển sang conversation khác (prefix matching) |
-| `/list` | Liệt kê tất cả conversations |
-| `/clear` | Xóa màn hình |
-| `exit` / `quit` | Thoát |
+| `status` | Cập nhật spinner text `"{step}…"` (vd. `classify`, `retrieve`, `structured_reasoning`, `chitchat`). |
+| `token` | Append vào buffer; hiển thị dần trong Live block. |
+| `done` | Đọc `citations`; lưu `done_data` (gồm `reasoning_path`, `sql_query` nếu có). |
+| `error` | In ra `err_console` (stderr, đỏ). |
 
-### Display
+`reasoning_path` có thể là `chitchat` / `fast` / `structured` / `semantic`. CLI chỉ in badge `path:` khi path khác `semantic`; in `SQL:` khi `done` có `sql_query`.
 
-- **Spinner** hiển thị bước xử lý (classify → retrieve → decide → answer)
-- **Streaming tokens** hiển thị real-time qua SSE
-- **Citations table** ở cuối mỗi câu trả lời (document § section)
-- **Reasoning path badge**: `[structured]` hoặc `[semantic]`
-
----
-
-## `conversations` commands
-
-```bash
-# Liệt kê conversations (Rich table)
-python cli.py conversations list [--limit 20]
-
-# Tạo conversation mới
-python cli.py conversations new [--title "Tên conversation"]
-
-# Chuyển active conversation (chấp nhận prefix ID)
-python cli.py conversations switch <id_prefix>
-
-# Xóa conversation (yêu cầu confirm)
-python cli.py conversations delete <id_prefix>
-
-# Xem messages trong conversation
-python cli.py conversations show <id_prefix> [--limit 20]
-```
-
-**Ví dụ `list` output:**
-```
-  ID        Title              Messages  Created
-  ────────  ─────────────────  ────────  ──────────
-  abc12345  Phân tích Q4       12        2h ago
-  def67890  Project X review   3         1d ago
-  ★ ghi111  (active)           8         3h ago
-```
-
----
-
-## `state.py` — Persistent State
-
-Lưu active conversation vào `~/.agentrag/state.json`:
-
-```python
-from src.agentrag.cli.state import get_active_conversation, set_active_conversation
-
-conversation_id, title = get_active_conversation()
-set_active_conversation("uuid-...", "Conversation Title")
-clear_active_conversation()
-```
-
-State persist giữa các lần chạy CLI. Khi conversation bị xóa, state tự reset về `None`.
-
----
-
-## `chat.py` — SSE Streaming
-
-Internal: `_stream_turn()` parse SSE events từ `/chat/stream`:
-
-| Event | Xử lý |
+### Inline commands trong REPL (`chat.py`)
+| Command | Hành vi thực tế |
 |---|---|
-| `status` | Cập nhật spinner text ("Retrieving...", "Thinking...") |
-| `token` | Append vào buffer, hiển thị dần trong Live block |
-| `done` | Hiển thị citations table, trả về full answer + metadata |
-| `error` | Hiển thị error message |
+| `/new [title]` | Tạo conversation mới (`store.create_conversation`) và set active. |
+| `/switch <id-prefix>` | Prefix-match qua `list_conversations(limit=100)`; báo lỗi nếu không khớp hoặc mơ hồ. |
+| `/list` | Liệt kê tối đa 20 conversation, đánh dấu `✦` cái đang active. |
+| `/clear` | **Bắt đầu một conversation mới rỗng** (không phải xoá màn hình). |
+| `exit` / `quit` / `/exit` / `/quit` | Thoát REPL. |
 
----
+### `chat` command options
+| Option | Mặc định | Ý nghĩa |
+|---|---|---|
+| `--new` / `-n` | `False` | Tạo conversation mới trước khi vào REPL. |
+| `--title` / `-t` | `""` | Tiêu đề cho conversation mới (chỉ dùng với `--new`). |
+| `--document` / `-d` | `""` | Scope retrieval theo một `document_title`. |
+| `--id` | `""` | Resume một conversation theo ID. |
 
-## Tương tác
-
-| Module | Vai trò |
+### `conversations` sub-commands
+| Command | Hành vi |
 |---|---|
-| `main.py` | API server mà CLI gọi qua httpx |
-| `/chat/stream` | SSE endpoint cho streaming chat |
-| `/conversations/*` | CRUD endpoints cho conversation management |
-| `~/.agentrag/state.json` | Persistent active conversation state |
+| `list [--limit/-n 20]` | Rich table: marker active, short-id (8 ký tự), title, "created" tương đối (`_fmt_time`). |
+| `new [TITLE]` | Tạo + set active; in ID đầy đủ. |
+| `switch <id-prefix>` | Prefix-match; `typer.Exit(1)` nếu không khớp / mơ hồ. |
+| `delete <id-prefix> [--yes/-y]` | Prefix-match; confirm (trừ khi `-y`); xoá; nếu trùng active thì `clear_active_conversation()`. |
+| `show` | In active conversation hiện tại (id + title) từ `state`. Không nhận tham số. |
 
----
+## Config
+| Setting | Dùng ở đâu |
+|---|---|
+| `settings.CHAT_HISTORY_WINDOW` (mặc định `10`) | `chat.py` — số message lịch sử nạp vào mỗi lượt (`store.list_messages(limit=...)`). |
 
-## Config liên quan
+Không có biến môi trường HTTP nào (vd. `AGENTRAG_API_URL`): CLI chạy agent in-process, không gọi server. Storage/DB do `ConversationStore` và cấu hình của nó quyết định, không phải module này.
 
-CLI tự động kết nối đến `http://127.0.0.1:8000`. Để override:
-
-```bash
-AGENTRAG_API_URL=http://my-server:8000 python cli.py chat
-```
+## Gotchas
+- **In-process, không HTTP.** CLI gọi thẳng `get_agent_service()` và `ConversationStore` trong cùng tiến trình. Mọi cấu hình DB/LLM (env) phải có sẵn ở môi trường chạy CLI; không có web server trung gian.
+- **Streaming structured path là giả lập.** `GraphAgentService.chat_stream` chưa stream thật — nó delegate về inner `AgentService`, và path `structured` phát token bằng cách lặp từng ký tự của câu trả lời đã hoàn chỉnh (không phải token-by-token thật từ LLM).
+- **`/clear` không xoá màn hình** — nó tạo conversation mới. `--clear`/xoá màn hình không tồn tại.
+- **`conversations show` chỉ hiện active conversation**, KHÔNG liệt kê message trong một hội thoại (đừng nhầm với hành vi mô tả ở README cũ).
+- **State có thể trỏ tới conversation đã xoá** nếu xoá ở nơi khác; `state.py` chỉ tự reset khi chính lệnh `delete` thấy id trùng active. `load_state` nuốt mọi lỗi JSON và trả `{}`.
+- **Mỗi sub-command tự `asyncio.run(...)`**, nên không gọi chúng từ bên trong một event loop đang chạy.
+- **Spinner dùng `Live(transient=True)`**: trong khi stream, answer hiển thị trong spinner text; bản render Markdown sạch chỉ in lại sau khi `done`.

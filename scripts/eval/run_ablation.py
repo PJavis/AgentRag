@@ -126,6 +126,9 @@ def wipe_corpus_db() -> None:
     import asyncio
 
     async def _wipe() -> None:
+        import sys
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))  # parent script lacks repo root on path
         from sqlalchemy import delete
         from src.agentrag.database import AsyncSessionLocal
         from src.agentrag.database.models import Document, Segment

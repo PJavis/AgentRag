@@ -189,6 +189,13 @@ async def ingest_folder(
                         c["page_start"] = 1
                         c["page_end"] = 1
 
+            # Tag spreadsheet chunks as tabular so retrieval + the structured
+            # SQL pipeline's corpus-aware gate can recognise them as structured
+            # data (the content already carries `### Sheet:` / ```csv markers).
+            if source_type in _EXCEL_SOURCE_TYPES:
+                for c in chunks_search:
+                    c["segment_type"] = "table"
+
             # Add image chunks extracted from PDF pages.
             # In async mode: skip vision LLM describe inline; queue ARQ job sau
             # khi PG/ES text segments saved (search ready ngay).

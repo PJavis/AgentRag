@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -9,10 +10,36 @@ if TYPE_CHECKING:
     from src.agentrag.services.security_service import SecurityService
 
 from src.agentrag.common.tracing import StageTracer
+from src.agentrag.config import settings
 from src.agentrag.structured.extractor import StructuredExtractor
 from src.agentrag.structured.schema_discovery import SchemaDiscoveryModule
 from src.agentrag.structured.sql_engine import SQLReasoningEngine
 from src.agentrag.structured.synthesizer import AnswerSynthesizer
+
+# Substring markers (case-insensitive) that signal tabular source content.
+_TABULAR_MARKERS = ("### sheet:", "```csv", "<table")
+# A markdown table header-separator row, e.g. "| --- | --- |" / "|:--|--:|".
+_MD_TABLE_SEP = re.compile(r"\|[\s:|-]*-{3,}[\s:|-]*\|")
+
+
+def has_tabular_evidence(chunks: list[dict[str, Any]] | None) -> bool:
+    """True if any retrieved chunk looks like structured/tabular source data.
+
+    Corpus-aware gate for the SQL reasoning path: spreadsheets (`### Sheet:`,
+    ```csv fences), markdown tables, HTML tables (MinerU), or chunks explicitly
+    tagged `segment_type == "table"`. Prose chunks return False so a
+    structured-*intent* question over a prose-only corpus skips the SQL stages.
+    """
+    for chunk in chunks or []:
+        if (chunk.get("segment_type") or "").lower() == "table":
+            return True
+        content = chunk.get("content") or chunk.get("excerpt") or ""
+        low = content.lower()
+        if any(marker in low for marker in _TABULAR_MARKERS):
+            return True
+        if _MD_TABLE_SEP.search(content):
+            return True
+    return False
 
 
 class StructuredReasoningPipeline:
@@ -69,6 +96,14 @@ class StructuredReasoningPipeline:
         except Exception as exc:
             tracer.fail("retrieve", exc)
             return self._fallback_result(question, document_title, f"retrieve_failed:{exc}", tracer)
+
+        # ── Corpus-aware gate ─────────────────────────────────────────────────
+        # The classifier routes by *intent* (it can't see the corpus). Here, with
+        # the retrieved evidence in hand, bail to the semantic path when there is
+        # no tabular data to run SQL over — prose-only corpora skip the expensive
+        # schema-discovery / extraction / SQL stages entirely.
+        if settings.STRUCTURED_REQUIRE_TABULAR and not has_tabular_evidence(chunks):
+            return self._fallback_result(question, document_title, "no_tabular_evidence", tracer)
 
         # ── Step 2: Schema Discovery ──────────────────────────────────────────
         try:

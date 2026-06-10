@@ -31,4 +31,11 @@ describe('TraceDialog', () => {
       message={{ ...base, tool_trace: [{ tool_name: 'search_hybrid_kg', corrective: true }] }} />)
     expect(screen.getByText(/corrective/i)).toBeInTheDocument()
   })
+  it('shows cache-hit + mode diagnostics for a tool', () => {
+    render(<TraceDialog open onOpenChange={() => {}}
+      message={{ id: '1', type: 'ai', content: 'a',
+        tool_trace: [{ tool_name: 'search_hybrid_kg',
+          tool_output: { semantic_cache_hit: true, mode: 'hybrid_kg' } }] }} />)
+    expect(screen.getByText(/cached/i)).toBeInTheDocument()
+  })
 })

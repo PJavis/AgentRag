@@ -134,6 +134,16 @@ function ToolTraceList({ entries }: { entries: ToolTraceEntry[] }) {
                 )}
               </div>
               <div className="flex gap-1 shrink-0">
+                {Boolean((e.tool_output as Record<string, unknown> | undefined)?.semantic_cache_hit) && (
+                  <Badge variant="secondary" className="text-[10px] gap-0.5 text-amber-700 dark:text-amber-300">
+                    cached
+                  </Badge>
+                )}
+                {(e.tool_output as Record<string, unknown> | undefined)?.mode != null && (
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    {String((e.tool_output as Record<string, unknown>).mode)}
+                  </Badge>
+                )}
                 {decMs > 0 && (
                   <Badge variant="outline" className="text-[10px] font-mono">
                     dec {decMs.toFixed(0)}ms

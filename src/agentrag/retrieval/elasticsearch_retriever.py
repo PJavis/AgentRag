@@ -22,9 +22,9 @@ from src.agentrag.retrieval.reranker import LLMReranker
 _RESULT_CACHE: TTLCache[str, dict] = TTLCache(maxsize=512, ttl=60)
 
 
-def _cache_key(query: str, mode: str, top_k: int | None, document_title: str | None, rerank: bool | None, extra: dict | None = None) -> str:
+def _cache_key(query: str, mode: str, top_k: int | None, document_title: str | None, rerank: bool | None, extra: dict | None = None, dense_query: str | None = None) -> str:
     h = hashlib.sha256()
-    h.update(json.dumps([query, mode, top_k, document_title, rerank, extra], ensure_ascii=False, sort_keys=True).encode())
+    h.update(json.dumps([query, mode, top_k, document_title, rerank, extra, dense_query], ensure_ascii=False, sort_keys=True).encode())
     return h.hexdigest()
 
 
@@ -100,7 +100,7 @@ class ElasticsearchRetriever:
 
         ck = _cache_key(
             query, mode, top_k, document_title, rerank,
-            extra=filters,
+            extra=filters, dense_query=dense_query,
         )
         cached = _RESULT_CACHE.get(ck)
         if cached is not None:

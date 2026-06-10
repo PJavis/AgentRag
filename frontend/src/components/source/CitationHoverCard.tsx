@@ -8,6 +8,7 @@ import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import { Badge } from '@/components/ui/badge'
+import { useTranslation } from '@/lib/hooks/use-translation'
 import type { Citation } from '@/lib/types/api'
 
 interface CitationHoverCardProps {
@@ -17,10 +18,11 @@ interface CitationHoverCardProps {
 }
 
 export function RaptorBadge({ nodeLevel }: { nodeLevel?: number | null }) {
+  const { t } = useTranslation()
   if (!nodeLevel || nodeLevel < 1) return null
   return (
     <Badge variant="outline" className="text-[10px] px-1 py-0 gap-0.5 text-violet-600 dark:text-violet-300 border-violet-300/50">
-      <Layers className="h-2.5 w-2.5" />Summary · L{nodeLevel}
+      <Layers className="h-2.5 w-2.5" />{t('ragSignals.summary')} · L{nodeLevel}
     </Badge>
   )
 }

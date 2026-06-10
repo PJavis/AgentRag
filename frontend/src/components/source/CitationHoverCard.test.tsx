@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { CitationHoverCard } from './CitationHoverCard'
 import type { Citation } from '@/lib/types/api'
+
+vi.mock('@/lib/hooks/use-translation', () => ({
+  useTranslation: () => ({ t: (k: string) => k }),
+}))
 
 describe('CitationHoverCard', () => {
   it('renders trigger without crashing for a raptor summary citation', () => {

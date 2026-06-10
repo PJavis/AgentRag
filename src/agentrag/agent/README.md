@@ -1,191 +1,194 @@
-# Module: `agent` — Semantic Reasoning Loop (Reasoning Plane)
+# agent — semantic reasoning loop (Reasoning Plane)
 
 **Vị trí:** `src/agentrag/agent/`
 
-> S4 — Reasoning Plane. `AgentService.__init__` fetch services qua
-> `ServiceContainer.get_container()` (không tự `new ElasticsearchRetriever()`).
-> Đọc `ARCHITECTURE.md` cho luật chia plane.
+## Mục đích / Purpose
 
-Vòng lặp suy luận ngữ nghĩa chính. Nhận câu hỏi, tự chọn tool retrieval cần gọi, tích lũy context qua nhiều bước, rồi sinh câu trả lời cuối. Hỗ trợ cả blocking (`chat`) và streaming SSE (`chat_stream`).
+Vòng lặp suy luận chính của AgentRag. Nhận câu hỏi của người dùng, phân loại
+intent, tự chọn tool retrieval cần gọi, tích lũy context qua nhiều bước, rồi
+sinh câu trả lời cuối kèm citations. Đây là "bộ não" quyết định *WHAT to do* —
+nó không tự gọi IO mà điều phối các execution-plane services. Có cả blocking
+(`GraphAgentService.chat`) và streaming SSE (`chat_stream`).
 
-Output chat response bao gồm `tool_trace`, `timings_ms`, `reasoning_path`,
-`plan_subqueries`, `sql_query` — adapter persist trên assistant message để
-UI `TraceDialog` (S2) hiển thị.
+## Plane
 
----
+**Reasoning Plane.** Module này sở hữu state machine (LangGraph), prompts,
+decision loops và branching. Nó KHÔNG khởi tạo concrete IO classes — mọi
+execution service được lấy qua `ServiceContainer.get_container()` trong
+`AgentService.__init__`. (Ngoại lệ tồn dư: `agent/tools.py::AgentTools` vẫn
+`new ElasticsearchRetriever()` trực tiếp — boundary leak đã ghi nhận trong
+`ARCHITECTURE.md`.)
 
-## Files
+## Key files
 
-| File | Class / Function | Mô tả |
+| File | Class / Function | Responsibility |
 |---|---|---|
-| `service.py` | `AgentService` | Orchestrator chính — quản lý toàn bộ vòng lặp |
-| `tools.py` | `ToolRegistry` | Khai báo và dispatch retrieval tools |
-| `context.py` | `ContextAssemblyService` | Dedup, rank, trim context trước khi đưa vào LLM |
-| `llm.py` | `AgentLLM` | Wrapper OpenAI-compatible client cho decision + streaming |
+| `graph_service.py` | `GraphAgentService`, 16-node `StateGraph` | **Orchestrator chính.** LangGraph state machine wiring các phase; mỗi node gọi helper trên `_INNER = AgentService()`. Resumable per `thread_id = conversation_id` (InMemorySaver). |
+| `service.py` | `AgentService` | Helper container — security/knowledge/classifier/structured pipeline + các pha `_decide`/`_answer`/`_plan_subqueries`/`_critique`/`_build_packed_citations`. Cũng có `chat_stream` (đường streaming SSE riêng, không qua graph). |
+| `context.py` | `ContextAssembler`, `_lost_in_middle_reorder` | Dedup → rank → token-budget trim → global rerank → citation-pack context trước khi đưa vào LLM. |
+| `llm.py` | `AgentLLM` | Wrapper `AsyncOpenAI` (OpenAI-compatible). Resolve backend/provider, json/text/stream/multimodal responses, sticky model fallback. |
+| `tools.py` | `AgentTools` | Tool registry — dispatch search_sparse/dense/hybrid/hybrid_kg + segment/chunk lookups. Đọc S5 `domain_filter` qua ContextVar. |
+| `factory.py` | `get_agent_service()` | Stable entrypoint — trả về `GraphAgentService` (single backend shim). |
+| `followups.py` | `generate_followups()` | Sau khi trả lời, 1 LLM call rẻ (task `followup`) đề xuất 3 câu hỏi tiếp. TTLCache 5 phút. |
+| `starters.py` | `generate_starters()` | Empty-state starter questions từ title + summary (task `starter`). TTLCache 10 phút. |
 
----
+## Public interface
 
-## Luồng xử lý
+Callers (adapter routers, CLI) chỉ import **qua factory**:
 
-```
-question
-  │
-  ├─[chit-chat heuristic]──▶ _is_chitchat()  → reply via cheap routing model, skip retrieval
-  │
-  ├─[STRUCTURED_REASONING_ENABLED]──▶ QueryIntentClassifier.classify()
-  │         │  intent == "structured"
-  │         └──▶ StructuredReasoningPipeline.run() ──▶ return kết quả SQL
-  │
-  ├─[AGENT_PLAN_THEN_EXECUTE_ENABLED, len≥trigger]──▶ _plan_subqueries()
-  │         │ multi_step=true
-  │         └──▶ asyncio.gather(bootstrap_search(sq) for sq in subqueries)
-  │
-  ├──▶ KnowledgeService.bootstrap_search()       ← bootstrap on original question
-  │
-  └──▶ for step in range(AGENT_MAX_STEPS - 1):
-          _decide()                               ← LLM chọn tool tiếp theo
-          KnowledgeService.execute_tool()         ← chạy tool
-          SecurityService.filter_tool_results()   ← lọc theo document_title
-       │
-       ▼
-       ContextAssemblyService.assemble()          ← dedup + rank + token-budget trim + LiM reorder
-       _answer()                                  ← LLM sinh answer + citations
-      [AGENT_SELF_CRITIQUE_ENABLED, thin retrieval] ──▶ _self_critique() → maybe revise
-       _ground_citations()                        ← validate citations vs context
+```python
+from src.agentrag.agent.factory import get_agent_service
+agent = get_agent_service()          # → GraphAgentService
+result = await agent.chat(question, document_title, chat_history,
+                          conversation_id, domain_filter, verbosity)
 ```
 
----
+- `GraphAgentService.chat(...) -> dict` — blocking. Trả về `answer`, `citations`,
+  `tool_trace`, `reasoning_path`, `sql_query`, `highlights`, `timings_ms`,
+  `context` (= packed_context, cho RAGAS eval), và 3 UI signals
+  `semantic_cache_hit` / `retrieval_mode` / `domain_route` (xem `_message_signals`).
+- `GraphAgentService.chat_stream(...) -> AsyncIterator[str]` — SSE. **Chưa
+  port sang graph**; nó delegate thẳng tới `AgentService.chat_stream` (loop
+  thủ công). Events: `status` / `token` / `done` / `error`.
+- `generate_followups(...)` / `generate_starters(...)` — gọi trực tiếp từ
+  `adapter/routers/chat.py`, nhận `llm_gateway` injected.
 
-## API chính
+`AgentService` không phải public — public surface của nó (helper methods) chỉ
+được graph nodes tiêu thụ qua `_INNER`.
 
-### `AgentService.chat(question, document_title, chat_history) → dict`
+## Data flow
 
-Blocking. Trả về:
+Upstream callers: `adapter/routers/chat.py`, `adapter/routers/search.py`,
+`cli/chat.py`.
 
-```json
-{
-  "question": "...",
-  "document_title": "...",
-  "answer": "Van **hai lá** nằm giữa tâm nhĩ trái và tâm thất trái...",
-  "highlights": [
-    "Van hai lá gồm 2 lá van và bộ máy dưới van",
-    "Hở van hai lá độ 3-4 cần phẫu thuật"
-  ],
-  "citations": [
-    {
-      "document_title": "...",
-      "section_path": "Chương 3 / Hệ tim mạch",
-      "content_hash": "...",
-      "page_start": 47,
-      "page_end": 48,
-      "excerpt": "Van hai lá nằm giữa..."
-    }
-  ],
-  "reasoning_path": "semantic | structured",
-  "sql_query": null,
-  "tool_trace": [...],
-  "context": [...],
-  "timings_ms": {"total": 0, "decide": 0, "tool": 0, "assemble": 0, "answer": 0}
-}
+LangGraph node sequence (`graph_service._build_graph`):
+
+```
+validate → memory → chitchat_check
+  ├─[chitchat]→ chitchat_answer → END
+  └→ classify
+       ├─[structured]→ structured_run ─[ok]→ ground
+       │                              └[fallback]→ semantic_plan
+       ├─[adaptive fast-path]→ fast_answer → critique
+       └→ semantic_plan → bootstrap → decide
+                                       ├─[more]→ tool_exec → decide  (loop ≤ AGENT_MAX_STEPS)
+                                       └─[done]→ assemble → answer → critique
+   critique ─[grounded]→ ground → END
+            └[not grounded]→ corrective_retrieve → critique  (≤ AGENT_CRITIQUE_MAX_RETRIES)
 ```
 
-**Page-aware citations**: nếu document được parse bằng `PDFParser` (PyMuPDF), `page_start`/`page_end` sẽ có giá trị → frontend hiện trang chính xác như NotebookLM. Markdown/DOCX không có page info → các trường này = `null`.
+Per-node work:
+- `validate` → `SecurityService.validate_chat_request`
+- `memory` → `ChatMemoryService.retrieve` (chỉ khi `CHAT_STRUCTMEM_ENABLED`)
+- `classify` → `QueryIntentClassifier.classify` (gate `STRUCTURED_REASONING_ENABLED`)
+- `structured_run` → `StructuredReasoningPipeline.run` (đường SQL)
+- `semantic_plan` → `AgentService._plan_subqueries` (decompose multi-hop)
+- `bootstrap` → `KnowledgeService.bootstrap_search` (+ sub-query fan-out, parallel hoặc multi-hop-chained) → `SecurityService.filter_tool_results`
+- `decide` → `AgentService._decide` (LLM tự-phản tỉnh chọn tool kế tiếp)
+- `tool_exec` → `KnowledgeService.normalize_tool_call` + `execute_tool` → filter
+- `assemble` → `ContextAssembler.assemble`
+- `answer` → `AgentService._answer` (LLM synthesis, multimodal nếu có image segments)
+- `critique` → `AgentService._critique` (CRAG, no extra LLM call)
+- `ground` → `AgentService._build_packed_citations` + `_attach_source_ids`
 
-**Highlights**: 3-5 điểm quan trọng nhất sinh trực tiếp trong answer prompt (term + bullet). Câu trả lời cũng dùng `**bold**` cho thuật ngữ quan trọng.
+Downstream deps (qua `ServiceContainer` / services package): `KnowledgeService`,
+`ContextAssemblyService`, `SecurityService`, `LLMGateway`,
+`StructuredReasoningPipeline`, `QueryIntentClassifier`, `ChatMemoryService`.
+`ContextAssembler` còn pull `retrieval.reranker.LLMReranker` trực tiếp cho
+global rerank pass.
 
-### `AgentService.chat_stream(question, document_title, chat_history) → AsyncIterator[str]`
+### Citation contract (quan trọng)
 
-SSE generator. Mỗi yield là `"event: <type>\ndata: <json>\n\n"`.
+Answer prompt cite theo **source number** `[n]` = vị trí trong
+`packed_context` (1-based). `_build_packed_citations` trả về **toàn bộ** danh
+sách packed (mỗi entry tagged `source = n`), nên mọi `[n]` đều resolve được —
+khác với việc ground subset citation tự do của model. `_lost_in_middle_reorder`
+chỉ áp lên **bản prompt**, packed_context trả về vẫn giữ relevance-order để eval
++ `[n]` map đúng `retrieval_context[n-1]`.
 
-| Event | Payload | Khi nào |
-|---|---|---|
-| `status` | `{"step": "classify\|retrieve\|decide\|tool\|answer"}` | Đầu mỗi bước xử lý |
-| `token` | `{"text": "..."}` | Mỗi token LLM sinh |
-| `done` | `{citations, reasoning_path, sql_query, tool_trace}` | Kết thúc |
-| `error` | `{"message": "..."}` | Bất kỳ exception |
-
----
-
-## `AgentLLM`
-
-Wrapper `AsyncOpenAI`. Tự resolve backend từ `AGENT_PROVIDER` / `EXTRACTION_PROVIDER`.
-
-| Method | Mô tả |
-|---|---|
-| `json_response(system, user)` | Gọi LLM với `response_format=json_object` |
-| `stream_text(system, user)` | Stream raw tokens qua `stream=True` |
-
----
-
-## Tương tác
-
-| Module | Vai trò |
-|---|---|
-| `services.KnowledgeService` | Bootstrap + execute retrieval tools |
-| `services.ContextAssemblyService` | Assemble + rank + trim context |
-| `services.SecurityService` | Filter results theo document_title |
-| `services.LLMGateway` | json_response cho decide + answer |
-| `structured.StructuredReasoningPipeline` | SQL reasoning khi intent = structured |
-| `structured.QueryIntentClassifier` | Phân loại intent câu hỏi |
-
----
-
-## Config liên quan
+## Config
 
 | Key | Default | Mô tả |
 |---|---|---|
-| `AGENT_MAX_STEPS` | `4` | Số bước tool tối đa mỗi request |
+| `AGENT_MAX_STEPS` | `4` | Số bước decide→tool tối đa mỗi request |
 | `AGENT_TOOL_TOP_K` | `5` | top_k mặc định khi LLM không chỉ định |
-| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy chunk-count cap (used when token budget = 0) |
-| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware budget for packed context |
-| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Reorder packed context: best at start + end |
-| `AGENT_SELF_CRITIQUE_ENABLED` | `false` | 2nd LLM call verifies draft against context |
-| `AGENT_SELF_CRITIQUE_RRF_THRESHOLD` | `0.05` | Critique only when top RRF below threshold |
-| `AGENT_PLAN_THEN_EXECUTE_ENABLED` | `true` | Planner decomposes multi-hop → parallel sub-retrieval |
-| `AGENT_PLAN_TRIGGER_MIN_CHARS` | `60` | Skip planner for shorter questions |
-| `AGENT_PLAN_MAX_SUBQUERIES` | `4` | Cap on sub-queries per plan |
-| `STRUCTURED_REASONING_ENABLED` | `true` | Bật/tắt nhánh SQL reasoning |
-| `AGENT_PROVIDER` | (fallback EXTRACTION_PROVIDER) | LLM provider cho agent |
-| `AGENT_MODEL` | (fallback EXTRACTION_MODEL) | LLM model cho agent |
-| `AGENT_TEMPERATURE` | (fallback EXTRACTION_TEMPERATURE) | Temperature cho agent calls |
+| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Chunk-count cap (chỉ dùng khi token budget = 0) |
+| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware budget cho packed context (ưu tiên) |
+| `AGENT_MAX_OUTPUT_TOKENS` | `131072` | max_tokens cho mọi `AgentLLM` call |
+| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Reorder prompt copy: best ở đầu + cuối |
+| `AGENT_PLAN_THEN_EXECUTE_ENABLED` | `true` | Planner decompose → parallel sub-retrieval |
+| `AGENT_PLAN_TRIGGER_MIN_CHARS` | `60` | Skip planner cho câu ngắn (trừ summary intent) |
+| `AGENT_PLAN_MAX_SUBQUERIES` | `4` | Cap sub-queries mỗi plan |
+| `STRUCTURED_REASONING_ENABLED` | `true` | Bật nhánh classify + SQL reasoning |
+| `CHAT_STRUCTMEM_ENABLED` | `true` | Semantic chat memory thay sliding-window history |
+| `RETRIEVAL_RERANK_ENABLED` | `false` | Global cross-encoder rerank trong `ContextAssembler` |
+| `CRAG_ENABLED` | `false` | Bật critique + corrective re-retrieve loop |
+| `CRAG_MIN_HITS` | `1` | Số passage tối thiểu để coi là đủ context |
+| `CRAG_GROUNDING_ENABLED` | `true` | Critique fail nếu thiếu citation / answer mơ hồ |
+| `AGENT_CRITIQUE_MAX_RETRIES` | `1` | Số lần corrective_retrieve tối đa |
+| `AGENT_MULTIHOP_ENABLED` | `false` | Sub-queries chạy tuần tự + chain snippet hop trước |
+| `ADAPTIVE_ROUTING_ENABLED` | `false` | Cho phép fast_answer node (skip plan→decide loop) |
+| `ADAPTIVE_FASTPATH_MIN_CONFIDENCE` | `0.85` | Ngưỡng confidence để vào fast-path |
+| `AGENT_PROVIDER` / `AGENT_MODEL` / `AGENT_TEMPERATURE` / `AGENT_BASE_URL` | (fallback `EXTRACTION_*`) | Backend cho `AgentLLM` |
+| `LLM_FALLBACK_MODEL` | `qwen2.5:7b-instruct` | Sticky fallback khi model 404 |
+| `LLM_OLLAMA_NUM_CTX` | `32768` | num_ctx ép cho Ollama base URL (11434) |
+| `LLM_TASK_MODEL_MAP` | `"{}"` | Per-task model routing (answer/decide/plan/classify/followup/starter…) |
 
-## Orchestrator
+## Recent additions (2026-06)
 
-Single backend: `graph_service.GraphAgentService` (13-node LangGraph `StateGraph` w/ `InMemorySaver` checkpoint, resumable per `thread_id = conversation_id`). `service.AgentService` is the helper container (security, knowledge, classifier, structured pipeline, `_decide`/`_answer`/`_plan_subqueries`, streaming) — its public surface is consumed by graph nodes. Self-critique pass from the deleted loop backend is not yet ported to the graph; track follow-up if needed.
+Tất cả default-OFF trừ khi ghi rõ. Branch `feat/ragas-langfuse-reranker`:
 
-## Chit-chat fast-path
+- **CRAG critique + corrective** (`CRAG_ENABLED`). `critique` node gọi
+  `AgentService._critique` — kiểm tra relevance (`len(packed) >= CRAG_MIN_HITS`)
+  + grounding (có citation, không phải câu "không tìm thấy…"), **không tốn LLM
+  call**. Nếu fail → `corrective_retrieve` (step-back query rewrite → re-retrieve
+  → re-answer), loop về critique tới `AGENT_CRITIQUE_MAX_RETRIES`. `timings_ms.critique`
+  surface verdict latency cho UI.
+- **Multi-hop chaining** (`AGENT_MULTIHOP_ENABLED`). Trong `bootstrap`, sub-queries
+  chạy tuần tự; `_chain_query` seed mỗi hop bằng top snippet của hop trước
+  ("Bối cảnh: …\n\nCâu hỏi: …"). Khi OFF → fan-out song song qua `asyncio.gather`.
+- **Adaptive fast-path** (`ADAPTIVE_ROUTING_ENABLED`). `_route_intent` chuyển sang
+  node `fast_answer` khi classifier báo `complexity == "simple"` + `single_domain`
+  + `confidence >= ADAPTIVE_FASTPATH_MIN_CONFIDENCE` → một retrieve + một answer,
+  bỏ qua plan→decide→tool loop. `reasoning_path: "fast"`.
+- **UI-signal shim.** `_build_packed_citations` / `ContextAssembler._stage_citation_pack`
+  carry `node_level` (RAPTOR layer) + `context_text` (Contextual Retrieval prefix).
+  `_message_signals` derive `semantic_cache_hit` / `retrieval_mode` / `domain_route`
+  từ tool_trace cho UI chips.
 
-`_is_chitchat()` is a rule-based detector — short messages (≤60 chars) containing
-greeting/thanks tokens (`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...)
-**and** no information-request signal (`?`, `tại sao`, `what`, `tóm tắt`, ...)
-get a brief warm reply via the `classify` task client (cheapest routing model).
-No retrieval, no citations. `reasoning_path: "chitchat"` in the response.
+> **Lưu ý:** các flag `AGENT_SELF_CRITIQUE_*` trong README cũ **đã bị bỏ** — pha
+> self-critique được thay bằng CRAG (`_critique` + critique node). Contextual
+> Retrieval / RAPTOR / semantic cache nằm ở `ingestion/` + `services/`; module này
+> chỉ *truyền* các signal của chúng ra UI, không tự bật chúng.
 
-## Self-critique pass
+## Gotchas
 
-When `AGENT_SELF_CRITIQUE_ENABLED=true` and top retrieval RRF score is below
-`AGENT_SELF_CRITIQUE_RRF_THRESHOLD`, the draft answer is sent back to the
-`decide` task client for audit. Returns strict JSON:
-
-```json
-{"verdict": "ok|unsupported|sycophantic", "issues": [...], "revised": "..."}
-```
-
-When verdict is `unsupported` / `sycophantic`, the revised answer replaces the
-draft before being returned to the user. The `critique` field in the chat
-response surfaces the verdict for debugging.
-
-## Plan-then-execute
-
-For questions ≥ `AGENT_PLAN_TRIGGER_MIN_CHARS` chars, the agent calls a
-planner LLM first:
-
-```json
-{"multi_step": true, "subqueries": ["...", "...", "..."]}
-```
-
-Each sub-query is dispatched to `KnowledgeService.bootstrap_search` in
-parallel via `asyncio.gather`. The original-question bootstrap still runs
-afterwards as a safety net. The reactive `_decide` loop then usually
-short-circuits because evidence is pre-collected. Result includes
-`plan_subqueries: [...]` and `timings_ms.plan`.
+- **`chat_stream` đi đường khác `chat`.** Streaming vẫn dùng loop thủ công trong
+  `AgentService.chat_stream` (chit-chat → classify → bootstrap → decide loop →
+  assemble → stream tokens). Nó **không** chạy CRAG critique / corrective /
+  adaptive fast-path / multi-hop. Sửa logic ở graph nodes sẽ KHÔNG ảnh hưởng
+  streaming — phải sửa cả hai.
+- **`GraphAgentService` tái dùng một instance toàn cục** `_INNER = AgentService()`
+  + một `_GRAPH` compiled. State pickle qua InMemorySaver nên `seen_calls` được
+  serialize thành list (không phải set).
+- **Verbose/summary follow-up rewrite.** `GraphAgentService.chat` viết lại câu
+  hỏi ngắn kiểu "viết dài hơn được không?" bằng cách prepend câu hỏi user gần
+  nhất (`effective_question`) — nếu không retrieval miss sạch. Câu trả về vẫn là
+  `question` gốc.
+- **`AgentLLM` provider auto-derive.** Khi `model_override` bắt đầu bằng
+  `gemini-`/`gemma-`/`gpt-`/`o1`/`o3`/`deepseek`, provider được suy ra tự động để
+  một entry trong `LLM_TASK_MODEL_MAP` nhắm backend khác `AGENT_PROVIDER`. Model
+  404 → sticky fallback `LLM_FALLBACK_MODEL` (giữ tới hết process).
+- **`json_response` ép chữ "json".** DeepSeek (và vài backend) từ chối
+  `response_format=json_object` nếu prompt không chứa chữ "json" — `AgentLLM` tự
+  chèn câu nhắc. `<think>…</think>` được strip qua `clean_thinking_content`.
+- **Answer-shape recovery.** Finetune models hay trả sai top-level key
+  (`{"summary": …}`, `{"search_results": […]}`, hoặc decide-shape). `_find_answer_field`
+  walk cây để cứu; cuối cùng synthesize câu "chưa tìm được…" để UI không hiện
+  bubble rỗng.
+- **`AgentTools` là boundary leak.** Tự `new ElasticsearchRetriever()` thay vì lấy
+  từ container; đọc `domain_filter` + document scope qua ContextVar
+  (`retrieval.context`), không qua tham số.
+- **Coverage diversity trong trim.** `ContextAssembler._stage_rank_trim` cap ≤ 3
+  chunk / (document, page/section) bucket ở pass đầu rồi backfill — tránh dồn hết
+  budget vào trang 1; còn force-inject ít nhất 1 StructMem/graph candidate nếu có.

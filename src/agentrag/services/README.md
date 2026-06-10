@@ -1,217 +1,156 @@
-# Module: `services` — Execution Plane
+# services — Execution Plane facades + DI container (S4)
 
-**Vị trí:** `src/agentrag/services/`
+## Mục đích / Purpose
 
-> S4 — đây là **Execution Plane**. Mọi IO/LLM/embedding/vision/storage đi qua
-> các facade ở đây. Reasoning Plane (`agent/`, `orchestration/`, `structured/`)
-> chỉ fetch service từ `ServiceContainer`, không tự khởi tạo concrete class.
-> Xem `ARCHITECTURE.md` (root) cho luật chia plane đầy đủ.
+`services/` là **Execution Plane** của AgentRag: mọi IO/LLM/embedding/vision/storage/retrieval
+đi qua các facade ổn định ở đây. Reasoning Plane (`agent/`, `orchestration/`, `structured/`)
+**không** tự khởi tạo concrete class — chỉ fetch service qua `ServiceContainer` (DI singleton)
+và type-hint chống lại `Protocol` trong `protocols.py`. Module này cũng chứa hai ngoại lệ có chủ đích:
+`reasoning_knowledge.py` (pure Reasoning helpers — đặt ở đây vì lịch sử) và `semantic_cache.py`
+(một data-structure thuần, dùng bởi retrieval). Xem `ARCHITECTURE.md` (root) cho luật chia plane.
 
----
+## Plane
 
-## Files
+**Execution Plane** (chủ đạo). Hai file lệch khỏi quy ước:
+`reasoning_knowledge.py` là **Reasoning Plane** (pure, no IO);
+`semantic_cache.py` là **Infrastructure** (in-memory data structure, không gọi IO).
 
-| File | Class / Helper | Plane | Mô tả |
-|---|---|---|---|
-| `protocols.py` | `EmbeddingProtocol`, `VisionProtocol`, `RetrievalProtocol`, `StorageProtocol`, `RerankerProtocol`, `LLMProtocol` | E | Contract `Protocol` (runtime_checkable) cho Reasoning code type-hint |
-| `container.py` | `ServiceContainer`, `get_container()`, `set_container()`, `reset_container()` | E | Singleton DI, lazy-init từng service, `override()` cho test |
-| `llm_gateway.py` | `LLMGateway` | E | Unified LLM client — task routing, cost tracking, vision multimodal |
-| `embedding_service.py` | `EmbeddingService` | E | Dense embedding facade + TTL cache (S3) |
-| `vision_service.py` | `VisionService` | E | Vision LLM facade — wrap `ImageParser` |
-| `storage_service.py` | `StorageService` | E | CRUD facade trên Postgres + ES segments |
-| `retrieval_service.py` | `RetrievalService` | E | Hybrid retrieval facade — wrap `FederatedRetriever` |
-| `context_assembly_service.py` | `ContextAssemblyService` | E | Context dedup + rank + trim + lost-in-middle reorder |
-| `security_service.py` | `SecurityService` | E | Query-time access control, output filtering |
-| `knowledge_service.py` | `KnowledgeService` | mixed | Legacy facade — kết hợp reasoning + execution. New code dùng `reasoning_knowledge.py` + `RetrievalService` thay thế |
-| `reasoning_knowledge.py` | `expand_query`, `mode_to_tool`, `select_retrieval_mode`, `normalize_tool_call` | **R** | Pure helpers (no IO) — Reasoning Plane |
+## Key files
 
-E = Execution, R = Reasoning. `knowledge_service.py` còn lại từ trước S4; dùng cho code cũ, đừng mở rộng.
+| File | Responsibility |
+|---|---|
+| `container.py` | `ServiceContainer` — DI singleton, lazy-init mỗi service. `get_container()` / `set_container()` / `reset_container()` + `override()` cho test. |
+| `protocols.py` | `EmbeddingProtocol`, `VisionProtocol`, `RetrievalProtocol`, `StorageProtocol`, `RerankerProtocol`, `LLMProtocol` — `runtime_checkable` contract cho Reasoning code type-hint. |
+| `llm_gateway.py` | `LLMGateway` — điểm gọi LLM duy nhất. Task-based routing, large-context auto-route, vision multimodal, cost tracking. |
+| `embedding_service.py` | `EmbeddingService` — dense-embedding facade + TTL cache keyed SHA-256(text); thoả `EmbeddingProtocol`. |
+| `retrieval_service.py` | `RetrievalService` — hybrid-search facade, wrap `FederatedRetriever`. Filters-only; routing là việc của Reasoning. |
+| `storage_service.py` | `StorageService` — read-mostly CRUD facade trên Postgres + Elasticsearch. |
+| `vision_service.py` | `VisionService` — wrap `ImageParser`. `enabled=False` khi `VISION_PROVIDER` chưa set. |
+| `context_assembly_service.py` | `ContextAssemblyService` — thin facade trên `agent.context.ContextAssembler` (dedup + rank + trim + reorder). |
+| `security_service.py` | `SecurityService` — query-time validation + result filtering theo `DocumentPolicy`. |
+| `semantic_cache.py` | `SemanticCache` — tier-2 retrieval cache keyed by query-embedding cosine similarity (LRU + TTL). |
+| `knowledge_service.py` | `KnowledgeService` — legacy retrieval+tool facade (HyDE, decompose/RRF, intent-mode). Vẫn dùng bởi MCP + structured pipeline; đừng mở rộng cho code mới. |
+| `reasoning_knowledge.py` | Pure Reasoning helpers (no IO): `expand_query`, `select_retrieval_mode`, `mode_to_tool`, `normalize_tool_call`. |
 
----
+## Public interface
 
-## ServiceContainer (S4)
-
-Singleton entry — lazy. Cấu trúc:
+Hầu hết truy cập **qua container**, không import concrete trực tiếp:
 
 ```python
 from src.agentrag.services.container import get_container
+c = get_container()
 
-container = get_container()
-hits = await container.retrieval.search(query=q, mode="hybrid")
-vec  = (await container.embedding.embed([q]))[0]
-route = await container.domain_router.classify(q)
+payload, latency = await c.llm.json_response(system, user, task="answer")
+vecs  = await c.embedding.embed(["query a", "query b"])
+hits  = await c.retrieval.search(query=q, mode="hybrid_kg", top_k=8)
+route = await c.domain_router.classify(q)            # Reasoning service, hosted here for singleton sharing
+docs  = await c.storage.list_documents(limit=20)
+if c.vision.enabled:
+    desc = await c.vision.describe(image_bytes, mime="image/jpeg")
 ```
 
-| Property | Lazy class |
-|---|---|
-| `.llm` | `LLMGateway` |
-| `.embedding` | `EmbeddingService` |
-| `.vision` | `VisionService` |
-| `.storage` | `StorageService` |
-| `.retrieval` | `RetrievalService` |
-| `.domain_router` | `DomainRouter` (Reasoning, instanced here for singleton sharing) |
+Container properties (lazy): `.llm` → `LLMGateway`, `.embedding` → `EmbeddingService`,
+`.vision` → `VisionService`, `.storage` → `StorageService`, `.retrieval` → `RetrievalService`,
+`.domain_router` → `DomainRouter` (instanced ở đây để singleton-share giữa các caller).
 
-Test pattern:
+`LLMGateway` (called by `agent/`, `structured/`, `generation/`, `orchestration/`, `ingestion/`):
+
+| Method | Mô tả |
+|---|---|
+| `json_response(system, user, task="general") -> (dict, latency_ms)` | LLM → parse JSON; đo latency. |
+| `json_response_multimodal(system, user_text, image_urls, task) -> (dict, latency_ms)` | Text + image URLs cho vision-capable answer model. |
+| `text_response(system, user, task="general") -> str` | Plain-text completion (dùng bởi `contextualizer`, `raptor`, fast-path `graph_service`). |
+| `vision_response(system, text, image_bytes, mime, task="vision") -> (str, latency_ms)` | Single-image vision (dùng bởi `ImageParser`). |
+| `vision_response_batch(system, text, images, task="vision") -> list[str]` | N ảnh trong 1 call → tiết kiệm RPM. |
+| `cost_summary() -> dict` | Delegate `observability.cost.cost_summary()`. |
+
+Test pattern (mocks):
 
 ```python
 from src.agentrag.services.container import ServiceContainer
 c = ServiceContainer()
-c.override(retrieval=mock_retrieval, embedding=mock_embed)
+c.override(retrieval=mock_retrieval, embedding=mock_embed)   # keys = property names; unknown key raises KeyError
 ```
 
----
+`__init__.py` dùng PEP 562 lazy re-export (`ContextAssemblyService`, `KnowledgeService`,
+`LLMGateway`, `SecurityService`) để import một leaf như `semantic_cache` không kéo theo
+`knowledge_service → agent.tools → elasticsearch_retriever` (tránh circular import).
 
-## EmbeddingService (S3 cache)
+## Data flow
 
-Wrap `build_embedding_provider()`. Per-text vectors cached in
-`TTLCache(maxsize=2048, ttl=600s)`, keyed by SHA-256(text). Bypass when
-batch size > `cache_max_batch` (default 8) — ingestion paths không bị
-giam vào cache.
+- **Reasoning → Execution:** `agent.service` / `structured.pipeline` fetch services từ container,
+  gọi `retrieval.search()` (sau khi `domain_router.classify()` ra `system_override`), assemble
+  context qua `context_assembly_service`, sinh answer qua `llm.json_response()`.
+- `RetrievalService.search()` chấp nhận **hoặc** generic `filters={"systems":[…],"specialties":[…]}`
+  **hoặc** explicit `system_override`/`specialty_override` (S5 UI form); nó merge `filters` →
+  override rồi forward xuống `FederatedRetriever` (router=None — không tự route).
+- `EmbeddingService.embed()` cache batch nhỏ (≤ `cache_max_batch`=8); batch lớn (ingestion) bypass.
+  Hot paths hưởng lợi: HyDE rewrite + dense kNN trên cùng text, repeated sub-queries trong decide loop.
+- `LLMGateway._resolve_client()` chọn client theo thứ tự ưu tiên: (1) large-context auto-route khi
+  ước lượng token > `LLM_LARGE_CONTEXT_THRESHOLD`, (2) task routing nếu `LLM_ROUTING_ENABLED` +
+  task ∈ `LLM_TASK_MODEL_MAP`, (3) default `AgentLLM`. Mọi call record cost qua `observability.cost`.
 
-```python
-svc = container.embedding
-vecs = await svc.embed(["query a", "query b"])
-print(svc.cache_stats)        # {"hits": …, "misses": …, "skips": …, "size": …, "hit_rate": …}
-```
+## Config
 
-Hot paths benefit:
+`settings.*` mà module này đọc (từ `src/agentrag/config.py`):
 
-- HyDE rewrite + dense kNN call same text in different modes
-- Repeated sub-queries during agent decide loop
-- ES `_RESULT_CACHE` miss but query-text identical
-
----
-
-## VisionService
-
-```python
-if container.vision.enabled:
-    desc = await container.vision.describe(image_bytes, mime="image/jpeg")
-```
-
-Khi `VISION_PROVIDER` chưa set → `enabled=False`, gọi `describe()` raises.
-
----
-
-## StorageService
-
-Read-mostly facade — write CRUD vẫn đi qua `PostgresStore` / `ElasticsearchStore`
-trực tiếp trong ingestion pipeline.
-
-| Method | Mô tả |
-|---|---|
-| `get_chunks_by_hashes(hashes)` | ES bulk lookup |
-| `list_documents(limit=20)` | PG document index |
-| `get_document_by_title(title)` | PG document lookup |
-
----
-
-## RetrievalService
-
-Reasoning Plane gọi đây để search. Router/reranker là quyền Reasoning —
-service này filter-only.
-
-```python
-hits = await container.retrieval.search(
-    query=q,
-    mode="hybrid_kg",
-    top_k=8,
-    filters={"systems": ["tim_mach"]},        # generic
-    # OR
-    system_override="tim_mach",                # explicit
-    specialty_override=["noi"],
-)
-```
-
-Nội bộ wrap `FederatedRetriever(base=ElasticsearchRetriever, router=None)`.
-DomainRouter chạy ngoài (Reasoning code) rồi forward kết quả qua override.
-
----
-
-## LLMGateway
-
-Điểm duy nhất gọi LLM. Hỗ trợ task-based routing + cost tracking.
-
-| Method | Mô tả |
-|---|---|
-| `json_response(system, user, task)` | LLM → parse JSON → đo latency, record cost |
-| `vision_response(system, text, image_bytes, mime, task)` | Multimodal (text + image) cho `ImageParser` |
-| `_resolve_client(task)` | Trả `AgentLLM` đúng model cho task |
-
-Task routing (`LLM_TASK_MODEL_MAP`): `{"classify": "model-a", "answer": "model-b"}`.
-
----
-
-## Cost tracking (S1)
-
-Ledger ở `src/agentrag/observability/cost.py`:
-
-- Mỗi call record `(id, timestamp, task, model, latency_ms, in_tokens, out_tokens, usd, usage_source)`.
-- Ring buffer 5000 calls — clear on restart.
-- USD: provider `usage.*` khi có, else char-density heuristic.
-- Pricing: Gemini 2.5 / 1.5 + OpenAI 4o/4o-mini. Unknown → Gemini 2.5 Flash.
-
-API:
-
-```
-GET  /on/api/metrics/cost              total + per-task + per-model (avg, p50, p95, USD)
-GET  /on/api/metrics/cost/recent       newest-first feed, ?limit=&since=
-POST /on/api/metrics/cost/reset
-```
-
-UI dashboard: `/cost` page (S1, auto-refresh 5s).
-
----
-
-## SecurityService
-
-| Method | Mô tả |
-|---|---|
-| `validate_chat_request(question, document_title)` | Kiểm tra request hợp lệ |
-| `filter_tool_results(tool_output, document_title)` | Lọc kết quả ngoài scope |
-
----
-
-## ContextAssemblyService
-
-Merge + dedup theo `content_hash` + rank theo score + source boost + trim
-theo token budget + lost-in-middle reorder.
-
-Source boost: `structmem +0.08`, `synthesis +0.07`, `hybrid +0.06`, `sparse +0.03`.
-
-Trim: `AGENT_MAX_CONTEXT_TOKENS` (token-aware) — fallback `AGENT_MAX_CONTEXT_CHUNKS`.
-
-Reorder (Liu 2023): khi `AGENT_LOST_IN_MIDDLE_REORDER=true`, `[r1,r2,r3,r4,r5]` → `[r1,r3,r5,r4,r2]`.
-
----
-
-## reasoning_knowledge.py (R)
-
-Pure Reasoning helpers — không IO, không LLM:
-
-| Function | Mô tả |
-|---|---|
-| `expand_query(query, intent)` | Rule-based keyword expansion từ classified intent |
-| `select_retrieval_mode(intent)` | Intent → `hybrid_kg` / `hybrid` |
-| `mode_to_tool(mode)` | Mode → AgentTools tool name |
-| `normalize_tool_call(name, input, question, document_title, valid_tools)` | Fallback `search_hybrid_kg` khi LLM emit unknown tool |
-
----
-
-## Config liên quan
-
-| Key | Default | Mô tả |
+| Key | Default | Đọc bởi |
 |---|---|---|
-| `LLM_ROUTING_ENABLED` | `false` | Task-based model routing |
-| `LLM_TASK_MODEL_MAP` | `"{}"` | JSON map task → model. Tasks: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `domain_router` |
-| `LLM_COST_TRACKING_ENABLED` | `false` | Bật ledger + `/metrics/cost` |
-| `LLM_LARGE_CONTEXT_MODEL` / `_THRESHOLD` | `None` / `100000` | Auto-switch khi prompt vượt threshold |
-| `VISION_PROVIDER` / `VISION_MODEL` / `VISION_BASE_URL` | `None` | Vision multimodal |
-| `VISION_TIMEOUT_SECONDS` | `180` | Llava cold-start tolerance |
-| `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Packed-context budget |
-| `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Legacy fallback when token budget=0 |
-| `AGENT_LOST_IN_MIDDLE_REORDER` | `true` | Best chunks at start + end |
-| `TAGGING_ENABLED` | `true` | S5 — SectionTagger trong ingest pipeline |
-| `DOMAIN_FILTER_ENABLED` | `true` | S5 — Federated filter active |
-| `DOMAIN_ROUTER_CONFIDENCE_THRESHOLD` | `0.7` | S5 — top-1 vs top-K |
-| `DOMAIN_ROUTER_TOP_K` | `3` | S5 — broadened federation |
+| `LLM_ROUTING_ENABLED` | `False` | `llm_gateway` — bật per-task model routing |
+| `LLM_TASK_MODEL_MAP` | `"{}"` | `llm_gateway` — JSON map task→model (tasks: classify, decide, schema_discovery, sql_compile, synthesize, answer, mindmap, summary, domain_router, …) |
+| `LLM_LARGE_CONTEXT_MODEL` / `LLM_LARGE_CONTEXT_THRESHOLD` | `None` / `100000` | `llm_gateway` — auto-switch khi prompt vượt threshold tokens |
+| `LLM_FALLBACK_MODEL` | `"qwen2.5:7b-instruct"` | `llm_gateway.vision_response` — fallback khi model not found |
+| `LLM_COST_TRACKING_ENABLED` | `False` | gate cho ledger + `/metrics/cost` (record ở `observability.cost`) |
+| `VISION_PROVIDER` / `VISION_MODEL` / `VISION_BASE_URL` | `None` | `vision_service`, `llm_gateway._get_vision_client` (fallback `EXTRACTION_PROVIDER`/`EXTRACTION_MODEL`) |
+| `VISION_TIMEOUT_SECONDS` | `180` | `llm_gateway` — llava cold-start tolerance |
+| `AGENT_MAX_OUTPUT_TOKENS` | `131072` | `llm_gateway` — `max_tokens` cho vision calls |
+| `QUERY_REWRITE_ENABLED` / `QUERY_REWRITE_HYDE` / `QUERY_REWRITE_DECOMPOSE` | `False` / `True` / `False` | `knowledge_service` — HyDE + multi-hop decompose |
+| `AGENT_TOOL_TOP_K` | `5` | `knowledge_service`, `reasoning_knowledge` — default top_k |
+| `RETRIEVAL_RRF_K` | `60` | `knowledge_service._decomposed_search` — RRF constant |
+| `SEMANTIC_CACHE_ENABLED` | `False` | gate (read trong `elasticsearch_retriever`, không trong `semantic_cache.py`) |
+| `SEMANTIC_CACHE_THRESHOLD` | `0.97` | cosine threshold để `SemanticCache` coi là hit |
+| `SEMANTIC_CACHE_TTL_SECONDS` | `120` | TTL entry |
+| `SEMANTIC_CACHE_MAX_ITEMS` | `256` | LRU bound |
+
+`EmbeddingService` cache (`cache_size=2048`, `cache_ttl_s=600`, `cache_max_batch=8`) là constructor
+args, **không** phải env settings.
+
+## Recent additions (2026-06)
+
+- **`semantic_cache.py` (`SemanticCache`)** — tier-2 retrieval cache mới, default-OFF qua
+  `SEMANTIC_CACHE_ENABLED`. KHÔNG được wire trong `services/` — nó được instantiate bởi
+  `retrieval/elasticsearch_retriever.py` (`search_cached`). `get(embedding)` quét entry gần nhất
+  còn hạn có `cosine >= SEMANTIC_CACHE_THRESHOLD`; hit gắn `semantic_cache_hit=True` lên payload.
+  Per-worker, không distributed. Cache bypass khi query có `filters` hoặc `document_title`
+  (tránh cross-scope leak). Signal `semantic_cache_hit` được `agent/graph_service.py` đọc và bubble
+  lên chat response.
+- **`LLMGateway.text_response` / `json_response_multimodal`** là đường dùng bởi recent RAG work:
+  `ingestion/contextualizer.py` + `ingestion/raptor.py` gọi `text_response`; fast-path `fast_answer`
+  node trong `graph_service.py` gọi `text_response`; CRAG/multi-hop answer trong `agent/service.py`
+  gọi `json_response`/`json_response_multimodal`. Các flag gate (Contextual Retrieval, RAPTOR, CRAG,
+  fast-path) nằm ở các module đó, không ở `services/`.
+
+## Gotchas
+
+- **`semantic_cache.py` không tự đọc settings và không tự bật.** Nó là data-structure thuần;
+  gate `SEMANTIC_CACHE_ENABLED` + 3 settings được áp ở `elasticsearch_retriever.__init__`. Đừng tìm
+  flag check bên trong file này.
+- **Hai facade cho retrieval.** `RetrievalService` (mới, S4, container-driven, filters-only) vs
+  `KnowledgeService` (legacy, ôm cả reasoning: HyDE/decompose/intent-mode, gọi `AgentTools` trực
+  tiếp). Code mới dùng `RetrievalService` + `reasoning_knowledge.py` helpers; `KnowledgeService`
+  còn sống vì MCP (`mcp/app.py`, `mcp/server.py`) và `structured/pipeline.py` vẫn dựa vào nó. Logic
+  trong hai file trùng nhau (vd `_select_retrieval_mode` vs `select_retrieval_mode`) — sửa thì sửa cả hai.
+- **`VisionService.describe()`/`parse_file()` raise nếu disabled.** `enabled` chỉ True khi cả
+  `VISION_PROVIDER` lẫn `VISION_MODEL` set. Reasoning code phải check `c.vision.enabled` trước.
+- **Cost ledger không nằm trong module này.** `LLMGateway` chỉ gọi `observability.cost.record_llm_call`
+  / `cost_summary`. Ledger backing là Valkey stream (`maxlen` xấp xỉ), fallback process-local
+  `deque` khi Valkey unreachable — KHÔNG phải ring buffer in-memory cố định, và KHÔNG nhất thiết mất
+  khi restart. USD = provider `usage.*` khi có (`usage_source="provider"`), else char-density estimate
+  (`usage_source="estimate"`). API: `GET /metrics/cost`, `GET /metrics/cost/recent`,
+  `POST /metrics/cost/reset` (`adapter/routers/config.py`).
+- **`domain_router` sống trong container nhưng là Reasoning service** — đặt ở đây chỉ để singleton-share.
+  `RetrievalService` cố ý `router=None`: routing xảy ra ngoài rồi forward qua `system_override`.
+- **`container.override()` raises `KeyError`** nếu key không khớp một property name (`llm`,
+  `embedding`, `vision`, `storage`, `retrieval`, `domain_router`).
+- **`__init__.py` lazy re-export** (PEP 562): import một leaf submodule không kéo theo
+  `knowledge_service`. Đừng đổi sang eager import — sẽ tái lập circular import qua `agent.tools`.

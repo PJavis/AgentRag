@@ -85,6 +85,21 @@ _INNER = AgentService()
 _CHECKPOINTER = InMemorySaver()
 
 
+def _chain_query(subquery: str, prior_output: dict[str, Any] | None) -> str:
+    """Multi-hop chaining (WS3): seed a dependent sub-query with the top snippet
+    from the previous hop so later hops build on earlier answers instead of
+    being retrieved blind."""
+    if not prior_output:
+        return subquery
+    hits = prior_output.get("hits") or []
+    if not hits:
+        return subquery
+    snippet = (hits[0].get("content") or "")[:240]
+    if not snippet:
+        return subquery
+    return f"Bối cảnh: {snippet}\n\nCâu hỏi: {subquery}"
+
+
 # ── Nodes ────────────────────────────────────────────────────────────────────
 
 async def validate(state: ChatState) -> dict[str, Any]:
@@ -177,36 +192,58 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
     doc_title = state.get("document_title")
     classifier_output = state.get("classifier_output")
 
-    # Plan subqueries first (parallel).
+    # Plan subqueries: parallel (default) or sequential-chained (multi-hop).
     if state.get("plan_subqueries"):
         started = time.perf_counter()
-        results = await _asyncio.gather(
-            *[
-                _INNER.knowledge.bootstrap_search(
-                    query=sq, document_title=doc_title, intent=classifier_output,
+        subqueries = state["plan_subqueries"]
+        if settings.AGENT_MULTIHOP_ENABLED:
+            prior_out: dict[str, Any] | None = None
+            for sq in subqueries:
+                chained = _chain_query(sq, prior_out)
+                try:
+                    sub_in, sub_out = await _INNER.knowledge.bootstrap_search(
+                        query=chained, document_title=doc_title, intent=classifier_output,
+                    )
+                except BaseException:
+                    continue
+                sub_out = _INNER.security.filter_tool_results(
+                    tool_output=sub_out, document_title=doc_title
                 )
-                for sq in state["plan_subqueries"]
-            ],
-            return_exceptions=True,
-        )
-        tool_latency_ms += (time.perf_counter() - started) * 1000
-        for sq, res in zip(state["plan_subqueries"], results):
-            if isinstance(res, BaseException):
-                continue
-            sub_in, sub_out = res
-            sub_out = _INNER.security.filter_tool_results(
-                tool_output=sub_out, document_title=doc_title
+                prior_out = sub_out
+                fp = _INNER.knowledge.fingerprint_call("search_hybrid_kg", sub_in)
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                tool_trace.append({
+                    "tool_name": "search_hybrid_kg", "tool_input": sub_in,
+                    "tool_output": sub_out, "plan_subquery": sq, "multihop": True,
+                })
+        else:
+            results = await _asyncio.gather(
+                *[
+                    _INNER.knowledge.bootstrap_search(
+                        query=sq, document_title=doc_title, intent=classifier_output,
+                    )
+                    for sq in subqueries
+                ],
+                return_exceptions=True,
             )
-            fp = _INNER.knowledge.fingerprint_call("search_hybrid_kg", sub_in)
-            if fp in seen:
-                continue
-            seen.add(fp)
-            tool_trace.append({
-                "tool_name": "search_hybrid_kg",
-                "tool_input": sub_in,
-                "tool_output": sub_out,
-                "plan_subquery": sq,
-            })
+            for sq, res in zip(subqueries, results):
+                if isinstance(res, BaseException):
+                    continue
+                sub_in, sub_out = res
+                sub_out = _INNER.security.filter_tool_results(
+                    tool_output=sub_out, document_title=doc_title
+                )
+                fp = _INNER.knowledge.fingerprint_call("search_hybrid_kg", sub_in)
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                tool_trace.append({
+                    "tool_name": "search_hybrid_kg", "tool_input": sub_in,
+                    "tool_output": sub_out, "plan_subquery": sq,
+                })
+        tool_latency_ms += (time.perf_counter() - started) * 1000
 
     # Always run a final bootstrap on the original question.
     boot_in, boot_out = await _INNER.knowledge.bootstrap_search(

@@ -10,7 +10,7 @@
 # ── Symptoms / triệu chứng ──────────────────────────────────────────────────
 - canonical: Đau ngực
   synonyms: [đau tức ngực, đau vùng ngực, thống tâm, chest pain]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [noi, cap_cuu, tim_mach]
   icd10: R07.4
 
@@ -241,30 +241,30 @@
 
 - canonical: Truyền dịch
   synonyms: [IV fluids, dịch truyền, intravenous fluids]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [cap_cuu, noi, hoi_suc]
 
 # ── Drugs / Dược ────────────────────────────────────────────────────────────
 - canonical: Thuốc giảm đau
   synonyms: [analgesic, painkiller, NSAID]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [duoc_ly, noi]
 
 - canonical: Opioid
   synonyms: [morphin, opiate, narcotic]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [duoc_ly, cap_cuu]
   parent: Thuốc giảm đau
 
 - canonical: Paracetamol
   synonyms: [acetaminophen, tylenol]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [duoc_ly]
   parent: Thuốc giảm đau
 
 - canonical: Kháng sinh
   synonyms: [antibiotic, kháng khuẩn]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [duoc_ly, truyen_nhiem]
 
 # ── Emergencies / Cấp cứu ──────────────────────────────────────────────────
@@ -296,12 +296,12 @@
 # ── Diagnostic / Cận lâm sàng ──────────────────────────────────────────────
 - canonical: Khám lâm sàng
   synonyms: [physical examination, thăm khám]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [general]
 
 - canonical: Tiền sử bệnh
   synonyms: [bệnh sử, medical history, past medical history]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [general]
 
 - canonical: Xét nghiệm máu
@@ -311,22 +311,22 @@
 
 - canonical: X-quang
   synonyms: [X-ray, chụp X quang, radiograph]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [chan_doan_hinh_anh]
 
 - canonical: CT scan
   synonyms: [chụp CT, computed tomography, chụp cắt lớp]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [chan_doan_hinh_anh]
 
 - canonical: MRI
   synonyms: [chụp cộng hưởng từ, magnetic resonance imaging]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [chan_doan_hinh_anh]
 
 - canonical: Siêu âm
   synonyms: [ultrasound, sonography]
-  system_tag: null
+  system_tag: da_he
   specialty_tags: [chan_doan_hinh_anh]
 
 - canonical: Điện tâm đồ
@@ -344,3 +344,108 @@
   synonyms: [obstetric emergency, băng huyết, tiền sản giật]
   system_tag: sinh_duc
   specialty_tags: [san, cap_cuu]
+
+# ── Huyết học / Tiết niệu / Nội tiết (mở rộng) ──────────────────────────────
+- canonical: Thiếu máu
+  synonyms: [anemia, thiếu máu thiếu sắt, iron deficiency anemia]
+  system_tag: huyet_hoc
+  specialty_tags: [noi, xet_nghiem]
+  icd10: D64.9
+
+- canonical: Bệnh bạch cầu
+  synonyms: [leukemia, ung thư máu, bạch cầu cấp]
+  system_tag: huyet_hoc
+  specialty_tags: [noi, ung_buou]
+  icd10: C95.9
+
+- canonical: Suy thận mạn
+  synonyms: [chronic kidney disease, CKD, bệnh thận mạn, suy thận mạn tính]
+  system_tag: tiet_nieu
+  specialty_tags: [noi]
+  icd10: N18.9
+
+- canonical: Nhiễm khuẩn tiết niệu
+  synonyms: [urinary tract infection, UTI, viêm đường tiết niệu]
+  system_tag: tiet_nieu
+  specialty_tags: [noi, truyen_nhiem]
+  icd10: N39.0
+
+- canonical: Sỏi thận
+  synonyms: [kidney stone, sỏi tiết niệu, nephrolithiasis]
+  system_tag: tiet_nieu
+  specialty_tags: [ngoai, noi]
+  icd10: N20.0
+
+- canonical: Cường giáp
+  synonyms: [hyperthyroidism, bệnh Basedow, nhiễm độc giáp]
+  system_tag: noi_tiet
+  specialty_tags: [noi]
+  icd10: E05.9
+
+- canonical: Suy giáp
+  synonyms: [hypothyroidism, nhược giáp]
+  system_tag: noi_tiet
+  specialty_tags: [noi]
+  icd10: E03.9
+
+# ── Tâm thần / Miễn dịch / Da liễu / Mắt-TMH ────────────────────────────────
+- canonical: Trầm cảm
+  synonyms: [depression, rối loạn trầm cảm, major depressive disorder]
+  system_tag: tam_than
+  specialty_tags: [noi]
+  icd10: F32.9
+
+- canonical: Rối loạn lo âu
+  synonyms: [anxiety disorder, lo âu, anxiety]
+  system_tag: tam_than
+  specialty_tags: [noi]
+  icd10: F41.9
+
+- canonical: Lupus ban đỏ hệ thống
+  synonyms: [systemic lupus erythematosus, SLE, lupus]
+  system_tag: mien_dich
+  specialty_tags: [noi]
+  icd10: M32.9
+
+- canonical: Viêm da
+  synonyms: [dermatitis, eczema, viêm da cơ địa]
+  system_tag: da_lieu
+  specialty_tags: [noi]
+  icd10: L30.9
+
+- canonical: Mày đay
+  synonyms: [urticaria, nổi mề đay, hives]
+  system_tag: da_lieu
+  specialty_tags: [noi, mien_dich]
+  icd10: L50.9
+
+- canonical: Viêm tai giữa
+  synonyms: [otitis media, nhiễm trùng tai giữa]
+  system_tag: mat_tmh
+  specialty_tags: [noi, nhi]
+  icd10: H66.9
+
+- canonical: Viêm xoang
+  synonyms: [sinusitis, viêm mũi xoang, rhinosinusitis]
+  system_tag: mat_tmh
+  specialty_tags: [noi]
+  icd10: J32.9
+
+# ── Nhi khoa / Tiêu hóa / Sản (mở rộng) ─────────────────────────────────────
+- canonical: Tiêu chảy cấp
+  synonyms: [acute diarrhea, tiêu chảy, gastroenteritis]
+  system_tag: tieu_hoa
+  specialty_tags: [nhi, truyen_nhiem, noi]
+  icd10: A09
+
+- canonical: Suy dinh dưỡng
+  synonyms: [malnutrition, thiếu dinh dưỡng, undernutrition]
+  system_tag: da_he
+  specialty_tags: [nhi, noi]
+  icd10: E46
+
+- canonical: Tiền sản giật
+  synonyms: [pre-eclampsia, nhiễm độc thai nghén]
+  system_tag: sinh_duc
+  specialty_tags: [san, cap_cuu]
+  icd10: O14.9

@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     RETRIEVAL_RERANK_BASE_URL: str | None = None
     RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
 
-    AGENT_MAX_STEPS: int = 4
+    AGENT_MAX_STEPS: int = 3   # serial decide→tool round-trips; lower = faster p50
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10

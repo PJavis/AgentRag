@@ -672,13 +672,51 @@ class GraphAgentService:
         model_override: str | None = None,
         verbosity: str | None = None,
     ) -> AsyncIterator[str]:
-        """Streaming not yet implemented for v2 — fall back to inner."""
-        async for chunk in _INNER.chat_stream(
-            question=question,
-            document_title=document_title,
-            chat_history=chat_history or [],
-            conversation_id=conversation_id,
-            model_override=model_override,
-            verbosity=verbosity,
-        ):
-            yield chunk
+        """Run the FULL LangGraph (classify, fast-path, CRAG critique, abstain,
+        grounding) then stream the grounded answer. Preserves the SSE protocol
+        (status / token / done / error). The router sets domain_filter +
+        document_scope via ContextVar before calling this, so graph nodes pick
+        them up."""
+        def _sse(event: str, data: Any) -> str:
+            return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        try:
+            from src.agentrag.agent.service import _is_verbose_followup
+            effective_question = question
+            if _is_verbose_followup(question) and chat_history and len(question.strip()) < 80:
+                prior_user = next(
+                    (m.get("content", "") for m in reversed(chat_history)
+                     if m.get("role") == "user" and (m.get("content") or "").strip() != question.strip()),
+                    None,
+                )
+                if prior_user:
+                    effective_question = f"{prior_user} (yêu cầu chi tiết hơn)"
+
+            yield _sse("status", {"step": "retrieve"})
+            initial: ChatState = {
+                "question": effective_question,
+                "document_title": document_title,
+                "chat_history": chat_history or [],
+                "conversation_id": conversation_id,
+                "verbosity": verbosity,
+            }
+            config = {"configurable": {"thread_id": conversation_id or f"anon-{id(initial)}"}}
+            state = await _GRAPH.ainvoke(initial, config=config)
+
+            answer = state.get("answer", "") or ""
+            yield _sse("status", {"step": "answer"})
+            for ch in answer:
+                yield _sse("token", {"text": ch})
+
+            yield _sse("done", {
+                "citations": state.get("citations", []),
+                "highlights": state.get("highlights", []),
+                "reasoning_path": state.get("reasoning_path", "semantic"),
+                "sql_query": state.get("sql_query"),
+                "tool_trace": [
+                    {"tool_name": s.get("tool_name"), "tool_input": s.get("tool_input")}
+                    for s in (state.get("tool_trace") or [])
+                ],
+                **_message_signals(state.get("tool_trace")),
+            })
+        except Exception as exc:
+            yield _sse("error", {"message": str(exc)})

@@ -704,8 +704,11 @@ class GraphAgentService:
 
             answer = state.get("answer", "") or ""
             yield _sse("status", {"step": "answer"})
-            for ch in answer:
-                yield _sse("token", {"text": ch})
+            # The graph already produced the whole answer; replay it as ~40-char
+            # token frames (typewriter UX) instead of one frame per char, which
+            # would emit thousands of SSE writes for a long answer.
+            for i in range(0, len(answer), 40):
+                yield _sse("token", {"text": answer[i:i + 40]})
 
             yield _sse("done", {
                 "citations": state.get("citations", []),

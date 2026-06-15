@@ -1,0 +1,17 @@
+[
+  {"id": "trivia-fr-capital", "question": "Thủ đô của nước Pháp là gì?", "note": "general trivia, out-of-domain (geography), not in medical corpus"},
+  {"id": "trivia-jp-capital", "question": "What is the capital city of Japan?", "note": "general trivia, geography, out-of-domain"},
+  {"id": "trivia-mount-everest", "question": "Ngọn núi cao nhất thế giới tên là gì?", "note": "general trivia, geography, out-of-domain"},
+  {"id": "trivia-speed-light", "question": "What is the speed of light in a vacuum?", "note": "physics trivia, out-of-domain"},
+  {"id": "tech-react-usestate", "question": "React useState hook làm gì?", "note": "unrelated software engineering question"},
+  {"id": "tech-docker-vs-vm", "question": "What is the difference between a Docker container and a virtual machine?", "note": "unrelated DevOps question"},
+  {"id": "tech-python-gil", "question": "Python GIL (Global Interpreter Lock) ảnh hưởng đến đa luồng như thế nào?", "note": "unrelated programming-language internals question"},
+  {"id": "tech-tcp-handshake", "question": "Explain the TCP three-way handshake.", "note": "unrelated networking question"},
+  {"id": "fab-zxylopraxin", "question": "Thuốc Zxylopraxin-9 dùng để làm gì?", "note": "fabricated drug name; correct answer is to abstain"},
+  {"id": "fab-glor-syndrome", "question": "What are the symptoms of Glorbensteen syndrome?", "note": "fabricated disease; correct answer is to abstain"},
+  {"id": "fab-quzium", "question": "Nguyên tố Quzium có số nguyên tử là bao nhiêu?", "note": "fabricated chemical element; should abstain"},
+  {"id": "fab-vextra-clinic", "question": "What were the results of the 2031 Vextramol clinical trial?", "note": "fabricated trial in the future; should abstain"},
+  {"id": "fab-blorbocide", "question": "Liều dùng khuyến cáo của Blorbocide cho người lớn là bao nhiêu?", "note": "fabricated medication; should abstain"},
+  {"id": "trivia-shakespeare", "question": "Who wrote the play Hamlet?", "note": "literature trivia, out-of-domain"},
+  {"id": "trivia-largest-ocean", "question": "Đại dương lớn nhất trên Trái Đất là đại dương nào?", "note": "geography trivia, out-of-domain"}
+]

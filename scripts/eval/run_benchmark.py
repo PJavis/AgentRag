@@ -54,24 +54,88 @@ def _pct(values: list[float], p: float) -> float:
     return round(s[k], 1)
 
 
-async def _ingest_gold(examples) -> None:
-    """Write unique gold contexts to a temp corpus and ingest them."""
+async def _ingest_gold(examples, group_size: int = 0) -> None:
+    """Write gold contexts to a temp corpus and ingest them.
+
+    group_size <= 0 writes one unique context per .md (legacy: 1 chunk/doc, so
+    RAPTOR never builds and there are no cross-passage distractors). group_size
+    > 0 merges that many unique contexts per doc, producing multi-chunk docs
+    that activate RAPTOR and introduce distractors.
+    """
     from src.agentrag.ingestion.pipeline import ingest_folder
+    from src.agentrag.eval.refusal import group_contexts
 
     tmp = Path(tempfile.mkdtemp(prefix="bench_corpus_"))
     try:
         seen: set[str] = set()
+        unique_contexts: list[str] = []
         for ex in examples:
             for ctx in ex.gold_contexts:
                 h = hashlib.sha1(ctx.encode("utf-8")).hexdigest()[:16]
                 if h in seen:
                     continue
                 seen.add(h)
-                (tmp / f"{h}.md").write_text(ctx, encoding="utf-8")
-        print(f"[INFO] ingesting {len(seen)} unique gold contexts...")
+                unique_contexts.append(ctx)
+        docs = group_contexts(unique_contexts, group_size)
+        for i, doc in enumerate(docs):
+            (tmp / f"{i}.md").write_text(doc, encoding="utf-8")
+        print(
+            f"[INFO] ingesting {len(docs)} docs from {len(unique_contexts)} unique "
+            f"gold contexts (group_size={group_size})..."
+        )
         await ingest_folder(str(tmp))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+async def _run_refusal_eval(path: str) -> dict:
+    """Out-of-corpus refusal eval: ask questions whose answers are NOT in the
+    corpus and measure whether the system abstains (good) or hallucinates (bad).
+
+    Assumes the normal corpus is already ingested so the agent retrieves
+    *something* and must correctly judge it irrelevant. Returns the refusal_rate
+    (fraction of cases the system correctly abstained on) plus per-case detail.
+    """
+    from src.agentrag.eval.refusal import is_abstention
+
+    cases = json.loads(Path(path).read_text(encoding="utf-8"))
+    agent = get_agent_service()
+    per_case: list[dict] = []
+    abstained_n = 0
+    for c in cases:
+        qid = str(c.get("id", ""))
+        question = c.get("question", "") or ""
+        try:
+            out = await agent.chat(
+                question=question, document_title=None, conversation_id=f"refusal-{qid}"
+            )
+        except Exception as exc:  # an error is not an abstention
+            per_case.append(
+                {"id": qid, "question": question, "answer": f"ERR:{type(exc).__name__}",
+                 "abstained": False}
+            )
+            continue
+        answer = out.get("answer", "") or ""
+        abstained = is_abstention(answer, out.get("citations"))
+        if abstained:
+            abstained_n += 1
+        per_case.append(
+            {"id": qid, "question": question, "answer": answer[:200], "abstained": abstained}
+        )
+
+    n = len(cases) or 1
+    refusal_rate = round(abstained_n / n, 3)
+    return {"refusal_rate": refusal_rate, "n": len(cases), "per_case": per_case}
+
+
+def _print_refusal_table(refusal: dict) -> None:
+    print("\n" + "=" * 66)
+    print(f"  OUT-OF-CORPUS REFUSAL EVAL — n={refusal['n']}")
+    print("=" * 66)
+    print(f"  refusal_rate (correctly abstained) = {refusal['refusal_rate']:.3f}")
+    for c in refusal["per_case"]:
+        flag = "ABSTAIN" if c["abstained"] else "ANSWERED"
+        print(f"  [{flag:<8}] {c['question'][:48]:<48} → {c['answer'][:40]}")
 
 
 async def main() -> None:
@@ -82,6 +146,8 @@ async def main() -> None:
     p.add_argument("--judge-model", default=None)
     p.add_argument("--skip-ingest", action="store_true", help="reuse already-ingested corpus")
     p.add_argument("--skip-freshness", action="store_true")
+    p.add_argument("--group-size", type=int, default=0, help="merge N gold contexts per ingested doc (0=one per doc; >0 activates RAPTOR/distractors)")
+    p.add_argument("--refusal-set", help="path to a JSON list of out-of-corpus questions; runs an abstention eval after the main run")
     p.add_argument("--out", help="report path (default data/eval/benchmark_<suite>.json)")
     args = p.parse_args()
     validate_settings(settings)
@@ -93,7 +159,7 @@ async def main() -> None:
     print(f"[INFO] loaded {len(examples)} examples (suite={args.suite}, n={args.n})")
 
     if not args.skip_ingest:
-        await _ingest_gold(examples)
+        await _ingest_gold(examples, group_size=args.group_size)
 
     # ── Run the agent over every question ──
     reset_ledger()
@@ -189,6 +255,19 @@ async def main() -> None:
     fr = report["metrics"]["failure_rate"]
     print(f"  {'failure_rate':<22} {fr['value']:.3f}  (target <{fr['target']:.2f})  {'PASS' if fr['meets_target'] else 'FAIL'}")
     print(f"  {'freshness':<22} {'PASS' if freshness.get('pass') else ('SKIP' if freshness.get('skipped') else 'FAIL')}  {freshness.get('detail','')}")
+
+    # ── Out-of-corpus refusal eval (optional) ──
+    # The suite corpus is already ingested above, so the agent retrieves
+    # *something* and must correctly find it irrelevant for these questions.
+    if args.refusal_set:
+        print(f"\n[INFO] running refusal eval from {args.refusal_set}...")
+        try:
+            refusal = await _run_refusal_eval(args.refusal_set)
+            report["refusal"] = refusal
+            _print_refusal_table(refusal)
+        except Exception as exc:
+            report["refusal"] = {"error": f"{type(exc).__name__}: {exc}"}
+            print(f"[WARN] refusal eval failed: {type(exc).__name__}: {exc}")
 
     out_path = Path(args.out) if args.out else ROOT / "data" / "eval" / f"benchmark_{args.suite}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)

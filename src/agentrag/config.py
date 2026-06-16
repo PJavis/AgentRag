@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     RETRIEVAL_RERANK_MODEL: str | None = None
     RETRIEVAL_RERANK_BASE_URL: str | None = None
     RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
+    #: Relevance-floor gate — drop retrieved candidates whose reranker relevance
+    #: (sigmoid of the bge cross-encoder score, 0–1) is below the floor BEFORE the
+    #: answer sees them. Prunes distractors; an out-of-corpus query whose top hit
+    #: is below floor → empty context → clean abstain (no distractor citations).
+    #: Only effective with RETRIEVAL_RERANK_BACKEND=local_cross_encoder (the only
+    #: backend that emits a score). Default OFF (changes answer behavior).
+    RETRIEVAL_RELEVANCE_GATE_ENABLED: bool = False
+    RETRIEVAL_RELEVANCE_FLOOR: float = 0.3
 
     AGENT_MAX_STEPS: int = 3   # serial decide→tool round-trips; lower = faster p50
     AGENT_TOOL_TOP_K: int = 5

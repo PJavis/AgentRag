@@ -14,6 +14,12 @@ from src.agentrag.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _sigmoid(x: float) -> float:
+    import math
+
+    return 1.0 / (1.0 + math.exp(-x)) if x >= 0 else math.exp(x) / (1.0 + math.exp(x))
+
+
 class LLMReranker:
     def __init__(self):
         self.enabled = settings.RETRIEVAL_RERANK_ENABLED
@@ -232,9 +238,14 @@ class LLMReranker:
             return [], f"local_cross_encoder_invalid_scores:{type(exc).__name__}"
 
         ordered_ids: list[str] = []
-        for idx, _score in indexed:
+        for idx, score in indexed:
             if not (0 <= idx < len(scoped)):
                 continue
+            # pairs[idx] was built from scoped[idx]; attach the normalized
+            # relevance (sigmoid → [0,1]) onto that SAME dict. _apply_ordered_ids
+            # reorders these same dict objects, so rerank_score rides through to
+            # the returned hits and the relevance-floor gate downstream.
+            scoped[idx]["rerank_score"] = _sigmoid(float(score))
             item_id = scoped[idx].get("id")
             if item_id is not None:
                 ordered_ids.append(str(item_id))

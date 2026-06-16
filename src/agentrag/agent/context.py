@@ -5,6 +5,19 @@ from typing import Any
 from src.agentrag.config import settings
 
 
+def apply_relevance_floor(items: list[dict[str, Any]], floor: float) -> list[dict[str, Any]]:
+    """Drop candidates whose reranker relevance (rerank_score, sigmoid 0–1) is
+    below floor. No-op when NO item carries a score (reranker off / non
+    cross-encoder backend) — never gate on a missing signal. Items lacking a
+    score while others have one are KEPT (conservative — don't drop on missing)."""
+    if not any(it.get("rerank_score") is not None for it in items):
+        return items
+    return [
+        it for it in items
+        if it.get("rerank_score") is None or float(it.get("rerank_score") or 0.0) >= floor
+    ]
+
+
 def _estimate_tokens(text: str) -> int:
     """Cheap char-density token estimate; matches observability/cost.py."""
     if not text:
@@ -50,6 +63,11 @@ class ContextAssembler:
         # applied to the prompt copy only (see service._answer), so the returned
         # packed_context stays in descending-relevance order for eval + citations.
         ranked = await self._stage_global_rerank(question, ranked)
+        # Relevance-floor gate (default OFF): drop distractors below the rerank
+        # floor BEFORE the answer node sees them. No-op unless a cross-encoder
+        # rerank_score is present, so it only bites with local_cross_encoder on.
+        if settings.RETRIEVAL_RELEVANCE_GATE_ENABLED:
+            ranked = apply_relevance_floor(ranked, settings.RETRIEVAL_RELEVANCE_FLOOR)
         packed = self._stage_citation_pack(ranked)
         return {
             "retrieved": retrieved,
@@ -211,6 +229,9 @@ class ContextAssembler:
                 "content_hash": item.get("content_hash"),
                 "segment_type": item.get("segment_type", "text"),
                 "node_level": item.get("node_level", 0),
+                # Cross-encoder relevance (sigmoid 0–1) when the local reranker
+                # ran; None otherwise. Exposed for gate tuning / eval.
+                "rerank_score": item.get("rerank_score"),
                 "context_text": item.get("context_text"),
                 "page_start": page_start,
                 "page_end": page_end,

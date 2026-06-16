@@ -96,12 +96,12 @@ async def _run_refusal_eval(path: str) -> dict:
     *something* and must correctly judge it irrelevant. Returns the refusal_rate
     (fraction of cases the system correctly abstained on) plus per-case detail.
     """
-    from src.agentrag.eval.refusal import is_abstention
+    from src.agentrag.eval.refusal import classify_refusal
 
     cases = json.loads(Path(path).read_text(encoding="utf-8"))
     agent = get_agent_service()
     per_case: list[dict] = []
-    abstained_n = 0
+    counts = {"abstained": 0, "hedged_cited": 0, "hallucinated": 0, "empty": 0}
     for c in cases:
         qid = str(c.get("id", ""))
         question = c.get("question", "") or ""
@@ -109,33 +109,42 @@ async def _run_refusal_eval(path: str) -> dict:
             out = await agent.chat(
                 question=question, document_title=None, conversation_id=f"refusal-{qid}"
             )
-        except Exception as exc:  # an error is not an abstention
+        except Exception as exc:  # an error is not a refusal — count as empty
             per_case.append(
                 {"id": qid, "question": question, "answer": f"ERR:{type(exc).__name__}",
-                 "abstained": False}
+                 "verdict": "empty"}
             )
+            counts["empty"] += 1
             continue
         answer = out.get("answer", "") or ""
-        abstained = is_abstention(answer, out.get("citations"))
-        if abstained:
-            abstained_n += 1
+        verdict = classify_refusal(answer, out.get("citations"))
+        counts[verdict] += 1
         per_case.append(
-            {"id": qid, "question": question, "answer": answer[:200], "abstained": abstained}
+            {"id": qid, "question": question, "answer": answer[:200], "verdict": verdict}
         )
 
     n = len(cases) or 1
-    refusal_rate = round(abstained_n / n, 3)
-    return {"refusal_rate": refusal_rate, "n": len(cases), "per_case": per_case}
+    # refusal_rate = cleanly abstained; hallucination_rate = the DANGEROUS failure
+    # (confident answer to an out-of-corpus question). hedged_cited = safe-but-messy.
+    return {
+        "n": len(cases),
+        "refusal_rate": round(counts["abstained"] / n, 3),
+        "hedged_cited_rate": round(counts["hedged_cited"] / n, 3),
+        "hallucination_rate": round(counts["hallucinated"] / n, 3),
+        "counts": counts,
+        "per_case": per_case,
+    }
 
 
 def _print_refusal_table(refusal: dict) -> None:
     print("\n" + "=" * 66)
     print(f"  OUT-OF-CORPUS REFUSAL EVAL — n={refusal['n']}")
     print("=" * 66)
-    print(f"  refusal_rate (correctly abstained) = {refusal['refusal_rate']:.3f}")
+    print(f"  refusal_rate       (clean abstain, ideal)     = {refusal['refusal_rate']:.3f}")
+    print(f"  hedged_cited_rate  (hedged but cited, soft)   = {refusal['hedged_cited_rate']:.3f}")
+    print(f"  hallucination_rate (confident, DANGEROUS)     = {refusal['hallucination_rate']:.3f}  ← keep ~0")
     for c in refusal["per_case"]:
-        flag = "ABSTAIN" if c["abstained"] else "ANSWERED"
-        print(f"  [{flag:<8}] {c['question'][:48]:<48} → {c['answer'][:40]}")
+        print(f"  [{c['verdict']:<12}] {c['question'][:46]:<46} → {c['answer'][:36]}")
 
 
 async def main() -> None:

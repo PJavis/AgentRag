@@ -64,6 +64,27 @@ def _has_uncertainty(answer: str) -> bool:
     return any(m in low for m in _UNCERTAINTY_MARKERS)
 
 
+def _is_thin_context(packed_context: list[dict[str, Any]] | None, floor: float) -> bool:
+    """True when reranking produced scores AND the BEST one is below floor —
+    i.e. nothing relevant was retrieved. No-op (False) when no item carries a
+    rerank_score (reranking off / non cross-encoder backend)."""
+    scores = [c.get("rerank_score") for c in (packed_context or [])
+              if c.get("rerank_score") is not None]
+    if not scores:
+        return False
+    return max(float(s) for s in scores) < floor
+
+
+def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str, Any]] | None, floor: float) -> bool:
+    """A clean abstention over thin context should cite nothing — drop the
+    distractor citations so the refusal is clean."""
+    return (
+        settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT
+        and _is_thin_context(packed_context, floor)
+        and _has_uncertainty(answer or "")
+    )
+
+
 _VERBOSE_TOKENS = (
     "dài hơn", "chi tiết", "kỹ hơn", "kỹ càng", "tỉ mỉ", "đầy đủ hơn",
     "mở rộng", "giải thích thêm", "nói rõ", "rõ hơn", "sâu hơn",
@@ -132,6 +153,14 @@ def _answer_system_prompt(
     multi-document COMPARE mode (table + relations) when the packed context spans
     ≥2 documents.
     """
+    if settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT and _is_thin_context(packed_context, settings.RETRIEVAL_RELEVANCE_FLOOR):
+        return (
+            f"{_lang_instruction(question)} "
+            "The retrieved context does NOT contain information relevant to the question. "
+            "Reply in ONE sentence that the document/corpus has no information on this. "
+            "Do NOT answer from background knowledge, do NOT guess, and do NOT cite any source. "
+            "Do NOT return JSON."
+        )
     docs = {(c.get("document_title") or "").strip() for c in (packed_context or [])}
     docs.discard("")
     multi_doc = len(docs) >= 2

@@ -121,6 +121,12 @@ class Settings(BaseSettings):
     #: backend that emits a score). Default OFF (changes answer behavior).
     RETRIEVAL_RELEVANCE_GATE_ENABLED: bool = False
     RETRIEVAL_RELEVANCE_FLOOR: float = 0.3
+    #: Abstain-on-thin-context (answer-layer, the corrected version of the
+    #: relevance gate). When the best retrieved chunk's rerank relevance is below
+    #: RETRIEVAL_RELEVANCE_FLOOR, KEEP the context but instruct the model to abstain
+    #: ("no relevant info; don't answer from background knowledge; don't cite") AND
+    #: drop distractor citations from the resulting abstention. Default OFF (A/B it).
+    ANSWER_ABSTAIN_ON_THIN_CONTEXT: bool = False
 
     AGENT_MAX_STEPS: int = 3   # serial decide→tool round-trips; lower = faster p50
     AGENT_TOOL_TOP_K: int = 5

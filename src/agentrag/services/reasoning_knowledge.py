@@ -7,12 +7,9 @@ Concrete IO lives in `services/retrieval_service.py` and `agent/tools.py`.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from src.agentrag.config import settings
-
-if TYPE_CHECKING:
-    from src.agentrag.structured.query_classifier import ClassifierOutput
 
 
 _INTENT_TO_MODE: dict[str, str] = {
@@ -39,14 +36,14 @@ _MODE_TO_TOOL: dict[str, str] = {
 }
 
 
-def select_retrieval_mode(intent: "ClassifierOutput | None") -> str:
+def select_retrieval_mode(intent: Any | None) -> str:
     """Map classified intent → retrieval mode."""
     if intent is None or intent.intent == "semantic":
         return "hybrid_kg"
     return _INTENT_TO_MODE.get(intent.query_type or "", "hybrid_kg")
 
 
-def expand_query(query: str, intent: "ClassifierOutput | None") -> str:
+def expand_query(query: str, intent: Any | None) -> str:
     """Append rule-based keyword expansion (no LLM call)."""
     if intent is None or intent.intent == "semantic":
         return query

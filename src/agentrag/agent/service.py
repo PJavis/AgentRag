@@ -220,8 +220,6 @@ from src.agentrag.services import (
     LLMGateway,
     SecurityService,
 )
-from src.agentrag.structured.pipeline import StructuredReasoningPipeline
-from src.agentrag.structured.query_classifier import QueryIntentClassifier
 
 
 _PRIMARY_ANSWER_KEYS = (
@@ -315,12 +313,6 @@ class AgentService:
         self.knowledge = KnowledgeService(llm_gateway=self.llm_gateway)
         self.context = ContextAssemblyService()
         self.security = SecurityService()
-        self.classifier = QueryIntentClassifier(llm_gateway=self.llm_gateway)
-        self.structured_pipeline = StructuredReasoningPipeline(
-            knowledge_service=self.knowledge,
-            llm_gateway=self.llm_gateway,
-            security_service=self.security,
-        )
 
     async def _retrieve_memory(self, conversation_id: str, question: str) -> list[dict[str, Any]]:
         if not settings.CHAT_STRUCTMEM_ENABLED or not conversation_id:
@@ -373,36 +365,6 @@ class AgentService:
                 })
                 return
 
-            # ── Classify + structured path ────────────────────────────────────
-            classifier_output = None
-            if settings.STRUCTURED_REASONING_ENABLED:
-                yield _sse("status", {"step": "classify"})
-                classifier_output = await self.classifier.classify(
-                    question=question,
-                    document_title=document_title,
-                    chat_history=chat_history,
-                )
-                if classifier_output.intent == "structured":
-                    yield _sse("status", {"step": "structured_reasoning"})
-                    result = await self.structured_pipeline.run(
-                        question=question,
-                        document_title=document_title,
-                        chat_history=chat_history,
-                        query_type=classifier_output.query_type or "comparison",
-                        classifier_confidence=classifier_output.confidence,
-                    )
-                    if not result.get("_structured_fallback"):
-                        answer = result.get("answer", "")
-                        for token in answer:
-                            yield _sse("token", {"text": token})
-                        yield _sse("done", {
-                            "citations": result.get("citations", []),
-                            "reasoning_path": "structured",
-                            "sql_query": result.get("sql_query"),
-                            "timings_ms": result.get("timings_ms", {}),
-                        })
-                        return
-
             # ── Semantic retrieval ────────────────────────────────────────────
             tool_trace: list[dict[str, Any]] = []
             seen_calls: set[str] = set()
@@ -411,7 +373,7 @@ class AgentService:
             bootstrap_input, bootstrap_output = await self.knowledge.bootstrap_search(
                 query=question,
                 document_title=document_title,
-                intent=classifier_output,
+                intent=None,
             )
             bootstrap_output = self.security.filter_tool_results(
                 tool_output=bootstrap_output,
@@ -498,7 +460,6 @@ class AgentService:
                 "citations": deduped_citations,
                 "highlights": [],
                 "reasoning_path": "semantic",
-                "sql_query": None,
                 "tool_trace": [
                     {"tool_name": s["tool_name"], "tool_input": s["tool_input"]}
                     for s in tool_trace

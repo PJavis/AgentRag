@@ -5,7 +5,6 @@ Chiến lược:
   mode="markdown" — mỗi sheet thành markdown table, chunk như text thường.
                     Phù hợp khi cần đọc hiểu ngữ nghĩa dữ liệu.
   mode="sql"      — mỗi sheet thành CSV text với header rõ ràng.
-                    StructuredReasoningPipeline sẽ tự extract schema và query.
 
 Dependencies cần cài:
   uv add openpyxl        # cho .xlsx

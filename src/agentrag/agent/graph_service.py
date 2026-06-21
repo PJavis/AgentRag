@@ -7,24 +7,23 @@ orchestration, conditional branching, and checkpointing.
 Nodes:
     validate            → security gate
     memory              → ChatMemoryService.retrieve
-    chitchat_check      → conditional: chitchat fast-path vs classify
+    chitchat_check      → conditional: chitchat fast-path vs semantic
     chitchat_answer     → end
-    classify            → query intent + structured gate
-    structured_run      → SQL pipeline (conditional fallback)
     semantic_plan       → optional sub-query plan
     bootstrap           → initial hybrid_kg search
     decide              → LLM: next tool or done
     tool_exec           → run tool, append trace (loop → decide)
     assemble            → ContextAssembler.assemble
     answer              → LLM: final synthesis
+    critique            → CRAG groundedness check (gated)
+    corrective_retrieve → CRAG step-back re-retrieve (gated)
     ground              → citation grounding
 
 Conditional edges:
-    chitchat_check  → chitchat_answer | classify
-    classify        → structured_run | semantic_plan | chitchat_answer
-    structured_run  → ground (success) | semantic_plan (fallback)
+    chitchat_check  → chitchat_answer | semantic_plan
     decide          → tool_exec (more) | assemble (done or max steps)
     tool_exec       → decide (always loop back)
+    critique        → ground | corrective_retrieve (gated CRAG)
 """
 from __future__ import annotations
 
@@ -53,9 +52,6 @@ class ChatState(TypedDict, total=False):
     # Intermediate
     memory_context: list[dict[str, Any]]
     is_chitchat: bool
-    classifier_output: Any            # ClassifierOutput | None
-    intent: str                       # "chitchat" | "structured" | "semantic"
-    structured_result: Optional[dict[str, Any]]
     plan_subqueries: list[str]
     tool_trace: list[dict[str, Any]]
     seen_calls: list[str]             # set serialized as list for state pickle
@@ -78,7 +74,6 @@ class ChatState(TypedDict, total=False):
     citations: list[dict[str, Any]]
     highlights: list[str]
     reasoning_path: str
-    sql_query: Optional[str]
     timings_ms: dict[str, float]
 
 
@@ -162,35 +157,6 @@ async def chitchat_answer(state: ChatState) -> dict[str, Any]:
     }
 
 
-async def classify(state: ChatState) -> dict[str, Any]:
-    if not settings.STRUCTURED_REASONING_ENABLED:
-        return {"classifier_output": None, "intent": "semantic"}
-    output = await _INNER.classifier.classify(
-        question=state["question"],
-        document_title=state.get("document_title"),
-        chat_history=state.get("chat_history"),
-    )
-    return {
-        "classifier_output": output,
-        "intent": "structured" if output.intent == "structured" else "semantic",
-    }
-
-
-async def structured_run(state: ChatState) -> dict[str, Any]:
-    co = state.get("classifier_output")
-    result = await _INNER.structured_pipeline.run(
-        question=state["question"],
-        document_title=state.get("document_title"),
-        chat_history=state.get("chat_history"),
-        query_type=getattr(co, "query_type", None) or "comparison",
-        classifier_confidence=getattr(co, "confidence", 0.0),
-    )
-    if result.get("_structured_fallback"):
-        # Fallthrough to semantic path.
-        return {"structured_result": None, "intent": "semantic"}
-    return {"structured_result": result}
-
-
 async def semantic_plan(state: ChatState) -> dict[str, Any]:
     from src.agentrag.agent.service import _is_verbose_followup
     # Trigger planner when:
@@ -216,7 +182,6 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
     seen = set(state.get("seen_calls") or [])
     tool_latency_ms = state.get("tool_latency_ms", 0.0)
     doc_title = state.get("document_title")
-    classifier_output = state.get("classifier_output")
 
     # Plan subqueries: parallel (default) or sequential-chained (multi-hop).
     if state.get("plan_subqueries"):
@@ -228,7 +193,7 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
                 chained = _chain_query(sq, prior_out)
                 try:
                     sub_in, sub_out = await _INNER.knowledge.bootstrap_search(
-                        query=chained, document_title=doc_title, intent=classifier_output,
+                        query=chained, document_title=doc_title, intent=None,
                     )
                 except BaseException:
                     continue
@@ -248,7 +213,7 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
             results = await _asyncio.gather(
                 *[
                     _INNER.knowledge.bootstrap_search(
-                        query=sq, document_title=doc_title, intent=classifier_output,
+                        query=sq, document_title=doc_title, intent=None,
                     )
                     for sq in subqueries
                 ],
@@ -273,7 +238,7 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
 
     # Always run a final bootstrap on the original question.
     boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
-        query=state["question"], document_title=doc_title, intent=classifier_output,
+        query=state["question"], document_title=doc_title, intent=None,
     )
     started = time.perf_counter()
     boot_out = _INNER.security.filter_tool_results(
@@ -294,38 +259,6 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
         "seen_calls": list(seen),
         "tool_latency_ms": tool_latency_ms,
         "step_count": 0,
-    }
-
-
-async def fast_answer(state: ChatState) -> dict[str, Any]:
-    """Adaptive fast path: single retrieve + single-shot answer, skipping the
-    plan->decide->tool loop. Used only for high-confidence simple single-domain
-    questions (WS4)."""
-    doc_title = state.get("document_title")
-    co = state.get("classifier_output")
-    boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
-        query=state["question"], document_title=doc_title, intent=co,
-    )
-    boot_out = _INNER.security.filter_tool_results(tool_output=boot_out, document_title=doc_title)
-    trace = [{"tool_name": "search_hybrid_kg", "tool_input": boot_in, "tool_output": boot_out}]
-
-    assembled = await _INNER.context.assemble(state["question"], [boot_out])
-    packed = assembled.get("packed_context", []) if isinstance(assembled, dict) else assembled
-
-    started = time.perf_counter()
-    out = await _INNER._answer(
-        question=state["question"], packed_context=packed, tool_trace=trace,
-        final_answer=None, chat_history=state.get("chat_history"),
-        memory_context=state.get("memory_context"), verbosity=state.get("verbosity"),
-    )
-    return {
-        "tool_trace": trace,
-        "packed_context": packed,
-        "answer": out.get("answer", ""),
-        "citations": out.get("citations", []),
-        "highlights": out.get("highlights", []),
-        "answer_latency_ms": (time.perf_counter() - started) * 1000,
-        "reasoning_path": "fast",
     }
 
 
@@ -438,11 +371,10 @@ async def corrective_retrieve(state: ChatState) -> dict[str, Any]:
     """One bounded CRAG correction: step-back query rewrite + re-retrieve +
     re-answer. Appends new evidence to the trace, then loops to critique."""
     doc_title = state.get("document_title")
-    co = state.get("classifier_output")
     # Step-back: broaden the query to recover when the first retrieval missed.
     stepback = f"{state['question']} (bối cảnh tổng quát, định nghĩa, nguyên nhân)"
     boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
-        query=stepback, document_title=doc_title, intent=co,
+        query=stepback, document_title=doc_title, intent=None,
     )
     boot_out = _INNER.security.filter_tool_results(tool_output=boot_out, document_title=doc_title)
     trace = list(state.get("tool_trace") or [])
@@ -469,19 +401,6 @@ async def corrective_retrieve(state: ChatState) -> dict[str, Any]:
 
 
 async def ground(state: ChatState) -> dict[str, Any]:
-    # Structured path bypasses ground (already has citations).
-    if state.get("structured_result"):
-        sr = state["structured_result"]
-        elapsed = (time.perf_counter() - state["total_started"]) * 1000
-        return {
-            "answer": sr.get("answer", ""),
-            "citations": sr.get("citations", []),
-            "highlights": sr.get("highlights", []),
-            "reasoning_path": "structured",
-            "sql_query": sr.get("sql_query"),
-            "timings_ms": {"total": round(elapsed, 2)},
-        }
-
     # Cite by source number: the answer's inline [n] = packed_context position,
     # so the UI citation list must be the full ordered packed context (tagged
     # with `source` = n), not the model's free-form citation subset.
@@ -510,28 +429,7 @@ async def ground(state: ChatState) -> dict[str, Any]:
 # ── Routers (conditional edges) ──────────────────────────────────────────────
 
 def _route_chitchat(state: ChatState) -> str:
-    return "chitchat_answer" if state.get("is_chitchat") else "classify"
-
-
-def _route_intent(state: ChatState) -> str:
-    if state.get("intent") == "structured":
-        return "structured_run"
-    co = state.get("classifier_output")
-    if (
-        settings.ADAPTIVE_ROUTING_ENABLED
-        and co is not None
-        and getattr(co, "complexity", "complex") == "simple"
-        and getattr(co, "single_domain", False)
-        and getattr(co, "confidence", 0.0) >= settings.ADAPTIVE_FASTPATH_MIN_CONFIDENCE
-    ):
-        return "fast_answer"
-    return "semantic_plan"
-
-
-def _route_structured(state: ChatState) -> str:
-    # If structured_result is set, we've succeeded → ground (which exports it).
-    # If fallback (None), continue semantic path.
-    return "ground" if state.get("structured_result") else "semantic_plan"
+    return "chitchat_answer" if state.get("is_chitchat") else "semantic_plan"
 
 
 def _route_decide(state: ChatState) -> str:
@@ -562,11 +460,8 @@ def _build_graph():
     g.add_node("memory", memory)
     g.add_node("chitchat_check", chitchat_check)
     g.add_node("chitchat_answer", chitchat_answer)
-    g.add_node("classify", classify)
-    g.add_node("structured_run", structured_run)
     g.add_node("semantic_plan", semantic_plan)
     g.add_node("bootstrap", bootstrap)
-    g.add_node("fast_answer", fast_answer)
     g.add_node("decide", decide)
     g.add_node("tool_exec", tool_exec)
     g.add_node("assemble", assemble)
@@ -579,14 +474,8 @@ def _build_graph():
     g.add_edge("validate", "memory")
     g.add_edge("memory", "chitchat_check")
     g.add_conditional_edges("chitchat_check", _route_chitchat,
-                            {"chitchat_answer": "chitchat_answer", "classify": "classify"})
+                            {"chitchat_answer": "chitchat_answer", "semantic_plan": "semantic_plan"})
     g.add_edge("chitchat_answer", END)
-    g.add_conditional_edges("classify", _route_intent,
-                            {"structured_run": "structured_run",
-                             "semantic_plan": "semantic_plan",
-                             "fast_answer": "fast_answer"})
-    g.add_conditional_edges("structured_run", _route_structured,
-                            {"ground": "ground", "semantic_plan": "semantic_plan"})
     g.add_edge("semantic_plan", "bootstrap")
     g.add_edge("bootstrap", "decide")
     g.add_conditional_edges("decide", _route_decide,
@@ -597,7 +486,6 @@ def _build_graph():
     g.add_conditional_edges("critique", _route_critique,
                             {"ground": "ground", "corrective_retrieve": "corrective_retrieve"})
     g.add_edge("corrective_retrieve", "critique")
-    g.add_edge("fast_answer", "critique")
     g.add_edge("ground", END)
     return g.compile(checkpointer=_CHECKPOINTER)
 
@@ -657,7 +545,6 @@ class GraphAgentService:
             "citations": state.get("citations", []),
             "tool_trace": state.get("tool_trace", []),
             "reasoning_path": state.get("reasoning_path", "semantic"),
-            "sql_query": state.get("sql_query"),
             "highlights": state.get("highlights", []),
             "timings_ms": state.get("timings_ms", {}),
             # Retrieved+packed passages used to synthesize the answer. Exposed so
@@ -675,8 +562,8 @@ class GraphAgentService:
         model_override: str | None = None,
         verbosity: str | None = None,
     ) -> AsyncIterator[str]:
-        """Run the FULL LangGraph (classify, fast-path, CRAG critique, abstain,
-        grounding) then stream the grounded answer. Preserves the SSE protocol
+        """Run the FULL LangGraph (semantic plan, agent loop, CRAG critique,
+        abstain, grounding) then stream the grounded answer. Preserves the SSE protocol
         (status / token / done / error). The router sets domain_filter +
         document_scope via ContextVar before calling this, so graph nodes pick
         them up."""
@@ -717,7 +604,6 @@ class GraphAgentService:
                 "citations": state.get("citations", []),
                 "highlights": state.get("highlights", []),
                 "reasoning_path": state.get("reasoning_path", "semantic"),
-                "sql_query": state.get("sql_query"),
                 "tool_trace": [
                     {"tool_name": s.get("tool_name"), "tool_input": s.get("tool_input")}
                     for s in (state.get("tool_trace") or [])

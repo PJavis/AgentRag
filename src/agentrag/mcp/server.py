@@ -5,7 +5,6 @@ MCP Server — expose AgentRag service layer như MCP tool provider.
 
 Tools:
   - "search":            wraps KnowledgeService.bootstrap_search
-  - "structured_query":  wraps StructuredReasoningPipeline.run
 
 SecurityService.filter_tool_results áp dụng cho tất cả tool responses.
 
@@ -20,8 +19,6 @@ from typing import Any
 from src.agentrag.services.knowledge_service import KnowledgeService
 from src.agentrag.services.llm_gateway import LLMGateway
 from src.agentrag.services.security_service import SecurityService
-from src.agentrag.structured.pipeline import StructuredReasoningPipeline
-from src.agentrag.structured.query_classifier import QueryIntentClassifier
 
 
 TOOL_DEFINITIONS = [
@@ -38,26 +35,6 @@ TOOL_DEFINITIONS = [
             "required": ["query"],
         },
     },
-    {
-        "name": "structured_query",
-        "description": (
-            "Answer structured questions (comparison, aggregation, ranking) using SQL reasoning. "
-            "Returns an answer with SQL transparency and citations."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "question": {"type": "string", "description": "The structured question to answer"},
-                "document_title": {"type": "string", "description": "Optional: scope to a specific document"},
-                "query_type": {
-                    "type": "string",
-                    "enum": ["comparison", "aggregation", "ranking", "multi_filter", "multi_hop"],
-                    "description": "Type of structured query",
-                },
-            },
-            "required": ["question"],
-        },
-    },
 ]
 
 
@@ -68,12 +45,6 @@ class MCPServer:
         self._llm_gateway = LLMGateway()
         self._knowledge = KnowledgeService()
         self._security = SecurityService()
-        self._classifier = QueryIntentClassifier(llm_gateway=self._llm_gateway)
-        self._structured_pipeline = StructuredReasoningPipeline(
-            knowledge_service=self._knowledge,
-            llm_gateway=self._llm_gateway,
-            security_service=self._security,
-        )
 
     def list_tools(self) -> list[dict[str, Any]]:
         return TOOL_DEFINITIONS
@@ -85,8 +56,6 @@ class MCPServer:
     ) -> dict[str, Any]:
         if tool_name == "search":
             return await self._handle_search(tool_input)
-        if tool_name == "structured_query":
-            return await self._handle_structured_query(tool_input)
         return {"error": f"Unknown tool: {tool_name}"}
 
     async def _handle_search(self, tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -115,33 +84,4 @@ class MCPServer:
                 }
                 for r in results
             ],
-        }
-
-    async def _handle_structured_query(self, tool_input: dict[str, Any]) -> dict[str, Any]:
-        question = str(tool_input.get("question", ""))
-        document_title = tool_input.get("document_title")
-        query_type = tool_input.get("query_type", "comparison")
-
-        result = await self._structured_pipeline.run(
-            question=question,
-            document_title=document_title,
-            chat_history=None,
-            query_type=query_type,
-            classifier_confidence=0.95,
-        )
-
-        if result.get("_structured_fallback"):
-            return {
-                "tool": "structured_query",
-                "error": "structured_reasoning_failed",
-                "fallback_reason": result.get("_fallback_reason"),
-            }
-
-        return {
-            "tool": "structured_query",
-            "question": question,
-            "answer": result.get("answer", ""),
-            "sql_query": result.get("sql_query"),
-            "citations": result.get("citations") or [],
-            "reasoning_path": result.get("reasoning_path", "structured"),
         }

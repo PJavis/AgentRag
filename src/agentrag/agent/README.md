@@ -4,9 +4,9 @@
 
 ## Mục đích / Purpose
 
-Vòng lặp suy luận chính của AgentRag. Nhận câu hỏi của người dùng, phân loại
-intent, tự chọn tool retrieval cần gọi, tích lũy context qua nhiều bước, rồi
-sinh câu trả lời cuối kèm citations. Đây là "bộ não" quyết định *WHAT to do* —
+Vòng lặp suy luận chính của AgentRag. Nhận câu hỏi của người dùng, tự chọn
+tool retrieval cần gọi, tích lũy context qua nhiều bước, rồi sinh câu trả lời
+cuối kèm citations. Đây là "bộ não" quyết định *WHAT to do* —
 nó không tự gọi IO mà điều phối các execution-plane services. Có cả blocking
 (`GraphAgentService.chat`) và streaming SSE (`chat_stream`).
 
@@ -23,8 +23,8 @@ execution service được lấy qua `ServiceContainer.get_container()` trong
 
 | File | Class / Function | Responsibility |
 |---|---|---|
-| `graph_service.py` | `GraphAgentService`, 16-node `StateGraph` | **Orchestrator chính.** LangGraph state machine wiring các phase; mỗi node gọi helper trên `_INNER = AgentService()`. Resumable per `thread_id = conversation_id` (InMemorySaver). |
-| `service.py` | `AgentService` | Helper container — security/knowledge/classifier/structured pipeline + các pha `_decide`/`_answer`/`_plan_subqueries`/`_critique`/`_build_packed_citations`. Cũng có `chat_stream` (đường streaming SSE riêng, không qua graph). |
+| `graph_service.py` | `GraphAgentService`, 13-node `StateGraph` | **Orchestrator chính.** LangGraph state machine wiring các phase; mỗi node gọi helper trên `_INNER = AgentService()`. Resumable per `thread_id = conversation_id` (InMemorySaver). |
+| `service.py` | `AgentService` | Helper container — security/knowledge + các pha `_decide`/`_answer`/`_plan_subqueries`/`_critique`/`_build_packed_citations`. Cũng có `chat_stream` (đường streaming SSE riêng, không qua graph). |
 | `context.py` | `ContextAssembler`, `_lost_in_middle_reorder` | Dedup → rank → token-budget trim → global rerank → citation-pack context trước khi đưa vào LLM. |
 | `llm.py` | `AgentLLM` | Wrapper `AsyncOpenAI` (OpenAI-compatible). Resolve backend/provider, json/text/stream/multimodal responses, sticky model fallback. |
 | `tools.py` | `AgentTools` | Tool registry — dispatch search_sparse/dense/hybrid/hybrid_kg + segment/chunk lookups. Đọc S5 `domain_filter` qua ContextVar. |
@@ -44,7 +44,7 @@ result = await agent.chat(question, document_title, chat_history,
 ```
 
 - `GraphAgentService.chat(...) -> dict` — blocking. Trả về `answer`, `citations`,
-  `tool_trace`, `reasoning_path`, `sql_query`, `highlights`, `timings_ms`,
+  `tool_trace`, `reasoning_path`, `highlights`, `timings_ms`,
   `context` (= packed_context, cho RAGAS eval), và 3 UI signals
   `semantic_cache_hit` / `retrieval_mode` / `domain_route` (xem `_message_signals`).
 - `GraphAgentService.chat_stream(...) -> AsyncIterator[str]` — SSE. **Chưa
@@ -66,13 +66,9 @@ LangGraph node sequence (`graph_service._build_graph`):
 ```
 validate → memory → chitchat_check
   ├─[chitchat]→ chitchat_answer → END
-  └→ classify
-       ├─[structured]→ structured_run ─[ok]→ ground
-       │                              └[fallback]→ semantic_plan
-       ├─[adaptive fast-path]→ fast_answer → critique
-       └→ semantic_plan → bootstrap → decide
-                                       ├─[more]→ tool_exec → decide  (loop ≤ AGENT_MAX_STEPS)
-                                       └─[done]→ assemble → answer → critique
+  └→ semantic_plan → bootstrap → decide
+                                  ├─[more]→ tool_exec → decide  (loop ≤ AGENT_MAX_STEPS)
+                                  └─[done]→ assemble → answer → critique
    critique ─[grounded]→ ground → END
             └[not grounded]→ corrective_retrieve → critique  (≤ AGENT_CRITIQUE_MAX_RETRIES)
 ```
@@ -80,8 +76,6 @@ validate → memory → chitchat_check
 Per-node work:
 - `validate` → `SecurityService.validate_chat_request`
 - `memory` → `ChatMemoryService.retrieve` (chỉ khi `CHAT_STRUCTMEM_ENABLED`)
-- `classify` → `QueryIntentClassifier.classify` (gate `STRUCTURED_REASONING_ENABLED`)
-- `structured_run` → `StructuredReasoningPipeline.run` (đường SQL)
 - `semantic_plan` → `AgentService._plan_subqueries` (decompose multi-hop)
 - `bootstrap` → `KnowledgeService.bootstrap_search` (+ sub-query fan-out, parallel hoặc multi-hop-chained) → `SecurityService.filter_tool_results`
 - `decide` → `AgentService._decide` (LLM tự-phản tỉnh chọn tool kế tiếp)
@@ -92,8 +86,7 @@ Per-node work:
 - `ground` → `AgentService._build_packed_citations` + `_attach_source_ids`
 
 Downstream deps (qua `ServiceContainer` / services package): `KnowledgeService`,
-`ContextAssemblyService`, `SecurityService`, `LLMGateway`,
-`StructuredReasoningPipeline`, `QueryIntentClassifier`, `ChatMemoryService`.
+`ContextAssemblyService`, `SecurityService`, `LLMGateway`, `ChatMemoryService`.
 `ContextAssembler` còn pull `retrieval.reranker.LLMReranker` trực tiếp cho
 global rerank pass.
 
@@ -119,7 +112,6 @@ chỉ áp lên **bản prompt**, packed_context trả về vẫn giữ relevance
 | `AGENT_PLAN_THEN_EXECUTE_ENABLED` | `true` | Planner decompose → parallel sub-retrieval |
 | `AGENT_PLAN_TRIGGER_MIN_CHARS` | `60` | Skip planner cho câu ngắn (trừ summary intent) |
 | `AGENT_PLAN_MAX_SUBQUERIES` | `4` | Cap sub-queries mỗi plan |
-| `STRUCTURED_REASONING_ENABLED` | `true` | Bật nhánh classify + SQL reasoning |
 | `CHAT_STRUCTMEM_ENABLED` | `true` | Semantic chat memory thay sliding-window history |
 | `RETRIEVAL_RERANK_ENABLED` | `false` | Global cross-encoder rerank trong `ContextAssembler` |
 | `CRAG_ENABLED` | `false` | Bật critique + corrective re-retrieve loop |
@@ -127,12 +119,10 @@ chỉ áp lên **bản prompt**, packed_context trả về vẫn giữ relevance
 | `CRAG_GROUNDING_ENABLED` | `true` | Critique fail nếu thiếu citation / answer mơ hồ |
 | `AGENT_CRITIQUE_MAX_RETRIES` | `1` | Số lần corrective_retrieve tối đa |
 | `AGENT_MULTIHOP_ENABLED` | `false` | Sub-queries chạy tuần tự + chain snippet hop trước |
-| `ADAPTIVE_ROUTING_ENABLED` | `false` | Cho phép fast_answer node (skip plan→decide loop) |
-| `ADAPTIVE_FASTPATH_MIN_CONFIDENCE` | `0.85` | Ngưỡng confidence để vào fast-path |
 | `AGENT_PROVIDER` / `AGENT_MODEL` / `AGENT_TEMPERATURE` / `AGENT_BASE_URL` | (fallback `EXTRACTION_*`) | Backend cho `AgentLLM` |
 | `LLM_FALLBACK_MODEL` | `qwen2.5:7b-instruct` | Sticky fallback khi model 404 |
 | `LLM_OLLAMA_NUM_CTX` | `32768` | num_ctx ép cho Ollama base URL (11434) |
-| `LLM_TASK_MODEL_MAP` | `"{}"` | Per-task model routing (answer/decide/plan/classify/followup/starter…) |
+| `LLM_TASK_MODEL_MAP` | `"{}"` | Per-task model routing (answer/decide/plan/followup/starter…) |
 
 ## Recent additions (2026-06)
 
@@ -147,10 +137,6 @@ Tất cả default-OFF trừ khi ghi rõ. Branch `feat/ragas-langfuse-reranker`:
 - **Multi-hop chaining** (`AGENT_MULTIHOP_ENABLED`). Trong `bootstrap`, sub-queries
   chạy tuần tự; `_chain_query` seed mỗi hop bằng top snippet của hop trước
   ("Bối cảnh: …\n\nCâu hỏi: …"). Khi OFF → fan-out song song qua `asyncio.gather`.
-- **Adaptive fast-path** (`ADAPTIVE_ROUTING_ENABLED`). `_route_intent` chuyển sang
-  node `fast_answer` khi classifier báo `complexity == "simple"` + `single_domain`
-  + `confidence >= ADAPTIVE_FASTPATH_MIN_CONFIDENCE` → một retrieve + một answer,
-  bỏ qua plan→decide→tool loop. `reasoning_path: "fast"`.
 - **UI-signal shim.** `_build_packed_citations` / `ContextAssembler._stage_citation_pack`
   carry `node_level` (RAPTOR layer) + `context_text` (Contextual Retrieval prefix).
   `_message_signals` derive `semantic_cache_hit` / `retrieval_mode` / `domain_route`
@@ -164,9 +150,9 @@ Tất cả default-OFF trừ khi ghi rõ. Branch `feat/ragas-langfuse-reranker`:
 ## Gotchas
 
 - **`chat_stream` đi đường khác `chat`.** Streaming vẫn dùng loop thủ công trong
-  `AgentService.chat_stream` (chit-chat → classify → bootstrap → decide loop →
+  `AgentService.chat_stream` (chit-chat → semantic_plan → bootstrap → decide loop →
   assemble → stream tokens). Nó **không** chạy CRAG critique / corrective /
-  adaptive fast-path / multi-hop. Sửa logic ở graph nodes sẽ KHÔNG ảnh hưởng
+  multi-hop. Sửa logic ở graph nodes sẽ KHÔNG ảnh hưởng
   streaming — phải sửa cả hai.
 - **`GraphAgentService` tái dùng một instance toàn cục** `_INNER = AgentService()`
   + một `_GRAPH` compiled. State pickle qua InMemorySaver nên `seen_calls` được

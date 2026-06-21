@@ -9,7 +9,7 @@ def test_ablations_matrix_has_expected_configs():
     # full turns on every workstream
     full = ABLATIONS["full"]
     for k in ("CONTEXTUAL_RETRIEVAL_ENABLED", "RAPTOR_ENABLED", "CRAG_ENABLED",
-              "ADAPTIVE_ROUTING_ENABLED", "SEMANTIC_CACHE_ENABLED", "AGENT_MULTIHOP_ENABLED"):
+              "SEMANTIC_CACHE_ENABLED", "AGENT_MULTIHOP_ENABLED"):
         assert full.get(k) == "true"
 
 

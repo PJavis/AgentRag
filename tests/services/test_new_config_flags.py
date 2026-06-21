@@ -6,10 +6,8 @@ def test_new_enhancement_flags_have_safe_defaults():
     assert settings.CONTEXTUAL_RETRIEVAL_ENABLED is False
     assert settings.RAPTOR_ENABLED is False
     assert settings.CRAG_ENABLED is False
-    assert settings.ADAPTIVE_ROUTING_ENABLED is False
     assert settings.SEMANTIC_CACHE_ENABLED is False
     # Sensible numeric defaults.
     assert settings.RAPTOR_MIN_LEAVES == 8
     assert settings.SEMANTIC_CACHE_THRESHOLD == 0.97
-    assert settings.ADAPTIVE_FASTPATH_MIN_CONFIDENCE == 0.85
     assert settings.CONTEXTUAL_RETRIEVAL_TASK == "contextualize"

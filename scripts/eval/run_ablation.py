@@ -55,7 +55,6 @@ ABLATIONS: dict[str, dict[str, str]] = {
         "CONTEXTUAL_RETRIEVAL_ENABLED": "true",
         "RAPTOR_ENABLED": "true",
         "CRAG_ENABLED": "true",
-        "ADAPTIVE_ROUTING_ENABLED": "true",
         "SEMANTIC_CACHE_ENABLED": "true",
         "AGENT_MULTIHOP_ENABLED": "true",
     },

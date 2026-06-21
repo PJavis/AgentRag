@@ -139,20 +139,6 @@ class Settings(BaseSettings):
     CHAT_HISTORY_WINDOW: int = 10
     CHAT_REDIS_TTL_SECONDS: int = 300
 
-    # Structured SQL Reasoning (ADR 0002)
-    STRUCTURED_REASONING_ENABLED: bool = True
-    STRUCTURED_CLASSIFIER_METHOD: Literal["rule", "llm", "rule+llm"] = "rule+llm"
-    STRUCTURED_MAX_CHUNKS_FOR_SCHEMA: int = 10
-    STRUCTURED_MAX_CHUNKS_FOR_EXTRACT: int = 20
-    STRUCTURED_SQL_MAX_RETRIES: int = 2
-    STRUCTURED_CONFIDENCE_THRESHOLD: float = 0.7
-    #: Corpus-aware gate — only run the SQL pipeline when the retrieved evidence
-    #: actually contains tabular data (excel/csv sheets, markdown/HTML tables).
-    #: Prose-only corpora (medical textbooks) fall back to semantic BEFORE the
-    #: expensive schema-discovery/extract/SQL stages. Set false to force the old
-    #: always-try-SQL behavior.
-    STRUCTURED_REQUIRE_TABULAR: bool = True
-
     # Chat StructMem — áp dụng dual-perspective memory cho lịch sử hội thoại.
     # Single index, rows discriminated by `kind` ∈ {"entry","synthesis"}.
     CHAT_STRUCTMEM_ENABLED: bool = True
@@ -336,10 +322,6 @@ class Settings(BaseSettings):
     CRAG_GROUNDING_ENABLED: bool = True
     AGENT_CRITIQUE_MAX_RETRIES: int = 1
     AGENT_MULTIHOP_ENABLED: bool = False
-
-    # ── WS4: Adaptive routing ────────────────────────────────────────────────
-    ADAPTIVE_ROUTING_ENABLED: bool = False
-    ADAPTIVE_FASTPATH_MIN_CONFIDENCE: float = 0.85
 
     # ── WS5: Semantic retrieval cache ────────────────────────────────────────
     SEMANTIC_CACHE_ENABLED: bool = False

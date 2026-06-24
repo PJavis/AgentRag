@@ -173,7 +173,12 @@ def wipe_corpus_db() -> None:
 
 
 def build_cmd(
-    suite: str, n: int, judge_provider: str, out_path: str, skip_ingest: bool = False
+    suite: str,
+    n: int,
+    judge_provider: str,
+    out_path: str,
+    skip_ingest: bool = False,
+    group_size: int = 0,
 ) -> list[str]:
     """argv to run the benchmark as a child process.
 
@@ -181,6 +186,12 @@ def build_cmd(
     same index-shape group (only CR/RAPTOR change the index; query-time flags
     like CRAG/MULTIHOP/ADAPTIVE_ROUTING/SEMANTIC_CACHE don't), so siblings run
     against it without a costly re-ingest + graph-extraction.
+
+    group_size>0 merges that many gold contexts per ingested doc (passed to the
+    benchmark's --group-size). 0 = one context per doc (1 chunk/doc), which
+    leaves RAPTOR (needs ≥8 chunks/doc to build its tree) and Contextual
+    Retrieval near-inert; >0 gives multi-chunk docs so those features can act.
+    Only meaningful on an ingesting run — skip-ingest members don't re-ingest.
     """
     cmd = [
         sys.executable,
@@ -196,6 +207,8 @@ def build_cmd(
     ]
     if skip_ingest:
         cmd.append("--skip-ingest")
+    elif group_size > 0:
+        cmd += ["--group-size", str(group_size)]
     return cmd
 
 
@@ -273,6 +286,12 @@ def main() -> None:
     p.add_argument("--judge-provider", default="deepseek", choices=["gemini", "deepseek", "openai"])
     p.add_argument("--date", default=None, help="report date stamp (default: today)")
     p.add_argument("--only", default=None, help="comma list of ABLATIONS configs to run (subset)")
+    p.add_argument(
+        "--group-size",
+        type=int,
+        default=0,
+        help="merge N gold contexts per ingested doc (0=one/doc; ≥8 lets RAPTOR/CR actually build)",
+    )
     args = p.parse_args()
 
     date = args.date or datetime.date.today().isoformat()
@@ -316,7 +335,12 @@ def main() -> None:
             env = build_env(os.environ, overrides)
             first = i == 0
             cmd = build_cmd(
-                args.suite, args.n, args.judge_provider, str(out_path), skip_ingest=not first
+                args.suite,
+                args.n,
+                args.judge_provider,
+                str(out_path),
+                skip_ingest=not first,
+                group_size=args.group_size,
             )
 
             print("=" * 70)

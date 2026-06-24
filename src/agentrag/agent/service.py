@@ -75,6 +75,18 @@ def _is_thin_context(packed_context: list[dict[str, Any]] | None, floor: float) 
     return max(float(s) for s in scores) < floor
 
 
+def _in_gray_band(packed_context: list[dict[str, Any]] | None, floor: float, margin: float) -> bool:
+    """True when the BEST rerank score sits in the uncertain band [floor, floor+margin) —
+    above the abstain floor but not clearly relevant. These are the out-of-corpus
+    distractors that score just over the floor and drive confident hallucination."""
+    scores = [c.get("rerank_score") for c in (packed_context or [])
+              if c.get("rerank_score") is not None]
+    if not scores:
+        return False
+    best = max(float(s) for s in scores)
+    return floor <= best < floor + margin
+
+
 def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str, Any]] | None, floor: float) -> bool:
     """A clean abstention over thin context should cite nothing — drop the
     distractor citations so the refusal is clean."""
@@ -153,13 +165,18 @@ def _answer_system_prompt(
     multi-document COMPARE mode (table + relations) when the packed context spans
     ≥2 documents.
     """
-    if settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT and _is_thin_context(packed_context, settings.RETRIEVAL_RELEVANCE_FLOOR):
+    thin = _is_thin_context(packed_context, settings.RETRIEVAL_RELEVANCE_FLOOR)
+    gray = (settings.ANSWERABILITY_GATE_ENABLED
+            and _in_gray_band(packed_context, settings.RETRIEVAL_RELEVANCE_FLOOR,
+                              settings.ANSWERABILITY_GRAY_MARGIN))
+    if settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT and (thin or gray):
         return (
             f"{_lang_instruction(question)} "
-            "The retrieved context does NOT contain information relevant to the question. "
-            "Reply in ONE sentence that the document/corpus has no information on this. "
-            "Do NOT answer from background knowledge, do NOT guess, and do NOT cite any source. "
-            "Do NOT return JSON."
+            "The retrieved context does NOT contain information that answers the question. "
+            "You MUST refuse: reply in ONE sentence that the document/corpus has no information "
+            "on this topic. This rule overrides everything else. "
+            "Do NOT answer from your own medical/background knowledge even if you are certain of "
+            "the answer. Do NOT guess, do NOT hedge, do NOT cite any source. Do NOT return JSON."
         )
     docs = {(c.get("document_title") or "").strip() for c in (packed_context or [])}
     docs.discard("")

@@ -80,12 +80,35 @@ def _validate_agent_settings(settings: Settings) -> None:
         )
 
 
+_API_MODEL_MARKERS = (
+    "gemini", "gpt-", "gpt4", "gpt-4", "claude", "deepseek", "o1-", "o3-",
+    "text-embedding", "flash", "turbo",
+)
+
+
+def _looks_like_api_model(model: str) -> bool:
+    """True when the model name looks like a hosted API/chat model rather than a
+    HuggingFace cross-encoder repo id (which is always 'org/name')."""
+    m = (model or "").lower()
+    return any(marker in m for marker in _API_MODEL_MARKERS)
+
+
 def _validate_retrieval_reranker_settings(settings: Settings) -> None:
     if not settings.RETRIEVAL_RERANK_ENABLED:
         return
 
     if settings.RETRIEVAL_RERANK_BACKEND == "local_cross_encoder":
         # Model optional — LLMReranker defaults to dengcao/bge-reranker-v2-m3.
+        # Guard the silent trap: an API/chat model name here makes CrossEncoder
+        # try to load it from HuggingFace → OSError → swallowed → rerank inert.
+        model = settings.RETRIEVAL_RERANK_MODEL
+        if model and _looks_like_api_model(model):
+            raise ValueError(
+                f"RETRIEVAL_RERANK_MODEL={model!r} looks like an API/chat model, but "
+                "RETRIEVAL_RERANK_BACKEND=local_cross_encoder loads a HuggingFace "
+                "cross-encoder (e.g. dengcao/bge-reranker-v2-m3). Set a cross-encoder "
+                "repo id, or leave RETRIEVAL_RERANK_MODEL empty for the default."
+            )
         return
 
     provider = (

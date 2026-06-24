@@ -1,0 +1,79 @@
+name: CI
+
+# Runs the fast test gate (`make test-fast` = pytest minus the ontology/ingestion
+# suites, which need seeded data + Tesseract) plus a non-blocking ruff lint.
+#
+# NOTE: validate on the first PR run — the service env below mirrors
+# docker-compose + .env.example, but exact provider/key needs may require tuning.
+# Tests are expected to mock LLM/embedding calls (no API keys wired here).
+
+on:
+  pull_request:
+  push:
+    branches: [master, feat/ragas-langfuse-reranker]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16   # pgvector extension required by the schema
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rag
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rag"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      elasticsearch:
+        image: elasticsearch:8.15.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "false"
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -sf http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 12
+
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5433
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rag
+      ELASTICSEARCH_URL: http://localhost:9200
+      CI: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync deps
+        run: uv sync --frozen
+
+      - name: Prepare env
+        # Start from the documented example, then let the job `env:` above win
+        # for connection settings (pydantic Settings reads process env first).
+        run: cp .env.example .env
+
+      - name: DB migrate
+        run: uv run alembic upgrade head
+
+      - name: Lint (ruff, non-blocking)
+        continue-on-error: true
+        run: uvx ruff check src/ tests/
+
+      - name: Fast test gate
+        run: uv run pytest -q --ignore=tests/ontology --ignore=tests/ingestion

@@ -63,6 +63,15 @@ class LLMReranker:
         if len(candidates) <= 1:
             return candidates[:top_k], False, "not_enough_candidates"
 
+        # Backfill a stable id from content_hash so candidates that carry only
+        # content_hash (the assemble pipeline's dedup key) stay rerankable.
+        # Without this, items with no "id" make payload["candidates"] empty →
+        # "no_candidate_ids" → rerank skipped → rerank_score never reaches
+        # packed_context → relevance-floor/abstain/answerability-gate all inert.
+        for item in candidates:
+            if item.get("id") is None and item.get("content_hash") is not None:
+                item["id"] = item["content_hash"]
+
         scoped = candidates[: self.top_n]
         payload = {
             "query": query,

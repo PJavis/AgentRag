@@ -29,7 +29,7 @@ và type-hint chống lại `Protocol` trong `protocols.py`. Module này cũng c
 | `context_assembly_service.py` | `ContextAssemblyService` — thin facade trên `agent.context.ContextAssembler` (dedup + rank + trim + reorder). |
 | `security_service.py` | `SecurityService` — query-time validation + result filtering theo `DocumentPolicy`. |
 | `semantic_cache.py` | `SemanticCache` — tier-2 retrieval cache keyed by query-embedding cosine similarity (LRU + TTL). |
-| `knowledge_service.py` | `KnowledgeService` — legacy retrieval+tool facade (HyDE, decompose/RRF, intent-mode). Vẫn dùng bởi MCP + structured pipeline; đừng mở rộng cho code mới. |
+| `knowledge_service.py` | `KnowledgeService` — legacy retrieval+tool facade (HyDE, decompose/RRF, intent-mode). Vẫn dùng bởi MCP; đừng mở rộng cho code mới. |
 | `reasoning_knowledge.py` | Pure Reasoning helpers (no IO): `expand_query`, `select_retrieval_mode`, `mode_to_tool`, `normalize_tool_call`. |
 
 ## Public interface
@@ -78,7 +78,7 @@ c.override(retrieval=mock_retrieval, embedding=mock_embed)   # keys = property n
 
 ## Data flow
 
-- **Reasoning → Execution:** `agent.service` / `structured.pipeline` fetch services từ container,
+- **Reasoning → Execution:** `agent.service` fetch services từ container,
   gọi `retrieval.search()` (sau khi `domain_router.classify()` ra `system_override`), assemble
   context qua `context_assembly_service`, sinh answer qua `llm.json_response()`.
 - `RetrievalService.search()` chấp nhận **hoặc** generic `filters={"systems":[…],"specialties":[…]}`
@@ -138,8 +138,7 @@ args, **không** phải env settings.
 - **Hai facade cho retrieval.** `RetrievalService` (mới, S4, container-driven, filters-only) vs
   `KnowledgeService` (legacy, ôm cả reasoning: HyDE/decompose/intent-mode, gọi `AgentTools` trực
   tiếp). Code mới dùng `RetrievalService` + `reasoning_knowledge.py` helpers; `KnowledgeService`
-  còn sống vì MCP (`mcp/app.py`, `mcp/server.py`) và `structured/pipeline.py` vẫn dựa vào nó. Logic
-  trong hai file trùng nhau (vd `_select_retrieval_mode` vs `select_retrieval_mode`) — sửa thì sửa cả hai.
+  còn sống vì MCP (`mcp/app.py`, `mcp/server.py`). Logic trong hai file trùng nhau (vd `_select_retrieval_mode` vs `select_retrieval_mode`) — sửa thì sửa cả hai.
 - **`VisionService.describe()`/`parse_file()` raise nếu disabled.** `enabled` chỉ True khi cả
   `VISION_PROVIDER` lẫn `VISION_MODEL` set. Reasoning code phải check `c.vision.enabled` trước.
 - **Cost ledger không nằm trong module này.** `LLMGateway` chỉ gọi `observability.cost.record_llm_call`

@@ -122,3 +122,49 @@ Goal: close the #1 risk, unlock dormant value, cut wait.
 
 P0 + P1 are the first executable plan (writing-plans). P2/P3 get their own plan cycles
 after P1 lands and re-benchmarks.
+
+---
+
+## Appendix: branch integration decision
+
+**Inspection date:** 2026-06-24
+
+### Branch state (as inspected)
+
+| Branch | Tip SHA | Ahead of master | Behind master |
+|--------|---------|-----------------|---------------|
+| `master` | `199e31a` | — | — |
+| `feat/ragas-langfuse-reranker` (current) | `2c5f22d` | **207** | **2** |
+| `structmem` | `3b2c38d` | — | — |
+
+- `master` has 2 commits not yet in `feat/ragas-langfuse-reranker`: `199e31a improve mcp` and `c130cac add CLI Chat`.
+- `feat/ragas-langfuse-reranker` has 207 commits not yet in `master` — all RAG enhancements, eval scaffolding, 5 behind-flag workstreams (WS1–5), abstain-on-thin-context, relevance-floor calibration, and the roadmap docs themselves.
+
+### `structmem` status
+
+`git log --oneline structmem ^feat/ragas-langfuse-reranker` returned **no output** — every commit on `structmem` is already reachable from `feat/ragas-langfuse-reranker`. `structmem` is fully contained in the feat branch and is dead as a standalone branch.
+
+`git branch --contains <structmem tip>` confirms the feat branch is the only local branch containing that tip.
+
+### Chosen integration path
+
+**Squash-merge `feat/ragas-langfuse-reranker` → `master`** once P0 + P1 land and the 3-way re-benchmark is green.
+
+Rationale:
+1. **207 incremental commits** carry a large amount of exploratory/WIP history (A/B flags, calibration loops, docs iterations). Squashing produces a clean, single-purpose merge commit on `master` rather than polluting its history.
+2. The **2 master-only commits** (`improve mcp`, `add CLI Chat`) must be rebased or cherry-picked into feat before the squash-merge, or feat must be forward-merged from master first — this is a trivial 2-commit gap.
+3. **`structmem` can be deleted** immediately: all its commits are fully contained in `feat/ragas-langfuse-reranker`. No history will be lost.
+4. The 5 RAG workstreams remain behind default-OFF flags; the ablation benchmark gates their enabling, not the merge itself.
+
+### Pre-merge checklist (do not merge before these pass)
+
+- [ ] Forward-merge master's 2 commits into feat (resolves the behind-master gap).
+- [ ] P0.1 docs truth + P0.3 green test baseline confirmed.
+- [ ] P1.6 3-way ablation benchmark run and recorded.
+- [ ] Re-benchmark shows no regression on RAGAS faithfulness / answer-relevancy vs baseline.
+- [ ] All flag defaults verified OFF (no accidental feature activation on merge).
+
+### Post-merge cleanup
+
+- Delete `structmem` (fully contained, safe to remove).
+- Archive or close any open work items scoped to `feat/ragas-langfuse-reranker`.

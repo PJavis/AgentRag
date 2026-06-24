@@ -76,17 +76,40 @@ JUDGED_METRICS = (
 )
 
 
-def build_env(base: dict, overrides: dict) -> dict:
-    """New env = copy(base) + overrides + forced synchronous ingest.
+# Every workstream flag the ablation toggles. Forced OFF for every config
+# before applying the row's overrides so "baseline" is a TRUE all-off baseline
+# and each row isolates exactly its flag(s) — independent of whatever the
+# operator's .env has enabled. Without this, a .env with CR/RAPTOR=true (the
+# common case) leaks into every child via pydantic's .env read and silently
+# turns "baseline" into CR+RAPTOR, destroying per-WS attribution.
+WS_FLAGS: tuple[str, ...] = (
+    "CONTEXTUAL_RETRIEVAL_ENABLED",
+    "RAPTOR_ENABLED",
+    "CRAG_ENABLED",
+    "AGENT_MULTIHOP_ENABLED",
+    "ADAPTIVE_ROUTING_ENABLED",
+    "SEMANTIC_CACHE_ENABLED",
+)
 
-    Never mutates ``base``. STRUCTMEM_INGEST_MODE is forced to "sync" so the
-    index is fully built (StructMem/RAPTOR/CR extraction done) before scoring.
-    UPLOAD_DEDUPE_BY_HASH is forced off so each config's re-ingest actually
-    rebuilds the index with that config's CR/RAPTOR fields — otherwise an
-    already-present gold corpus dedupes the re-ingest to a no-op and CR/RAPTOR
-    silently never apply (the index stays flat == baseline).
+
+def build_env(base: dict, overrides: dict) -> dict:
+    """New env = copy(base) + all WS flags forced OFF + overrides + sync ingest.
+
+    Never mutates ``base``. All WS_FLAGS are explicitly set "false" first so the
+    child process can't inherit a flag from the operator's .env (env vars take
+    precedence over .env in pydantic settings) — baseline is genuinely all-off
+    and each row turns on only the flag(s) in ``overrides``.
+
+    STRUCTMEM_INGEST_MODE is forced to "sync" so the index is fully built
+    (StructMem/RAPTOR/CR extraction done) before scoring. UPLOAD_DEDUPE_BY_HASH
+    is forced off so each config's re-ingest actually rebuilds the index with
+    that config's CR/RAPTOR fields — otherwise an already-present gold corpus
+    dedupes the re-ingest to a no-op and CR/RAPTOR silently never apply (the
+    index stays flat == baseline).
     """
     env = dict(base)
+    for flag in WS_FLAGS:
+        env[flag] = "false"
     env.update(overrides)
     env["STRUCTMEM_INGEST_MODE"] = "sync"
     env["UPLOAD_DEDUPE_BY_HASH"] = "false"
@@ -149,9 +172,17 @@ def wipe_corpus_db() -> None:
         print(f"[ABLATION] wipe PG failed: {type(exc).__name__}: {exc}")
 
 
-def build_cmd(suite: str, n: int, judge_provider: str, out_path: str) -> list[str]:
-    """argv to run the benchmark as a child process (re-ingests per config)."""
-    return [
+def build_cmd(
+    suite: str, n: int, judge_provider: str, out_path: str, skip_ingest: bool = False
+) -> list[str]:
+    """argv to run the benchmark as a child process.
+
+    skip_ingest=True reuses the index already built by the first config of the
+    same index-shape group (only CR/RAPTOR change the index; query-time flags
+    like CRAG/MULTIHOP/ADAPTIVE_ROUTING/SEMANTIC_CACHE don't), so siblings run
+    against it without a costly re-ingest + graph-extraction.
+    """
+    cmd = [
         sys.executable,
         str(HERE / "run_benchmark.py"),
         "--suite",
@@ -163,6 +194,19 @@ def build_cmd(suite: str, n: int, judge_provider: str, out_path: str) -> list[st
         "--out",
         out_path,
     ]
+    if skip_ingest:
+        cmd.append("--skip-ingest")
+    return cmd
+
+
+def index_shape(env: dict) -> tuple[str, str]:
+    """The (CONTEXTUAL_RETRIEVAL, RAPTOR) pair that determines the ingested
+    index. Two configs sharing this pair have an identical index and can share
+    a single ingest — the remaining WS flags only affect query time."""
+    return (
+        str(env.get("CONTEXTUAL_RETRIEVAL_ENABLED", "false")).lower(),
+        str(env.get("RAPTOR_ENABLED", "false")).lower(),
+    )
 
 
 def _fmt(value) -> str:
@@ -198,9 +242,11 @@ def _build_markdown(date: str, suite: str, n: int, judge_provider: str, rows: li
         f"- suite: `{suite}`  ·  n per dataset: `{n}`  ·  judge: `{judge_provider}`",
         f"- generated: {datetime.datetime.now().isoformat(timespec='seconds')}",
         "",
-        "Each config was run in a **separate process** with the workstream flags set in",
-        "that child's environment before `settings` import, and **re-ingested** so the",
-        "index reflects that config's ingest flags (`STRUCTMEM_INGEST_MODE=sync`).",
+        "Each config ran in a **separate process** with all workstream flags forced to a",
+        "known baseline (off) then its own flag(s) set in the child env before `settings`",
+        "import. Configs are **grouped by index-shape** `(CR, RAPTOR)`: the first member of",
+        "each shape re-ingests (`STRUCTMEM_INGEST_MODE=sync`); query-time-only siblings",
+        "(CRAG/MULTIHOP/ADAPTIVE_ROUTING/SEMANTIC_CACHE) reuse that index via `--skip-ingest`.",
         "",
         "## Acceptance gates",
         "",
@@ -242,46 +288,73 @@ def main() -> None:
     eval_dir = ROOT / "data" / "eval"
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    rows: list[list[str]] = []
+    # Group configs by index-shape so each distinct (CR, RAPTOR) index is
+    # ingested ONCE; siblings reuse it via --skip-ingest. The first member of a
+    # group wipes + re-ingests; the rest skip ingest. This cuts the dominant
+    # cost (per-config re-ingest + StructMem graph-extraction) from one-per-row
+    # to one-per-index-shape (e.g. 8 rows → 3 ingests). Output order still
+    # follows `selected`.
+    groups: dict[tuple[str, str], list[str]] = {}
+    group_order: list[tuple[str, str]] = []
     for name in selected:
-        overrides = ABLATIONS[name]
-        out_path = eval_dir / f"_ablation_{name}.json"
-        env = build_env(os.environ, overrides)
-        cmd = build_cmd(args.suite, args.n, args.judge_provider, str(out_path))
+        shape = index_shape(build_env(os.environ, ABLATIONS[name]))
+        if shape not in groups:
+            groups[shape] = []
+            group_order.append(shape)
+        groups[shape].append(name)
 
-        print("=" * 70)
-        print(f"[ABLATION] {name}  overrides={overrides or '{}'}")
-        print(f"[ABLATION] {' '.join(cmd)}")
-        print("=" * 70)
+    rows_by_name: dict[str, list[str]] = {}
+    for shape in group_order:
+        members = groups[shape]
+        print("#" * 70)
+        print(f"[ABLATION] index-shape CR={shape[0]} RAPTOR={shape[1]}  members={members}")
+        print(f"[ABLATION]   → ingest once for '{members[0]}', --skip-ingest for {members[1:] or '[]'}")
+        print("#" * 70)
+        for i, name in enumerate(members):
+            overrides = ABLATIONS[name]
+            out_path = eval_dir / f"_ablation_{name}.json"
+            env = build_env(os.environ, overrides)
+            first = i == 0
+            cmd = build_cmd(
+                args.suite, args.n, args.judge_provider, str(out_path), skip_ingest=not first
+            )
 
-        # Clean rebuild per config — otherwise leftover chunks (or a deduped
-        # no-op re-ingest) make CR/RAPTOR configs silently identical to baseline.
-        # Must wipe BOTH ES indices AND the Postgres corpus: the PG
-        # (source_id, content_hash) dedupe in save_document_and_segments would
-        # otherwise return 'skipped' and the ES re-index would never run.
-        wipe_corpus_indices()
-        wipe_corpus_db()
+            print("=" * 70)
+            mode = "INGEST" if first else "skip-ingest (reuse index)"
+            print(f"[ABLATION] {name}  overrides={overrides or '{}'}  [{mode}]")
+            print(f"[ABLATION] {' '.join(cmd)}")
+            print("=" * 70)
 
-        try:
-            subprocess.run(cmd, env=env, cwd=str(ROOT), check=False)
-        except Exception as exc:  # subprocess couldn't even launch
-            print(f"[ABLATION] {name} subprocess error: {type(exc).__name__}: {exc}")
+            # Only the first member of an index-shape group rebuilds the corpus.
+            # Wiping BOTH ES indices AND the Postgres corpus is required: the PG
+            # (source_id, content_hash) dedupe in save_document_and_segments
+            # would otherwise return 'skipped' and the ES re-index never runs.
+            # Siblings must NOT wipe — they reuse the index this ingest built.
+            if first:
+                wipe_corpus_indices()
+                wipe_corpus_db()
 
-        # Be defensive: a run may have failed (no/partial report). Record the
-        # row as "(run failed)" and keep going so one bad config doesn't kill
-        # the whole matrix.
-        if not out_path.exists():
-            print(f"[ABLATION] {name}: report missing → recording '(run failed)'")
-            rows.append([name] + ["(run failed)"] * (len(JUDGED_METRICS) + 3))
-            continue
-        try:
-            report = json.loads(out_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            print(f"[ABLATION] {name}: report unreadable ({type(exc).__name__}) → '(run failed)'")
-            rows.append([name] + ["(run failed)"] * (len(JUDGED_METRICS) + 3))
-            continue
-        rows.append(_row_from_report(name, report))
+            try:
+                subprocess.run(cmd, env=env, cwd=str(ROOT), check=False)
+            except Exception as exc:  # subprocess couldn't even launch
+                print(f"[ABLATION] {name} subprocess error: {type(exc).__name__}: {exc}")
 
+            # Be defensive: a run may have failed (no/partial report). Record the
+            # row as "(run failed)" and keep going so one bad config doesn't kill
+            # the whole matrix.
+            if not out_path.exists():
+                print(f"[ABLATION] {name}: report missing → recording '(run failed)'")
+                rows_by_name[name] = [name] + ["(run failed)"] * (len(JUDGED_METRICS) + 3)
+                continue
+            try:
+                report = json.loads(out_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                print(f"[ABLATION] {name}: report unreadable ({type(exc).__name__}) → '(run failed)'")
+                rows_by_name[name] = [name] + ["(run failed)"] * (len(JUDGED_METRICS) + 3)
+                continue
+            rows_by_name[name] = _row_from_report(name, report)
+
+    rows = [rows_by_name[name] for name in selected if name in rows_by_name]
     md = _build_markdown(date, args.suite, args.n, args.judge_provider, rows)
     docs_dir = ROOT / "docs" / "eval"
     docs_dir.mkdir(parents=True, exist_ok=True)

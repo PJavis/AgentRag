@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     #: in the gap. The old 0.3 was BELOW the whole output range → every floor-based feature
     #: was inert (see docs/eval/benchmark_abstain_ab_2026-06-19_vi.md). Re-measure per corpus.
     RETRIEVAL_RELEVANCE_FLOOR: float = 0.6
+    #: When best rerank score is in [floor, floor+GRAY_MARGIN), treat the
+    #: context as uncertain and force the strong-abstain prompt (out-of-corpus
+    #: distractors that score just over the floor → confident-hallucination fix).
+    ANSWERABILITY_GRAY_MARGIN: float = 0.13
+    #: Master switch for the gray-band abstain. Default OFF — enable after the
+    #: refusal-set re-eval beats baseline (docs/eval/benchmark_abstain_ab_*).
+    ANSWERABILITY_GATE_ENABLED: bool = False
     #: Abstain-on-thin-context (answer-layer, the corrected version of the
     #: relevance gate). When the best retrieved chunk's rerank relevance is below
     #: RETRIEVAL_RELEVANCE_FLOOR, KEEP the context but instruct the model to abstain

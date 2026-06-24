@@ -100,6 +100,28 @@ def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str
     return thin or gray
 
 
+_EMPTY_CONTEXT_REFUSAL_VI = (
+    "Tài liệu hiện có không chứa thông tin để trả lời câu hỏi này."
+)
+_EMPTY_CONTEXT_REFUSAL_EN = (
+    "The available documents do not contain information to answer this question."
+)
+
+
+def _empty_context_refusal(
+    question: str, packed_context: list[dict[str, Any]] | None
+) -> dict[str, Any] | None:
+    """Deterministic refusal when the answer node has NO context to ground on —
+    e.g. the relevance-floor gate dropped every sub-floor candidate. Returns a
+    canned refusal dict so the answer LLM is NEVER invoked and therefore cannot
+    hallucinate the answer from its parametric memory. Returns None when there is
+    context (normal answer path) or when abstain is disabled."""
+    if not settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT or packed_context:
+        return None
+    msg = _EMPTY_CONTEXT_REFUSAL_VI if _VI_RE.search(question or "") else _EMPTY_CONTEXT_REFUSAL_EN
+    return {"answer": msg, "citations": [], "highlights": []}
+
+
 _VERBOSE_TOKENS = (
     "dài hơn", "chi tiết", "kỹ hơn", "kỹ càng", "tỉ mỉ", "đầy đủ hơn",
     "mở rộng", "giải thích thêm", "nói rõ", "rõ hơn", "sâu hơn",
@@ -794,6 +816,13 @@ class AgentService:
                 "citations": final_answer.get("citations", []),
                 "highlights": final_answer.get("highlights", []),
             }
+
+        # No context to ground on (e.g. the relevance-floor gate dropped every
+        # sub-floor candidate) → refuse deterministically WITHOUT calling the
+        # answer LLM, which would otherwise hallucinate from parametric memory.
+        deterministic = _empty_context_refusal(question, packed_context)
+        if deterministic is not None:
+            return deterministic
 
         if verbosity == "detailed":
             verbose = True

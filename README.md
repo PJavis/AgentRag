@@ -1,9 +1,9 @@
 # AgentRag
 
-Nền tảng RAG cho học liệu y khoa Việt Nam. Hai luồng suy luận song song
-(semantic hybrid + structured SQL), bộ nhớ phân cấp (StructMem), domain-aware
-retrieval, reasoning trace + cost dashboard, UI Next.js tương thích
-open-notebook.
+Nền tảng RAG cho học liệu y khoa Việt Nam. Một luồng suy luận semantic
+(hybrid BM25 + kNN + RRF + StructMem KG), bộ nhớ phân cấp (StructMem),
+domain-aware retrieval, reasoning trace + cost dashboard, UI Next.js
+tương thích open-notebook.
 
 > 📖 **Tài liệu vận hành đầy đủ** (cài đặt chi tiết, mọi flag `.env`, API
 > reference, CLI, benchmark, reset…): **[`docs/README-full.md`](./docs/README-full.md)**.
@@ -16,8 +16,8 @@ open-notebook.
 
 - **Reasoning / Execution Plane** — kiến trúc phân tầng, `ServiceContainer` DI;
   Reasoning lấy service qua Protocol.
-- **Semantic + Structured paths** — hybrid (BM25 + kNN + RRF + StructMem KG)
-  hoặc SQL reasoning trên rows trích xuất.
+- **Semantic hybrid retrieval** — BM25 + kNN + RRF + StructMem KG, rerank
+  cross-encoder, abstain-on-thin-context khi thiếu căn cứ.
 - **Domain partition** — KB chia theo `hệ cơ quan × chuyên khoa` (15×14), shared
   ontology + `pg_trgm` fuzzy + `DomainRouter` SLM.
 - **StructMem** — bộ nhớ tri thức (factual + relational + synthesis) cho document
@@ -37,8 +37,7 @@ open-notebook.
 ## Kiến trúc (tóm tắt)
 
 Hai mặt phẳng, nối qua `ServiceContainer` singleton:
-- **Reasoning Plane** — quyết định: classify intent → semantic agent loop **hoặc**
-  structured SQL pipeline → answer + grounding.
+- **Reasoning Plane** — quyết định: semantic agent loop → answer + grounding.
 - **Execution Plane** — IO: LLM gateway, embedding, retrieval (ES hybrid), storage,
   vision. Không branch theo prompt.
 
@@ -93,7 +92,6 @@ interface · data flow · config · gotchas):
 | [agent](./src/agentrag/agent/README.md) | LangGraph semantic loop (classify→plan→retrieve→answer→critique) |
 | [retrieval](./src/agentrag/retrieval/README.md) | hybrid BM25+kNN+RRF + rerank + RAPTOR + semantic cache |
 | [ingestion](./src/agentrag/ingestion/README.md) | parse→chunk→[contextualize]→embed→index + RAPTOR |
-| [structured](./src/agentrag/structured/README.md) | intent classifier + 5-stage SQL reasoning |
 | [graph](./src/agentrag/graph/README.md) | StructMem extraction + consolidation + vision jobs |
 | [services](./src/agentrag/services/README.md) | ServiceContainer DI + LLM/embedding/retrieval facades |
 | [ontology](./src/agentrag/ontology/README.md) | medical taxonomy + TermResolver |
@@ -101,7 +99,7 @@ interface · data flow · config · gotchas):
 | [chat](./src/agentrag/chat/README.md) | conversation persistence + chat StructMem |
 | [generation](./src/agentrag/generation/README.md) | mindmap + structured summary |
 | [adapter](./src/agentrag/adapter/README.md) | open-notebook FastAPI edge (auth, routers, admin) |
-| [mcp](./src/agentrag/mcp/README.md) | MCP tools (hybrid search + SQL reasoning) |
+| [mcp](./src/agentrag/mcp/README.md) | MCP tools (hybrid search) |
 | [worker](./src/agentrag/worker/README.md) | ARQ background-job runtime |
 | [database](./src/agentrag/database/README.md) | async SQLAlchemy engine + ORM models |
 | [eval](./src/agentrag/eval/README.md) | offline RAG quality harness (DeepEval/RAGAS) |

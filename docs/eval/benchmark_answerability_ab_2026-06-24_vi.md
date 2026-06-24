@@ -30,10 +30,12 @@ branch that score was **never present**, for two stacked reasons:
    carry `content_hash` (the dedupe key), not `id` → global rerank silently skipped
    for **every query** (exceptions swallowed) → no `rerank_score`. **Fixed**
    (`reranker.py`: backfill `id = content_hash`; TDD `test_reranker_id_fallback.py`).
-2. **Only `local_cross_encoder` emits scores** — the `llm_chat` rerank path (gemini,
-   the `.env` default `RETRIEVAL_RERANK_BACKEND=llm_chat`) reorders candidates but
-   attaches **no** `rerank_score`. So even with fix #1, the default config can't drive
-   any floor logic. To get abstain, the backend must be `local_cross_encoder`.
+2. **Only `local_cross_encoder` emits scores** — the `llm_chat` rerank path (gemini)
+   reorders candidates but attaches **no** `rerank_score`, so it can't drive any floor
+   logic. The committed default IS correct (`config.py:111` and `.env.example:144` both
+   default `RETRIEVAL_RERANK_BACKEND=local_cross_encoder`) — but the **live `.env` on
+   this host overrides it to `llm_chat`**, which is what made the safety inert here.
+   Remediation is to drop that override, not to change the committed default.
 3. **Model-name trap** — setting `RETRIEVAL_RERANK_BACKEND=local_cross_encoder` while
    `.env` still has `RETRIEVAL_RERANK_MODEL=gemini-2.5-flash-lite` makes the
    CrossEncoder try to load "gemini-2.5-flash-lite" from HuggingFace → `OSError` →
@@ -74,10 +76,10 @@ C but hallucinates in B; GIL the reverse).
 
 1. **Ship the rerank id-fix** (done, `af29043`) — without it ALL floor safety is dead
    AND retrieval precision is degraded system-wide (rerank never reorders).
-2. **Default `RETRIEVAL_RERANK_BACKEND=local_cross_encoder`** (with
-   `…_MODEL=dengcao/bge-reranker-v2-m3`) in `.env` — the only backend that powers
-   abstain. Add a config-validation guard rejecting an API model-name under the local
-   backend (kills the trap in §1.3).
+2. **Drop the live `.env` override to `llm_chat`** (committed default is already
+   `local_cross_encoder` — the only backend that powers abstain) and set
+   `RETRIEVAL_RERANK_MODEL=dengcao/bge-reranker-v2-m3`. Add a config-validation guard
+   rejecting an API model-name under the local backend (kills the trap in §1.3).
 3. **Enable the hard relevance-floor gate** and, when it empties the context,
    **short-circuit to a deterministic refusal without calling the answer LLM** — that
    is what finally kills the §4 parametric hallucination. Small, high-value change.

@@ -45,6 +45,11 @@ ROOT = HERE.parents[1]
 ABLATIONS: dict[str, dict[str, str]] = {
     "baseline": {},
     "cr": {"CONTEXTUAL_RETRIEVAL_ENABLED": "true"},
+    # Isolated single-WS rows (P1 Task 6) — clean attribution per feature.
+    "crag_only": {"CRAG_ENABLED": "true"},
+    "fastpath_only": {"ADAPTIVE_ROUTING_ENABLED": "true"},
+    "semcache_only": {"SEMANTIC_CACHE_ENABLED": "true"},
+    "multihop_only": {"AGENT_MULTIHOP_ENABLED": "true"},
     "cr_raptor": {"CONTEXTUAL_RETRIEVAL_ENABLED": "true", "RAPTOR_ENABLED": "true"},
     "cr_raptor_crag": {
         "CONTEXTUAL_RETRIEVAL_ENABLED": "true",

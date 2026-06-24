@@ -19,6 +19,60 @@ def _is_model_missing(exc: Exception) -> bool:
     return "not found" in msg or "model_not_found" in msg or "does not exist" in msg
 
 
+def _loads_lenient(text: str | None) -> dict[str, Any] | None:
+    """Best-effort parse of a JSON object from noisy LLM output. Handles leading
+    prose, markdown code fences, and — the dominant gemini-2.5-flash-lite failure
+    — a valid object followed by trailing text (json.loads 'Extra data'). Returns
+    the first JSON object found, or None when none can be recovered."""
+    if not text:
+        return None
+    s = text.strip()
+    if s.startswith("```"):
+        s = s[3:]
+        if s[:4].lower() == "json":
+            s = s[4:]
+        end = s.rfind("```")
+        if end != -1:
+            s = s[:end]
+    idx = s.find("{")
+    if idx < 0:
+        return None
+    s = s[idx:]
+    # 1) raw_decode parses the first JSON value and ignores trailing data.
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(s)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+    # 2) Balanced-brace scan for the first complete {...} (string-aware).
+    depth = 0
+    in_str = False
+    esc = False
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(s[: i + 1])
+                    return obj if isinstance(obj, dict) else None
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 class AgentLLM:
     def __init__(
         self,
@@ -155,22 +209,13 @@ class AgentLLM:
         from src.agentrag.common.thinking import clean_thinking_content
         cleaned = clean_thinking_content(raw)
         content_str = cleaned if cleaned.strip() else raw
-        if content_str and not content_str.lstrip().startswith("{"):
-            idx = content_str.find("{")
-            if idx >= 0:
-                content_str = content_str[idx:]
-        try:
-            result = json.loads(content_str or "{}")
-        except json.JSONDecodeError as e:
+        result = _loads_lenient(content_str)
+        if result is None:
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "json_response_multimodal parse failed (model=%s): %s | raw[:300]=%r",
-                self.model, e, raw[:300],
+                "json_response_multimodal parse failed (model=%s): raw[:300]=%r",
+                self.model, raw[:300],
             )
-            result = {}
-        if isinstance(result, list):
-            result = result[0] if result and isinstance(result[0], dict) else {}
-        elif not isinstance(result, dict):
             result = {}
         return result
 
@@ -217,24 +262,15 @@ class AgentLLM:
         # <think>…</think> with no answer body), keep raw so json.loads at
         # least surfaces a useful error instead of silently returning {}.
         content = cleaned if cleaned.strip() else raw
-        # Extract first balanced JSON object in case of leading prose.
-        if content and not content.lstrip().startswith("{"):
-            idx = content.find("{")
-            if idx >= 0:
-                content = content[idx:]
-        try:
-            result = json.loads(content or "{}")
-        except json.JSONDecodeError as e:
+        # Lenient parse: tolerate leading prose, code fences, and trailing data
+        # (gemini-2.5-flash-lite often appends text after a valid object).
+        result = _loads_lenient(content)
+        if result is None:
             import logging as _logging
             _logging.getLogger(__name__).warning(
-                "json_response parse failed (model=%s): %s | raw[:300]=%r",
-                self.model, e, raw[:300],
+                "json_response parse failed (model=%s): raw[:300]=%r",
+                self.model, raw[:300],
             )
-            result = {}
-        # Some providers return a JSON array instead of an object; unwrap if needed
-        if isinstance(result, list):
-            result = result[0] if result and isinstance(result[0], dict) else {}
-        elif not isinstance(result, dict):
             result = {}
         return result
 

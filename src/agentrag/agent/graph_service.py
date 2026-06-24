@@ -193,7 +193,7 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
                 chained = _chain_query(sq, prior_out)
                 try:
                     sub_in, sub_out = await _INNER.knowledge.bootstrap_search(
-                        query=chained, document_title=doc_title, intent=None,
+                        query=chained, document_title=doc_title,
                     )
                 except BaseException:
                     continue
@@ -213,7 +213,7 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
             results = await _asyncio.gather(
                 *[
                     _INNER.knowledge.bootstrap_search(
-                        query=sq, document_title=doc_title, intent=None,
+                        query=sq, document_title=doc_title,
                     )
                     for sq in subqueries
                 ],
@@ -238,7 +238,7 @@ async def bootstrap(state: ChatState) -> dict[str, Any]:
 
     # Always run a final bootstrap on the original question.
     boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
-        query=state["question"], document_title=doc_title, intent=None,
+        query=state["question"], document_title=doc_title,
     )
     started = time.perf_counter()
     boot_out = _INNER.security.filter_tool_results(
@@ -374,7 +374,7 @@ async def corrective_retrieve(state: ChatState) -> dict[str, Any]:
     # Step-back: broaden the query to recover when the first retrieval missed.
     stepback = f"{state['question']} (bối cảnh tổng quát, định nghĩa, nguyên nhân)"
     boot_in, boot_out = await _INNER.knowledge.bootstrap_search(
-        query=stepback, document_title=doc_title, intent=None,
+        query=stepback, document_title=doc_title,
     )
     boot_out = _INNER.security.filter_tool_results(tool_output=boot_out, document_title=doc_title)
     trace = list(state.get("tool_trace") or [])

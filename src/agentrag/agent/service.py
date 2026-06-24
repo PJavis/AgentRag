@@ -390,7 +390,6 @@ class AgentService:
             bootstrap_input, bootstrap_output = await self.knowledge.bootstrap_search(
                 query=question,
                 document_title=document_title,
-                intent=None,
             )
             bootstrap_output = self.security.filter_tool_results(
                 tool_output=bootstrap_output,

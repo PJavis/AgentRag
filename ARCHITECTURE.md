@@ -15,8 +15,6 @@ AgentRag is a Vietnamese-medical RAG platform with two distinct planes:
 │  agent/graph_service.py      GraphAgentService (LangGraph)          │
 │  agent/tools.py              AgentTools tool registry               │
 │  orchestration/domain_router.py     S5 domain classifier            │
-│  structured/query_classifier.py     intent classifier               │
-│  structured/pipeline.py             SQL reasoning pipeline          │
 │  services/reasoning_knowledge.py    pure helpers (expand_query…)    │
 └──────────────────────────────────────────────────────────────────────┘
                               │
@@ -101,8 +99,6 @@ See `src/agentrag/worker/functions.py` for the live set:
 | LangGraph agent      | `src/agentrag/agent/graph_service.py`         | R     |
 | Tool registry        | `src/agentrag/agent/tools.py`                 | R     |
 | Domain router        | `src/agentrag/orchestration/domain_router.py` | R     |
-| Intent classifier    | `src/agentrag/structured/query_classifier.py` | R     |
-| SQL pipeline         | `src/agentrag/structured/pipeline.py`         | R     |
 | Reasoning helpers    | `src/agentrag/services/reasoning_knowledge.py`| R     |
 | Service container    | `src/agentrag/services/container.py`          | E     |
 | LLM gateway          | `src/agentrag/services/llm_gateway.py`        | E     |

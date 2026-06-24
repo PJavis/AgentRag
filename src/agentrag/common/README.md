@@ -39,7 +39,7 @@ Truy cập bằng **direct import** (không qua `ServiceContainer`, không qua `
 **`tracing.py`** — `StageTracer(request_id: str | None = None)` với
 `start(stage, service, **metadata)`, `end(stage, **metadata) -> StageEvent`,
 `fail(stage, error: Exception, **metadata) -> StageEvent`, `as_dict()`,
-`as_timings_dict() -> dict[str, float]`, `total_elapsed_ms()`. Dùng bởi `structured/pipeline.py`.
+`as_timings_dict() -> dict[str, float]`, `total_elapsed_ms()`. Dùng bởi `agent/graph_service.py`.
 
 **`thinking.py`** — `clean_thinking_content(content) -> str` (dùng trong `agent/llm.py` ×3, `services/llm_gateway.py`), `parse_thinking_content(content) -> tuple[thinking, cleaned]`.
 
@@ -49,7 +49,7 @@ Truy cập bằng **direct import** (không qua `ServiceContainer`, không qua `
 
 ## Data flow
 - **Tracing observability**: `main.py` lifespan → `init_langfuse()` + `init_phoenix()` → mọi LLM call qua `make_async_openai()` được trace. Shutdown → `langfuse_flush()`.
-- **StageTracer**: caller (vd `structured/pipeline.py`) `start`/`end`/`fail` quanh từng stage → `as_timings_dict()` → gắn vào field `timings_ms` của API response.
+- **StageTracer**: caller (vd `agent/graph_service.py`) `start`/`end`/`fail` quanh từng stage → `as_timings_dict()` → gắn vào field `timings_ms` của API response.
 - **thinking**: LLM raw output (chứa `<think>…`) → `clean_thinking_content()` → user-visible answer trong `agent/llm.py` / `llm_gateway.py`.
 - **progress**: worker (`ingestion/pipeline.py`, `graph/graph_jobs.py`) → `publish_progress()` → Valkey channel `ingest:progress:{user_id}` → SSE relay trong `sources.py` → UI refresh.
 - **security_policy**: startup load policies → `SecurityService` gọi `matches_denied_*` + `max_results` để filter tool/retrieval results.

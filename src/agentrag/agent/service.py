@@ -89,12 +89,15 @@ def _in_gray_band(packed_context: list[dict[str, Any]] | None, floor: float, mar
 
 def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str, Any]] | None, floor: float) -> bool:
     """A clean abstention over thin context should cite nothing — drop the
-    distractor citations so the refusal is clean."""
-    return (
-        settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT
-        and _is_thin_context(packed_context, floor)
-        and _has_uncertainty(answer or "")
-    )
+    distractor citations so the refusal is clean. Mirrors the abstain trigger in
+    `_answer_system_prompt`: fires on thin context OR (when the gate is enabled) a
+    gray-band abstention — otherwise a gray-band refusal keeps distractor citations."""
+    if not settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT or not _has_uncertainty(answer or ""):
+        return False
+    thin = _is_thin_context(packed_context, floor)
+    gray = (settings.ANSWERABILITY_GATE_ENABLED
+            and _in_gray_band(packed_context, floor, settings.ANSWERABILITY_GRAY_MARGIN))
+    return thin or gray
 
 
 _VERBOSE_TOKENS = (

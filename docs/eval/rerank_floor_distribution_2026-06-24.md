@@ -5,9 +5,9 @@ max-score distribution to validate / refine `RETRIEVAL_RELEVANCE_FLOOR`.
 
 > **Prerequisite that bit us:** these scores only exist once the rerank id-fix
 > (`af29043`) is in AND the backend is `local_cross_encoder` with model
-> `dengcao/bge-reranker-v2-m3`. Under the `.env` default (`llm_chat`) no
-> `rerank_score` is produced, so any floor is inert. See
-> `benchmark_answerability_ab_2026-06-24_vi.md`.
+> `dengcao/bge-reranker-v2-m3` (the committed default in `config.py`/`.env.example`).
+> The live `.env` on this host overrides the backend to `llm_chat`, which produces no
+> `rerank_score`, so any floor is inert. See `benchmark_answerability_ab_2026-06-24_vi.md`.
 
 ## Aggregate distribution
 

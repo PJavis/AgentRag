@@ -100,11 +100,14 @@ def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str
     return thin or gray
 
 
+# Wording deliberately includes a canonical uncertainty marker ("không có thông
+# tin" / "no information") so _has_uncertainty + classify_refusal + the UI all
+# recognise this as a clean abstention, not a confident answer.
 _EMPTY_CONTEXT_REFUSAL_VI = (
-    "Tài liệu hiện có không chứa thông tin để trả lời câu hỏi này."
+    "Tài liệu hiện có không có thông tin để trả lời câu hỏi này."
 )
 _EMPTY_CONTEXT_REFUSAL_EN = (
-    "The available documents do not contain information to answer this question."
+    "The available documents contain no information to answer this question."
 )
 
 

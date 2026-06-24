@@ -1,9 +1,11 @@
 from src.agentrag.agent.service import (
     _empty_context_refusal,
+    _has_uncertainty,
     _in_gray_band,
     _should_drop_abstention_citations,
 )
 from src.agentrag.config import settings
+from src.agentrag.eval.refusal import classify_refusal
 
 
 def _ctx(*scores):
@@ -72,3 +74,13 @@ def test_empty_context_refusal_none_when_context_present(monkeypatch):
 def test_empty_context_refusal_none_when_abstain_disabled(monkeypatch):
     monkeypatch.setattr(settings, "ANSWER_ABSTAIN_ON_THIN_CONTEXT", False)
     assert _empty_context_refusal("q", []) is None
+
+
+def test_deterministic_refusal_classifies_as_abstention(monkeypatch):
+    # The refusal text must carry a canonical uncertainty marker so the refusal
+    # eval (and the UI) score it as a clean abstain, NOT a confident hallucination.
+    monkeypatch.setattr(settings, "ANSWER_ABSTAIN_ON_THIN_CONTEXT", True)
+    for q in ("Thuốc Zxylopraxin-9 dùng để làm gì?", "What does X do?"):
+        r = _empty_context_refusal(q, [])
+        assert _has_uncertainty(r["answer"]), r["answer"]
+        assert classify_refusal(r["answer"], r["citations"]) == "abstained"

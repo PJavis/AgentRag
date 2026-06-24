@@ -11,6 +11,7 @@ Writes: docs/eval/benchmark_answerability_ab_2026-06-24_vi.md
 """
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from src.agentrag.agent import service as svc
@@ -93,6 +94,17 @@ async def main():
     print(f"abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_FLOOR} "
           f"margin={settings.ANSWERABILITY_GRAY_MARGIN} rerank={settings.RETRIEVAL_RERANK_BACKEND}")
     cases = json.loads(Path("data/eval/refusal_set.json").read_text(encoding="utf-8"))
+    if os.environ.get("REFUSAL_SINGLE_ARM"):
+        gate = settings.ANSWERABILITY_GATE_ENABLED
+        label = f"gate{int(gate)}_floorgate{int(settings.RETRIEVAL_RELEVANCE_GATE_ENABLED)}"
+        print(f"\n=== SINGLE ARM ({label}) n={len(cases)} ===")
+        res = await _run_arm(cases, gate=gate)
+        out = Path(f"docs/eval/refusal_singlearm_{label}.json")
+        out.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n{label}: refusal={res['refusal_rate']} hedged={res['hedged_cited_rate']} "
+              f"halluc={res['hallucination_rate']} counts={res['counts']}")
+        print(f"wrote {out}")
+        return
     print(f"\n=== ARM A: gate OFF (n={len(cases)}) ===")
     off = await _run_arm(cases, gate=False)
     print(f"\n=== ARM B: gate ON (n={len(cases)}) ===")

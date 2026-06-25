@@ -1,6 +1,8 @@
 """Open-notebook compatible FastAPI sub-application."""
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -61,6 +63,7 @@ adapter.include_router(stubs_router, prefix="/api")
 # Stored image bytes (extracted from PDFs + standalone uploads) served under
 # /on/api/images/* so the frontend can resolve them via the same origin as the
 # rest of the API (markdown <img src> rewrites point here).
+os.makedirs(settings.IMAGE_STORAGE_DIR, exist_ok=True)  # StaticFiles raises if absent (fresh deploy / CI)
 adapter.mount(
     "/api/images",
     StaticFiles(directory=settings.IMAGE_STORAGE_DIR),

@@ -61,7 +61,9 @@ jobs:
           python-version: "3.11"
 
       - name: Sync deps
-        run: uv sync --frozen
+        # --all-extras: pytest/pytest-asyncio (dev) + deepeval are optional-dependencies;
+        # the fast test gate imports both, so plain `uv sync` (which skips extras) isn't enough.
+        run: uv sync --frozen --all-extras
 
       - name: Prepare env
         # Start from the documented example, then let the job `env:` above win

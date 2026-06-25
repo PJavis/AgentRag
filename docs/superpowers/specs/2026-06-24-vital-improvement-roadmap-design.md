@@ -168,3 +168,49 @@ Rationale:
 
 - Delete `structmem` (fully contained, safe to remove).
 - Archive or close any open work items scoped to `feat/ragas-langfuse-reranker`.
+
+---
+
+## Continuation roadmap — P4-P8 (added 2026-06-25)
+
+P0-P2 delivered; P3 (research) tooled (retrieval-FT run plan + KTO/ORPO trainer) with
+training/eval to run on the 16 GB home box. The phases below extend "improve in all
+aspects" for a self-hosted **clinical** RAG tool. Ordered by priority/dependency.
+
+### P4 — Security & Privacy (medical-grade) · highest priority
+Gates any real-user launch. The tool handles PHI.
+- **Prompt-injection defense** — ingested medical docs are untrusted input; guard the
+  agent against injection carried in retrieved content.
+- **PHI/PII handling** — Langfuse traces + `adapter_chat_feedback` now capture
+  question+answer → potential PHI in the trace/feedback store. Add a content-capture
+  control (default privacy-safe) + redaction + retention policy; same for logs.
+- **Secrets audit** — rotate dev defaults (`*-lf-agentrag-dev` keys,
+  `postgres/postgres`, langfuse `SALT`/`NEXTAUTH_SECRET`); `/security-review` the branch.
+- Data retention/deletion (medical-record handling); authZ depth audit.
+
+### P5 — Production resilience & scale
+- Load/stress test (concurrent users, p50/p95 under load); LLM-provider failover;
+  ES/PG outage degradation.
+- Cost optimization (validate the built semantic cache; tune per-task model routing);
+  autoscaler tuning under real queue depth.
+- SLOs + alerts on Langfuse signals (faithfulness/latency regression alarms).
+
+### P6 — Continuous-learning flywheel (operationalize P3) · home-run
+- Run embedding/reranker FT (P3-A) + KTO/ORPO (P3-B) on a cadence from accumulated feedback.
+- Nightly benchmark + regression gate; auto-promote models only on measured
+  `eval_retrieval` gains; champion/challenger A/B serving.
+
+### P7 — Clinical product depth
+- Multimodal (lecture video/audio, deeper medical-image understanding).
+- Per-specialty structured summaries, guideline cross-reference, drug-interaction checks
+  (with hard abstain); citation-provenance UI; VN medical ontology + entity-linking expansion.
+
+### P8 — Evaluation & trust science · home-run
+- Larger gold set (n≥200, more specialties) + human-expert eval; **n≥40 CR+RAPTOR confirm**.
+- Claim-level faithfulness (citation-grounding / PRM-lite verifier), calibration/confidence
+  signals, adversarial red-teaming.
+
+**Ownership note:** P6 and P8 (eval + finetune runs) execute on the home GPU box.
+P4/P5/P7 are buildable in-session. Deferred safety follow-ups (residual parametric
+hallucination, lower-drop-floor gate, streaming feedback→score, user_id on score) fold
+into P4/P8.

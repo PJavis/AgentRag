@@ -1526,6 +1526,24 @@ async def submit_chat_feedback(body: dict, request: Request):
     return {"ok": True, "rating": rating_int}
 
 
+@notebook_router.delete("/account")
+async def delete_account(request: Request):
+    """P4 right-to-delete: erase ALL data for the authenticated user across Postgres,
+    Elasticsearch and image storage. Refuses anonymous/legacy identities (they map to
+    shared data, not one account)."""
+    from src.agentrag.adapter.account_deletion import delete_user_data
+
+    identity = get_identity(request)
+    if (
+        identity is None
+        or getattr(identity, "is_legacy", False)
+        or getattr(identity, "user_id", "anonymous") in ("anonymous", "", None)
+    ):
+        raise HTTPException(403, "account deletion requires an authenticated user")
+    counts = await delete_user_data(identity.user_id)
+    return {"deleted": counts}
+
+
 # ── Chat starters ─────────────────────────────────────────────────────────────
 
 

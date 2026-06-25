@@ -59,3 +59,23 @@ async def test_delete_user_data_wipes_everything_for_that_user():
         assert (await s.execute(select(Conversation).where(Conversation.user_id == other))).first() is not None
 
     await delete_user_data(str(other))  # cleanup
+
+
+from types import SimpleNamespace
+
+from fastapi import HTTPException
+
+from src.agentrag.adapter.routers import chat as chat_router
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity", [
+    None,
+    SimpleNamespace(user_id="anonymous", is_legacy=False),
+    SimpleNamespace(user_id="legacy-user", is_legacy=True),
+])
+async def test_account_delete_rejects_non_user(monkeypatch, identity):
+    monkeypatch.setattr(chat_router, "get_identity", lambda req: identity)
+    with pytest.raises(HTTPException) as ei:
+        await chat_router.delete_account(request=SimpleNamespace())
+    assert ei.value.status_code == 403

@@ -54,10 +54,18 @@ def make_async_openai(**kwargs: Any) -> AsyncOpenAI:
     return LangfuseAsyncOpenAI(**kwargs)
 
 
+def _content_or_none(value):
+    """Privacy gate for free-text (question/answer/comment). Returns the value only
+    when OBSERVABILITY_CAPTURE_CONTENT is on; else None so PHI never reaches the trace
+    store. Default off."""
+    return value if settings.OBSERVABILITY_CAPTURE_CONTENT else None
+
+
 def observe_chat_turn(fn):
     """Decorator: when Langfuse is on, wrap fn in @observe() so nested LLM
     generations group under one trace per call. No-op passthrough when off
-    (decided at decoration time — the flag is set from .env at import)."""
+    (decided at decoration time — the flag is set from .env at import). Input/output
+    text is captured only when OBSERVABILITY_CAPTURE_CONTENT is on (PHI-safe default)."""
     if not settings.LANGFUSE_ENABLED:
         return fn
     try:
@@ -65,7 +73,8 @@ def observe_chat_turn(fn):
     except Exception as exc:  # langfuse not installed
         log.warning("LANGFUSE_ENABLED but observe import failed (%s); untraced", type(exc).__name__)
         return fn
-    return observe(name="chat_turn")(fn)
+    cap = settings.OBSERVABILITY_CAPTURE_CONTENT
+    return observe(name="chat_turn", capture_input=cap, capture_output=cap)(fn)
 
 
 def update_turn_trace(*, name=None, session_id=None, metadata=None) -> None:
@@ -75,7 +84,7 @@ def update_turn_trace(*, name=None, session_id=None, metadata=None) -> None:
     try:
         from langfuse.decorators import langfuse_context
 
-        langfuse_context.update_current_trace(name=name, session_id=session_id, metadata=metadata)
+        langfuse_context.update_current_trace(name=_content_or_none(name), session_id=session_id, metadata=metadata)
     except Exception as exc:
         log.debug("langfuse update_current_trace skipped: %s", exc)
 
@@ -101,7 +110,7 @@ def score_trace(trace_id, *, name, value, comment=None) -> None:
         from langfuse import Langfuse
 
         Langfuse().score(trace_id=str(trace_id), name=name, value=value,
-                         data_type="NUMERIC", comment=comment)
+                         data_type="NUMERIC", comment=_content_or_none(comment))
     except Exception as exc:
         log.debug("langfuse score skipped: %s", exc)
 

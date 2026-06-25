@@ -62,7 +62,7 @@ User interactions trigger mutations/queries via hooks, which communicate with th
 - Ensures type safety across API calls and store mutations
 
 #### `lib/locales/` — Internationalization (i18n)
-- **Locale files** (`en-US/`, `pt-BR/`, `zh-CN/`, `zh-TW/`, `ja-JP/`): Translation strings organized by feature
+- **Locale files** (`en-US/`, `pt-BR/`, `zh-CN/`, `zh-TW/`, `ja-JP/`, `ru-RU/`, `bn-IN/`, `fr-FR/`, `it-IT/`, `es-ES/`): Translation strings organized by feature
 - **`i18n.ts`**: i18next configuration with language detection
 - **`use-translation.ts`**: Thin wrapper around react-i18next's `useTranslation` with language change events
 - **Pattern**: Components call `useTranslation()` hook; access strings via `t('common.save')`, `t('notebooks.title')`

@@ -19,8 +19,8 @@ domain-aware retrieval + reasoning trace + cost dashboard.
   assemble → answer → critique → {ground | corrective_retrieve}`) +
   expandable tool I/O + plan sub-queries + SQL.
 - **Embedding cache** (S3) — TTL 600s cho query path; ES result cache 60s đã có.
-- **Semantic + Structured paths** — Hybrid (BM25 + kNN + RRF + KG) hoặc SQL
-  reasoning trên rows trích xuất.
+- **Semantic path** — Hybrid (BM25 + kNN + RRF + KG) với plan-then-execute và
+  multi-hop retrieval; single LangGraph flow (structured SQL path đã loại bỏ).
 - **Chat StructMem** — Semantic conversation memory thay sliding-window.
 - **Page-aware citations** — Số trang chính xác cho PDF (NotebookLM-style).
 - **Vision LLM** — Mô tả ảnh y tế trong PDF + ảnh standalone.
@@ -55,7 +55,7 @@ domain-aware retrieval + reasoning trace + cost dashboard.
 8. [StructMem — Knowledge Extraction](#8-structmem--knowledge-extraction)
 9. [Chat StructMem — Bộ nhớ hội thoại](#9-chat-structmem--bộ-nhớ-hội-thoại)
 10. [Background Workers & Auto-scaler](#10-background-workers--auto-scaler)
-11. [Structured SQL Reasoning](#11-structured-sql-reasoning)
+11. ~~Structured SQL Reasoning~~ (removed — single semantic LangGraph flow)
 12. [LLM Routing](#12-llm-routing)
 13. [MCP Server](#13-mcp-server)
 14. [Page-Aware Citations & Vision](#14-page-aware-citations--vision)
@@ -86,19 +86,10 @@ POST /chat
     │       ├── L1: regex (Vietnamese + English)
     │       └── L2: LLM fallback (rule+llm mode)
     │
-    ├── [intent = structured] StructuredReasoningPipeline
-    │       ├── KnowledgeService.bootstrap_search()  → chunks
-    │       ├── SchemaDiscoveryModule.discover()     → RelationalSchema
-    │       ├── StructuredExtractor.extract()        → rows (CLEAR A+B)
-    │       ├── SQLReasoningEngine.execute()         → SQL + results
-    │       └── AnswerSynthesizer.synthesize()       → answer + citations
-    │
     └── [intent = semantic] AgentService semantic loop
             ├── KnowledgeService.bootstrap_search()  (hybrid_kg)
             │       ├── ES hybrid (BM25 + kNN) → chunk hits
             │       └── ES entries + synthesis → structmem hits (RRF fused)
-            ├── [adaptive, ADAPTIVE_ROUTING_ENABLED] high-conf simple single-domain
-            │       Q → fast_answer (1 retrieve + 1 answer, skip decide loop)
             ├── Agent loop: bootstrap → decide ⇄ tool_exec → assemble → answer
             ├── critique [CRAG_ENABLED] → ground | corrective_retrieve
             │       (step-back re-retrieve, bounded by AGENT_CRITIQUE_MAX_RETRIES)
@@ -538,8 +529,14 @@ RETRIEVAL_TOP_K=10
 RETRIEVAL_NUM_CANDIDATES=50
 RETRIEVAL_RRF_K=60
 RETRIEVAL_RERANK_ENABLED=false
-RETRIEVAL_RERANK_BACKEND=local_cross_encoder   # llm_chat | local_cross_encoder
+RETRIEVAL_RERANK_BACKEND=local_cross_encoder   # llm_chat | local_cross_encoder (default)
 RETRIEVAL_RERANK_MODEL=dengcao/bge-reranker-v2-m3
+
+# Relevance-floor gates (only effective with local_cross_encoder backend)
+RETRIEVAL_RELEVANCE_FLOOR=0.6        # bge sigmoid bimodal gap; re-measure per corpus
+RETRIEVAL_RELEVANCE_GATE_ENABLED=false   # drop chunks below floor from context (default OFF)
+ANSWERABILITY_GATE_ENABLED=false         # gray-band abstain: floor…floor+0.13 → strong-abstain prompt (default OFF)
+ANSWER_ABSTAIN_ON_THIN_CONTEXT=true      # keep context but instruct model to abstain when best chunk < floor (default ON)
 ```
 
 Rerank backends:
@@ -585,7 +582,7 @@ LLM_LARGE_CONTEXT_MODEL=
 LLM_LARGE_CONTEXT_THRESHOLD=100000
 ```
 
-Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`, `answer`, `mindmap`, `summary`, `transformation`, `domain_router` (S5), `followup` (S7).
+Task keys: `classify`, `decide`, `answer`, `mindmap`, `summary`, `transformation`, `domain_router` (S5), `followup` (S7), `contextualize` (WS1), `raptor_summary` (WS2).
 
 > **DeepSeek — local + cloud cost mix.** DeepSeek is OpenAI-compatible and
 > auto-routes by **model-name prefix**: any `deepseek-*` value in
@@ -596,7 +593,7 @@ Task keys: `classify`, `decide`, `schema_discovery`, `sql_compile`, `synthesize`
 > ```env
 > LLM_ROUTING_ENABLED=true
 > DEEPSEEK_API_KEY=sk-...
-> LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","domain_router":"llama3.2:3b","followup":"llama3.2:3b","schema_discovery":"deepseek-v4-flash","sql_compile":"deepseek-v4-flash","synthesize":"deepseek-v4-pro","answer":"deepseek-v4-pro"}
+> LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","decide":"llama3.2:3b","domain_router":"llama3.2:3b","followup":"llama3.2:3b","contextualize":"deepseek-v4-flash","raptor_summary":"deepseek-v4-flash","answer":"deepseek-v4-pro"}
 > ```
 >
 > Prefix → provider: `gemini-`/`gemma-` → Gemini, `gpt-`/`o1`/`o3` → OpenAI,
@@ -632,7 +629,8 @@ no per-call instrumentation.
 ```bash
 uv sync --extra observability
 docker compose --profile observability up -d     # self-hosted Langfuse + its Postgres
-# open http://localhost:3000 → create project → copy keys into .env
+# open http://localhost:3002 → create project → copy keys into .env
+# (port 3000 is the Next.js frontend; Langfuse maps to host port 3002)
 ```
 
 ```env
@@ -640,6 +638,9 @@ LANGFUSE_ENABLED=true
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_HOST=http://localhost:3002
+# OBSERVABILITY_CAPTURE_CONTENT=false  # default OFF — medical PHI gate:
+#   when False, question/answer text is NOT sent to Langfuse; only latency/tokens/structure.
+#   Set true only for dev/debug on non-PHI data.
 ```
 
 Disabled by default → plain `openai.AsyncOpenAI`, zero overhead. The cost ledger
@@ -750,15 +751,14 @@ AGENT_PLAN_MAX_SUBQUERIES=4
 ```
 
 **Orchestrator** — single backend: `GraphAgentService` (LangGraph `StateGraph`,
-16 nodes: validate → memory → chitchat_check → classify → {structured_run |
-fast_answer | semantic_plan} → bootstrap → decide ⇄ tool_exec → assemble →
-answer → critique → {ground | corrective_retrieve}) with `InMemorySaver`
-checkpoint. Each turn's state is persisted by `thread_id = conversation_id` →
-resume from any node, inspect state via `_GRAPH.aget_state(config)`.
-Self-critique is the `critique` node (active when `CRAG_ENABLED=true`); on a
-failed grounding check it loops through `corrective_retrieve` up to
-`AGENT_CRITIQUE_MAX_RETRIES` times before grounding. `fast_answer` is the
-adaptive fast-path (when `ADAPTIVE_ROUTING_ENABLED=true`).
+nodes: validate → memory → chitchat_check → {chitchat_answer | semantic_plan} →
+bootstrap → decide ⇄ tool_exec → assemble → answer → critique →
+{ground | corrective_retrieve}) with `InMemorySaver` checkpoint. Each turn's
+state is persisted by `thread_id = conversation_id` → resume from any node,
+inspect state via `_GRAPH.aget_state(config)`. Self-critique is the `critique`
+node (active when `CRAG_ENABLED=true`); on a failed grounding check it loops
+through `corrective_retrieve` up to `AGENT_CRITIQUE_MAX_RETRIES` times before
+grounding.
 
 **Chit-chat fast-path**: short messages with greeting/thanks tokens
 (`hi`, `chào`, `thanks`, `cảm ơn`, `how are you`, ...) skip retrieval and
@@ -976,8 +976,7 @@ curl -X POST http://127.0.0.1:8000/chat \
 {
   "answer": "...",
   "citations": [{"document_title": "...", "section_path": "...", "content_hash": "..."}],
-  "reasoning_path": "structured | semantic",
-  "sql_query": null,
+  "reasoning_path": "semantic",
   "tool_trace": [...],
   "timings_ms": {"total": 820, "decide": 45, "tool": 210, "answer": 560},
   "conversation_id": "<uuid>"
@@ -1002,6 +1001,7 @@ curl -X POST http://127.0.0.1:8000/chat/stream \
 | `GET` | `/on/api/metrics/cost` | Per-task + per-model LLM cost ledger summary |
 | `POST` | `/on/api/metrics/cost/reset` | Clear in-memory cost ledger |
 | `POST` | `/on/api/chat/feedback` | Upsert thumbs-up/down on assistant turn (body: `{turn_id, rating: +1\|-1, session_id?, comment?}`) |
+| `DELETE` | `/on/api/chat/account` | Delete current user's data (requires authenticated user) |
 | `GET` | `/on/api/models/defaults` | Effective model defaults (`.env` + JSON overrides) |
 | `PUT` | `/on/api/models/defaults` | Persist defaults to `data/model_overrides.json` (live-applied) |
 | `GET` | `/on/api/images/{path}` | Static-serve extracted PDF images (no auth) |
@@ -1207,38 +1207,12 @@ Cooldown 30s giữa các lần rescale để tránh thrashing.
 
 ---
 
-## 11. Structured SQL Reasoning
+## 11. ~~Structured SQL Reasoning~~ (Removed)
 
-Kích hoạt theo *ý định* (so sánh, thống kê, xếp hạng) — nhưng chỉ chạy SQL khi
-corpus có **dữ liệu bảng** (xem cổng corpus-aware bên dưới).
-
-### Pipeline 6 bước
-
-```
-Classify → Retrieval → [corpus-aware tabular gate] → Schema discovery →
-Extract (CLEAR A+B) → SQL compile → Synthesize
-```
-
-| `query_type` | Ví dụ |
-|---|---|
-| `comparison` | "So sánh A và B" |
-| `aggregation` | "Tổng doanh thu là bao nhiêu?" |
-| `ranking` | "Top 5 sản phẩm bán chạy nhất" |
-
-**Cổng dữ liệu bảng (corpus-aware gate, `STRUCTURED_REQUIRE_TABULAR`, mặc định
-bật).** Classifier chỉ định tuyến theo *ý định* — nó không thấy corpus. Sau bước
-retrieval, pipeline kiểm tra `has_tabular_evidence()` (`structured/pipeline.py`):
-chỉ chạy các bước SQL khi bằng chứng truy hồi thực sự chứa dữ liệu bảng — chunk
-`segment_type="table"` (Excel/CSV được gắn tag lúc ingest), marker `### Sheet:`,
-` ```csv ` fence, bảng markdown, hay `<table>` (MinerU). Corpus chỉ có văn xuôi
-(sách y khoa) → **fallback semantic *trước* các bước schema-discovery / extract /
-SQL tốn kém** (`_fallback_reason = "no_tabular_evidence"`). Đặt
-`STRUCTURED_REQUIRE_TABULAR=false` để khôi phục hành vi cũ (luôn thử SQL). / The
-classifier routes by intent and cannot see the corpus; after retrieval the gate
-skips the expensive SQL stages unless tabular evidence is present.
-
-Ngoài ra, fallback về semantic path nếu bất kỳ bước nào sau đó thất bại
-(schema rỗng, extraction rỗng, SQL lỗi/không có kết quả).
+> **Đã xóa.** Luồng SQL reasoning (SchemaDiscovery → Extract → SQLCompile →
+> Synthesize) đã được loại bỏ. Hệ thống hiện chỉ dùng một luồng duy nhất:
+> **semantic LangGraph flow** (§5.6b). Mọi câu hỏi so sánh/thống kê đi qua
+> semantic path với plan-then-execute + multi-hop retrieval.
 
 ---
 
@@ -1251,9 +1225,9 @@ LLM_TASK_MODEL_MAP={"classify":"llama3.2:3b","answer":"qwen2.5:32b-instruct"}
 
 | Task | Gợi ý model |
 |---|---|
-| `classify`, `decide` | model nhỏ (3–7B) |
-| `schema_discovery`, `sql_compile` | model trung (7–14B) |
-| `synthesize`, `answer` | model lớn (32–72B) |
+| `classify`, `decide`, `domain_router`, `followup` | model nhỏ (3–7B) |
+| `contextualize`, `raptor_summary`, `mindmap`, `summary` | model trung (7–14B) |
+| `answer` | model lớn (32–72B) |
 
 ---
 
@@ -1271,7 +1245,6 @@ POST /mcp   → MCP tool calls (streamable HTTP transport)
 | Tool | Mô tả |
 |---|---|
 | `search` | Hybrid knowledge base search (BM25 + dense + StructMem) |
-| `structured_query` | SQL reasoning cho câu hỏi so sánh/tổng hợp |
 
 Dùng với bất kỳ MCP-compatible client (Claude Desktop, Claude Code, custom client).
 
@@ -1441,11 +1414,10 @@ Cần bật `LLM_COST_TRACKING_ENABLED=true` trong `.env`.
 Mỗi assistant message trong notebook chat hiện nút **"Trace"** (nếu có
 `tool_trace` / `timings_ms`). Click mở dialog gồm:
 
-- Pipeline graph: `classify → {fast_answer | plan} → bootstrap → decide ⇄ tool
+- Pipeline graph: `classify → {chitchat_answer | semantic_plan} → bootstrap → decide ⇄ tool
   → assemble → answer → critique → {ground | corrective_retrieve}` với latency
-  mỗi stage (chips: fast-path / cached / verified / self-corrected / domain)
+  mỗi stage (chips: cached / verified / self-corrected / domain)
 - Sub-queries từ planner
-- Generated SQL (structured path)
 - Tool calls list (expandable): input + truncated output JSON
 - Citations list
 
@@ -1562,7 +1534,7 @@ curl -X POST http://127.0.0.1:8000/chat \
   -d '{"question": "Tính năng chính?", "document_title": "my_doc"}' \
   -H "Content-Type: application/json"
 
-# Structured chat
+# Multi-hop semantic chat (plan-then-execute)
 curl -X POST http://127.0.0.1:8000/chat \
   -d '{"question": "So sánh module A và B về hiệu suất"}' \
   -H "Content-Type: application/json"
@@ -1574,7 +1546,7 @@ curl -X POST http://127.0.0.1:8000/search \
 ```
 
 **Kiểm tra response `/chat`:**
-- `reasoning_path` → `"structured"` hoặc `"semantic"`
+- `reasoning_path` → `"semantic"`
 - `tool_trace` → ít nhất 1 retrieval step
 - `citations` → có `document_title` + `content_hash`
 
@@ -1646,8 +1618,6 @@ make dev
 | `Connection refused :9200` | Elasticsearch chưa sẵn sàng | Chờ 30s sau `docker compose up` |
 | `ARQ pool not initialized` | Chạy app trước khi Valkey sẵn sàng | Đảm bảo Valkey đang chạy |
 | `unsupported value: NaN` | Embedding không ổn định | Đổi sang `nomic-embed-text` |
-| Structured path luôn fallback (`no_tabular_evidence`) | Corpus chỉ có văn xuôi, không có bảng | **Đúng hành vi** — cổng `STRUCTURED_REQUIRE_TABULAR`; chỉ Excel/CSV/bảng mới chạy SQL. Tắt cổng: `STRUCTURED_REQUIRE_TABULAR=false` |
-| Structured path luôn fallback (bước SQL) | Model quá nhỏ | Dùng model ≥7B |
 | `agentrag_memory_doc` rỗng (kind=entry) | `STRUCTMEM_ENABLED=false` hoặc worker chưa chạy | Chạy `arq worker` hoặc `python scaler.py` |
 
 ---
@@ -1706,16 +1676,8 @@ AgentRag/
     │   └── cost.py                      # Process-global LLM cost ledger
     │
     ├── mcp/                             # Model Context Protocol server
-    │   ├── app.py                       # FastMCP tools (search, structured_query)
+    │   ├── app.py                       # FastMCP tools (search)
     │   └── server.py                    # MCPServer wrapper
-    │
-    ├── structured/                      # SQL Reasoning Pipeline
-    │   ├── pipeline.py
-    │   ├── query_classifier.py
-    │   ├── schema_discovery.py
-    │   ├── extractor.py
-    │   ├── sql_engine.py
-    │   └── synthesizer.py
     │
     ├── retrieval/
     │   ├── elasticsearch_retriever.py   # Hybrid search (BM25+kNN+StructMem)
@@ -1769,7 +1731,6 @@ Architecture overview: [`ARCHITECTURE.md`](../ARCHITECTURE.md) (S4 plane split).
 | Services (Execution Plane) | E | [src/agentrag/services/README.md](../src/agentrag/services/README.md) |
 | Ontology / Domain partition (S5) | mixed | [src/agentrag/ontology/README.md](../src/agentrag/ontology/README.md) |
 | Agent (Semantic Loop) | R | [src/agentrag/agent/README.md](../src/agentrag/agent/README.md) |
-| Structured SQL Reasoning | R | [src/agentrag/structured/README.md](../src/agentrag/structured/README.md) |
 | Retrieval | E | [src/agentrag/retrieval/README.md](../src/agentrag/retrieval/README.md) |
 | Ingestion Pipeline | E | [src/agentrag/ingestion/README.md](../src/agentrag/ingestion/README.md) |
 | StructMem (doc) | E | [src/agentrag/graph/README.md](../src/agentrag/graph/README.md) |

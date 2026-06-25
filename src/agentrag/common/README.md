@@ -2,7 +2,7 @@
 
 ## Mục đích / Purpose
 `common/` chứa các tiện ích dùng chung, không phụ thuộc vào bất kỳ module nghiệp vụ nào
-(agent / retrieval / ingestion / structured đều import vào, không import ngược ra).
+(agent / retrieval / ingestion đều import vào, không import ngược ra).
 Phạm vi: observability LLM (Langfuse + Phoenix tracing), per-stage latency tracing,
 strip chain-of-thought của reasoning models, ingest progress pub/sub, và document-level
 access policy. Mọi thứ ở đây hoặc là pure stdlib hoặc gọi IO nhẹ (Valkey/Redis) một cách
@@ -16,7 +16,7 @@ Các module ở cả hai plane import trực tiếp từ đây (`from src.agentr
 ## Key files
 | File | Responsibility |
 |---|---|
-| `langfuse_client.py` | Single chokepoint dựng `AsyncOpenAI`. `make_async_openai()` trả về client `langfuse.openai` đã auto-trace khi `LANGFUSE_ENABLED`, ngược lại trả `openai.AsyncOpenAI` thuần. Cộng `init_langfuse()` / `langfuse_flush()` cho app lifespan. |
+| `langfuse_client.py` | Single chokepoint dựng `AsyncOpenAI`. `make_async_openai()` trả về client `langfuse.openai` đã auto-trace khi `LANGFUSE_ENABLED`, ngược lại trả `openai.AsyncOpenAI` thuần. Cộng `init_langfuse()` / `langfuse_flush()` cho app lifespan; `observe_chat_turn` decorator, `update_turn_trace`, `current_trace_id`, `score_trace` cho per-turn tracing; `_content_or_none` PHI gate (kiểm soát capture text qua `OBSERVABILITY_CAPTURE_CONTENT`). |
 | `phoenix_client.py` | `init_phoenix()` — đăng ký OTEL tracer trỏ tới Phoenix collector + auto-instrument OpenAI qua OpenInference. Chạy song song Langfuse, mặc định OFF. |
 | `tracing.py` | `StageTracer` / `StageEvent` — in-memory per-stage latency + metadata tracer, zero external dep. Feed vào `timings_ms` của response. |
 | `thinking.py` | `parse_thinking_content()` / `clean_thinking_content()` — strip `<think>…</think>` (và `<thought>…</thought>`) khỏi output của reasoning models. |
@@ -32,6 +32,11 @@ Truy cập bằng **direct import** (không qua `ServiceContainer`, không qua `
   `agent/llm.py`, `services/llm_gateway.py`, `retrieval/reranker.py`.
 - `init_langfuse() -> None` — export credentials từ `settings` vào `os.environ` (SDK chỉ đọc env). Gọi ở `main.py` lifespan startup.
 - `langfuse_flush() -> None` — flush buffered traces ở shutdown. Gọi ở `main.py`.
+- `observe_chat_turn(fn)` — decorator: khi `LANGFUSE_ENABLED` on, bọc hàm bằng `@observe()` để các LLM generation con group dưới một trace/call. No-op passthrough khi off. Capture input/output chỉ khi `OBSERVABILITY_CAPTURE_CONTENT` on.
+- `update_turn_trace(*, name, session_id, metadata) -> None` — set attrs trên Langfuse trace hiện tại (trong observed fn). No-op khi off.
+- `current_trace_id() -> str | None` — trả trace id hiện hành trong observed fn, `None` khi off hoặc ngoài context.
+- `score_trace(trace_id, *, name, value, comment=None) -> None` — đính một score vào trace theo id. No-op khi off hoặc `trace_id` falsy.
+- `_content_or_none(value)` — PHI gate: trả `value` chỉ khi `OBSERVABILITY_CAPTURE_CONTENT` on; ngược lại trả `None` để text tự do (câu hỏi/trả lời) không lên trace store. Default off.
 
 **`phoenix_client.py`**
 - `init_phoenix() -> None` — idempotent (guard `_REGISTERED`). Gọi ở `main.py` startup.
@@ -65,6 +70,7 @@ Các flag từ `src/agentrag/config.py` mà module này đọc (tất cả defau
 | `PHOENIX_ENABLED` | `False` | `phoenix_client.py` |
 | `PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006/v1/traces` | `init_phoenix()` |
 | `PHOENIX_PROJECT` | `agentrag` | `init_phoenix()` |
+| `OBSERVABILITY_CAPTURE_CONTENT` | `False` | `langfuse_client.py` — PHI gate; khi `False`, text tự do (câu hỏi/trả lời) không được gửi tới Langfuse trace store |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | `progress.py` (publish skip nếu falsy) |
 
 ## Recent additions (2026-06)

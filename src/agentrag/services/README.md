@@ -3,7 +3,7 @@
 ## Mục đích / Purpose
 
 `services/` là **Execution Plane** của AgentRag: mọi IO/LLM/embedding/vision/storage/retrieval
-đi qua các facade ổn định ở đây. Reasoning Plane (`agent/`, `orchestration/`, `structured/`)
+đi qua các facade ổn định ở đây. Reasoning Plane (`agent/`, `orchestration/`)
 **không** tự khởi tạo concrete class — chỉ fetch service qua `ServiceContainer` (DI singleton)
 và type-hint chống lại `Protocol` trong `protocols.py`. Module này cũng chứa hai ngoại lệ có chủ đích:
 `reasoning_knowledge.py` (pure Reasoning helpers — đặt ở đây vì lịch sử) và `semantic_cache.py`
@@ -53,7 +53,7 @@ Container properties (lazy): `.llm` → `LLMGateway`, `.embedding` → `Embeddin
 `.vision` → `VisionService`, `.storage` → `StorageService`, `.retrieval` → `RetrievalService`,
 `.domain_router` → `DomainRouter` (instanced ở đây để singleton-share giữa các caller).
 
-`LLMGateway` (called by `agent/`, `structured/`, `generation/`, `orchestration/`, `ingestion/`):
+`LLMGateway` (called by `agent/`, `generation/`, `orchestration/`, `ingestion/`):
 
 | Method | Mô tả |
 |---|---|
@@ -97,7 +97,7 @@ c.override(retrieval=mock_retrieval, embedding=mock_embed)   # keys = property n
 | Key | Default | Đọc bởi |
 |---|---|---|
 | `LLM_ROUTING_ENABLED` | `False` | `llm_gateway` — bật per-task model routing |
-| `LLM_TASK_MODEL_MAP` | `"{}"` | `llm_gateway` — JSON map task→model (tasks: classify, decide, schema_discovery, sql_compile, synthesize, answer, mindmap, summary, domain_router, …) |
+| `LLM_TASK_MODEL_MAP` | `"{}"` | `llm_gateway` — JSON map task→model (tasks: classify, decide, plan, answer, mindmap, summary, domain_router, followup, starter, …) |
 | `LLM_LARGE_CONTEXT_MODEL` / `LLM_LARGE_CONTEXT_THRESHOLD` | `None` / `100000` | `llm_gateway` — auto-switch khi prompt vượt threshold tokens |
 | `LLM_FALLBACK_MODEL` | `"qwen2.5:7b-instruct"` | `llm_gateway.vision_response` — fallback khi model not found |
 | `LLM_COST_TRACKING_ENABLED` | `False` | gate cho ledger + `/metrics/cost` (record ở `observability.cost`) |

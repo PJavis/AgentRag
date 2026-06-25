@@ -11,8 +11,8 @@ AgentRag is a Vietnamese-medical RAG platform with two distinct planes:
 │ Decides WHAT to do. Owns state machines, prompts, LLM decision      │
 │ loops. Stateless across turns.                                       │
 │                                                                      │
-│  agent/service.py            AgentService (hand-rolled loop)        │
-│  agent/graph_service.py      GraphAgentService (LangGraph)          │
+│  agent/graph_service.py      GraphAgentService (LangGraph — active) │
+│  agent/service.py            AgentService (internal helper only)    │
 │  agent/tools.py              AgentTools tool registry               │
 │  orchestration/domain_router.py     S5 domain classifier            │
 │  services/reasoning_knowledge.py    pure helpers (expand_query…)    │
@@ -95,8 +95,8 @@ See `src/agentrag/worker/functions.py` for the live set:
 
 | Concern              | Path                                          | Plane |
 |----------------------|-----------------------------------------------|-------|
-| Agent loop           | `src/agentrag/agent/service.py`               | R     |
-| LangGraph agent      | `src/agentrag/agent/graph_service.py`         | R     |
+| Agent loop (active)  | `src/agentrag/agent/graph_service.py`         | R     |
+| Agent helpers        | `src/agentrag/agent/service.py`               | R     |
 | Tool registry        | `src/agentrag/agent/tools.py`                 | R     |
 | Domain router        | `src/agentrag/orchestration/domain_router.py` | R     |
 | Reasoning helpers    | `src/agentrag/services/reasoning_knowledge.py`| R     |

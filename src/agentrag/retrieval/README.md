@@ -62,7 +62,7 @@ decompose), agent graph nodes, và endpoint `/search` — tất cả qua `Retrie
 5. Gọi store: `sparse_search` / `dense_search` / `hybrid_search`
    (`ingestion/stores/elasticsearch_store.py`).
 6. **hybrid_kg:** nếu `_should_use_graph(query)` → `_entries_search` chạy song song
-   `search_entries` (`agentrag_entries`) + `search_synthesis` (`agentrag_synthesis`),
+   `search_entries` + `search_synthesis` (cả hai đều trên `agentrag_memory_doc` — unified STRUCTMEM_INDEX, R4 collapse),
    rồi `_rrf_fuse_multi_source` chunk + structmem (k=`RETRIEVAL_RRF_K`).
 7. **Multi-vector (P2.9):** nếu `VISUAL_EMBEDDING_ENABLED` và `_is_image_intent(query)`
    → `store.visual_search` (CLIP kNN) rồi RRF-fuse vào pool.
@@ -86,7 +86,7 @@ decompose), agent graph nodes, và endpoint `/search` — tất cả qua `Retrie
 | `RETRIEVAL_RERANK_ENABLED` | `false` | Bật rerank mặc định (param `rerank` override per-call). |
 | `RETRIEVAL_RERANK_TOP_N` | `20` | Số ứng viên đưa vào reranker / cận pool. |
 | `RETRIEVAL_RERANK_BACKEND` | `local_cross_encoder` | `local_cross_encoder` (bge-reranker-v2-m3, free) hoặc `llm_chat`. |
-| `RETRIEVAL_RERANK_PROVIDER` | `None` | Provider cho `llm_chat` (`openai`/`gemini`/`hf_inference`/`ollama`); fallback `AGENT_PROVIDER`. |
+| `RETRIEVAL_RERANK_PROVIDER` | `None` | Provider cho `llm_chat` (`openai`/`gemini`/`hf_inference`/`ollama`); fallback `AGENT_PROVIDER` / `EXTRACTION_PROVIDER`. |
 | `RETRIEVAL_RERANK_MODEL` | `None` | Model reranker; fallback `AGENT_MODEL`/`EXTRACTION_MODEL`. |
 | `RETRIEVAL_RERANK_BASE_URL` | `None` | Override base URL reranker. |
 | `RETRIEVAL_RERANK_TEMPERATURE` | `0.0` | Nhiệt độ cho `llm_chat` rerank. |

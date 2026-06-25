@@ -41,7 +41,9 @@ report = collect_provider_health(settings)  # settings: src.agentrag.config.Sett
 }
 ```
 
-Truy cập: **import trực tiếp** function (không qua container, không qua Protocol). Caller duy nhất hiện nay là `main.py::provider_health()`, map vào `GET /health/providers`; nếu `report["ok"]` là False thì endpoint raise `HTTPException(400, detail=report)`.
+Truy cập: **import trực tiếp** function (không qua container, không qua Protocol). Callers:
+- `main.py::provider_health()`, map vào `GET /health/providers`; nếu `report["ok"]` là False thì endpoint raise `HTTPException(400, detail=report)`.
+- `scripts/eval/run_benchmark.py` — dùng làm benchmark preflight: gọi `collect_provider_health(settings)` rồi kiểm tra token/reachability trước khi chạy eval; có thể bỏ qua bằng flag `--skip-preflight`.
 
 Private helpers (không export ra ngoài module):
 - `_provider_status(role, provider, model, base_url, settings)` — build dict cho một provider.

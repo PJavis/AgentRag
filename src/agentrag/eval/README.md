@@ -19,6 +19,7 @@ These are pure/async helper functions + dataclasses. They are imported by CLI ru
 | `ragas_eval.py` | Pure mappers `build_ragas_row(...)` / `extract_context_texts(...)` → RAGAS sample dict. **Không** import ragas/langchain (xem Gotchas). |
 | `benchmark_datasets.py` | HF dataset loaders (`load_eval_examples`, `load_suite`) → `EvalExample`. Registry `DATASETS` (vn_bkai/vn_legal/en_covidqa/en_pubmedqa) + `SUITES` (vn/en/both). |
 | `freshness.py` | `run_freshness_check()` — ingest v1(stale)→v2(fresh) cùng title, query, pass nếu fresh out-ranks stale. Có side-effect lên ES (eval metric #9). |
+| `refusal.py` | `is_abstention(answer, citations)`, `is_hallucination(answer)`, `classify_refusal(answer, citations)` — phân loại 3 chiều phản hồi out-of-corpus (abstained / hedged_cited / hallucinated / empty). Cộng `group_contexts(contexts, group_size)` — gộp gold contexts thành multi-passage docs để ingest sinh nhiều chunk (kích hoạt RAPTOR + cross-passage distractors). |
 | `__init__.py` | Rỗng — không re-export; import trực tiếp theo submodule. |
 
 ## Public interface
@@ -33,6 +34,8 @@ Tất cả truy cập là **direct import theo submodule** (không qua `ServiceC
 - `ragas_eval.build_ragas_row(*, question, answer, context_items, ground_truth="") -> dict`, `extract_context_texts(context_items) -> list[str]`.
 - `benchmark_datasets.load_suite(suite, n=30)`, `load_eval_examples(name, n=30)`, `normalize_row(...)`, `EvalExample`, `DATASETS`, `SUITES`.
 - `freshness.run_freshness_check() -> {"pass", "fresh_rank", "stale_rank", "detail"}` — tự import `ingestion.pipeline.ingest_folder` và `retrieval.elasticsearch_retriever.ElasticsearchRetriever`.
+- `refusal.is_abstention(answer, citations) -> bool`, `refusal.is_hallucination(answer) -> bool`, `refusal.classify_refusal(answer, citations) -> str` — phân loại phản hồi out-of-corpus; dùng `agent.service._has_uncertainty` nội bộ.
+- `refusal.group_contexts(contexts, group_size) -> list[str]` — gộp danh sách gold contexts thành docs nhiều đoạn cho ingest; `group_size <= 0` giữ nguyên hành vi cũ.
 
 Mọi report dataclass có `.as_dict()` để serialize ra JSON; `RetrievalModeReport`/`ChunkingReport` còn có summary helpers.
 
@@ -40,7 +43,7 @@ Mọi report dataclass có `.as_dict()` để serialize ra JSON; `RetrievalModeR
 **Callers (scripts/eval/):**
 - `run_eval.py` → `evaluate_chunking`, `evaluate_retrieval_mode`, `evaluate_answer`, `aggregate_answer_scores`, `GoldenDataset` (cổng chất lượng chính, per-document).
 - `generate_dataset.py` → `generate_golden_dataset`.
-- `run_benchmark.py` → `load_suite` (benchmark_datasets) + `build_judge`/`score_cases`/`CaseInput`/`METRIC_TARGETS` (deepeval) + `extract_context_texts` (ragas) + `run_freshness_check` (freshness) = 9-metric benchmark.
+- `run_benchmark.py` → `load_suite` (benchmark_datasets) + `build_judge`/`score_cases`/`CaseInput`/`METRIC_TARGETS` (deepeval) + `extract_context_texts` (ragas) + `run_freshness_check` (freshness) + `group_contexts` (refusal) = 9-metric benchmark. Cũng gọi `health.providers.collect_provider_health` làm preflight kiểm tra env trước khi chạy.
 - `run_ablation.py` → subprocess sweep gọi `run_benchmark.py` một lần / cấu hình flag, đọc `METRIC_TARGETS` keys để tabulate.
 - `run_ragas.py` → `GoldenDataset` + `build_ragas_row`, dump rows JSON cho `score_ragas.py` (venv riêng).
 

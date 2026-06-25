@@ -98,7 +98,7 @@ Training peaks (not concurrent with serving — schedule overnight):
 | **1. Embedding** | 1 day | +10–20% recall@10 | Often "good enough" — stop here |
 | **2. Reranker** | 1 day | +5–10% MRR | Solid precision boost |
 | **3. LLM 7B QLoRA** | 2–3 days | Style + JSON consistency | Optional |
-| **4. DPO** | 2–3 days | +3–5% preference | Needs ≥500 thumbs ratings |
+| **4. KTO/DPO** | 2–3 days | +3–5% preference | `mine_preference.py` + `finetune_dpo.py`; needs ≥500 thumbs ratings |
 | **5. Vision** | 1 week | Marginal | Almost never worth it |
 
 > Stop at step 2 unless you have a specific failing mode (e.g. agent
@@ -131,9 +131,13 @@ Training peaks (not concurrent with serving — schedule overnight):
 | Script | Purpose |
 |---|---|
 | `mine_finetune_pairs.py` | DB → triplet JSONL (feedback + synthetic + hard negs) |
+| `mine_sft.py` | DB → SFT JSONL from logged assistant turns (distillation target for Qwen LoRA) |
+| `mine_preference.py` | DB → KTO/DPO preference JSONL from thumbs feedback (`adapter_chat_feedback`) |
+| `split_pairs.py` | Split mined triplets into train/test JSONL (default 90/10) |
 | `finetune_embedding.py` | sentence-transformers training, saves to `models/agentrag-embed-v1/` |
 | `finetune_reranker.py` | Cross-encoder training, saves to `models/agentrag-rerank-v1/` |
 | `finetune_qwen_lora.py` | Unsloth QLoRA on Qwen2.5-7B, merges to fp16 |
+| `finetune_dpo.py` | Reference-free KTO/ORPO LoRA (3B default), VRAM-safe on 16 GB; input from `mine_preference.py` |
 | `convert_to_ollama.sh` | GGUF quantize + `ollama create` |
 | `eval_retrieval.py` | Recall@K + MRR before/after, gate the promotion |
 

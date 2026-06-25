@@ -31,11 +31,12 @@ via `agent.factory.get_agent_service()` and `services.container.get_container()`
 | `db.py` | SQLAlchemy models auto-created on startup: `AdapterNotebook`, `AdapterNote`, `AdapterTransformation`, `AdapterSourceInsight`, `AdapterChatFeedback`, the `adapter_notebook_sources` M-N table, and `create_adapter_tables()`. |
 | `models.py` | Pydantic request/response schemas matching the open-notebook contract (notebooks, notes, sources, chat, search, activity). |
 | `upload_dedupe.py` | `hash_bytes()` + `find_existing_document()` — SHA-256 content-hash lookup to skip re-ingesting identical uploads. |
+| `account_deletion.py` | `delete_user_data(user_id)` — P4 right-to-delete: wipes all Postgres rows owned by the user (documents, segments, conversations, messages, feedback, events, user row), then best-effort ES + image-file purge. Called by `DELETE /chat/account`. |
 | `admin.py` | `/admin` HTML reasoning inspector (inline vanilla-JS SPA) + `/admin/api/conversations[/{id}/trace]` JSON, grouping `ConversationStore` messages into per-turn question→trace→answer blocks. |
 | `routers/notebooks.py` | Notebook CRUD + add/remove source links (`adapter_notebooks` / `adapter_notebook_sources`). |
 | `routers/sources.py` | Upload → background `ingest_folder`, list/get/update/delete sources (mapped to `Document`), original-file download, dedupe, per-user ingest semaphore, SSE ingest-progress stream. |
 | `routers/notes.py` | Notes CRUD backed by `adapter_notes`. |
-| `routers/chat.py` | The heart: notebook chat (`/chat/execute`, `/chat/execute-stream`, `/chat/regenerate`), source-isolated chat (`_direct_rag`), image chat, feedback upsert, chat starters, follow-up generation. |
+| `routers/chat.py` | The heart: notebook chat (`/chat/execute`, `/chat/execute-stream`, `/chat/regenerate`), source-isolated chat (`_direct_rag`), image chat, feedback upsert (`POST /chat/feedback`), account deletion (`DELETE /chat/account` → `account_deletion.delete_user_data`), chat starters, follow-up generation. |
 | `routers/search.py` | `/search` (hybrid/sparse retrieval) + `/search/ask[/simple]` (agent answer, SSE). |
 | `routers/insights.py` | Per-source LLM insights — `run_transformation()` over a source's full text, stored in `adapter_source_insights`; save-as-note. |
 | `routers/transformations.py` | User-defined transformation prompts CRUD + execute (seeds defaults). |
@@ -191,7 +192,9 @@ the orchestrator described:
   Poll `/sources/{id}/status` or subscribe to `/sources/progress/stream`.
 - **`create_adapter_tables()` uses `Base.metadata.create_all` only** — it never
   runs migrations. Column changes to `adapter_*` tables need an Alembic
-  migration (see `migrations/versions/…_add_adapter_tables.py`).
+  migration (see `migrations/versions/d7e2a4b9c1f0_add_adapter_tables.py` for the
+  core tables and `migrations/versions/2026062501_add_adapter_chat_feedback.py` for
+  `adapter_chat_feedback`).
 - **`_direct_rag` 5-minute cache** keys on `(question, document_title, last-2
   turns)` — UI re-fetches return the cached answer; a content change in the
   source won't reflect until the TTL expires.

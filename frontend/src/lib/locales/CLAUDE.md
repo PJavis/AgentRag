@@ -20,7 +20,10 @@ lib/
     ├── zh-TW/index.ts   # Traditional Chinese translations
     ├── ja-JP/index.ts   # Japanese translations
     ├── ru-RU/index.ts   # Russian translations
-    └── bn-IN/index.ts   # Bengali translations
+    ├── bn-IN/index.ts   # Bengali translations
+    ├── fr-FR/index.ts   # French translations
+    ├── it-IT/index.ts   # Italian translations
+    └── es-ES/index.ts   # Spanish translations
 ```
 
 ## Key Components
@@ -146,9 +149,15 @@ vi.mock('@/lib/hooks/use-translation', () => ({
   }),
 }))
 
-// Test locale completeness
+// Test locale completeness (index.test.ts — Locale Parity suite)
 import { enUS, zhCN } from '@/lib/locales'
 const enKeys = Object.keys(flatten(enUS))
 const zhKeys = Object.keys(flatten(zhCN))
-expect(zhKeys).toEqual(enKeys)  // All keys present
+expect(zhKeys).toEqual(enKeys)  // All keys present, no extras
+
+// Unused Key Detection suite also runs in index.test.ts:
+// Scans all .ts/.tsx source files for references to each en-US leaf key.
+// Keys with no source reference must be listed in KNOWN_UNREFERENCED inside the
+// test; anything not listed AND not referenced fails the gate. When deleting a
+// key, remove it from the locale files AND from KNOWN_UNREFERENCED.
 ```

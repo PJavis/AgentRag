@@ -1,6 +1,8 @@
 export const frFR = {
   common: {
     search: "Recherche...",
+    any: "Tout",
+    clear: "Effacer",
     create: "Créer",
     new: "Nouveau",
     cancel: "Annuler",
@@ -213,6 +215,8 @@ export const frFR = {
     transformation: "Transformation",
     settings: "Paramètres",
     advanced: "Avancé",
+    cost: "Coût et jetons",
+    activity: "Activité",
     nav: "Navigation",
     language: "Changer de langue",
     theme: "Thème",
@@ -455,6 +459,11 @@ export const frFR = {
     sessionCreated: "Session de chat créée",
     sessionUpdated: "Session mise à jour",
     sessionDeleted: "Session supprimée",
+    trace: "Trace",
+    viewTrace: "Voir la trace de raisonnement",
+    domainFilter: "Domaine",
+    domainSystem: "Système corporel",
+    domainSpecialty: "Spécialité",
   },
   ragSignals: {
     fastPath: "Fast path",

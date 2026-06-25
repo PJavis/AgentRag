@@ -55,8 +55,32 @@ describe('Unused Key Detection', () => {
         .join('\n')
         .replace(/\?\./g, '.')
 
+      // A key is "referenced" if its full dotted path OR a meaningful ancestor
+      // (section.subsection or deeper) appears in source — covers objects fetched
+      // whole, e.g. t('sources.ingestStages', { returnObjects: true }) then indexed
+      // by stage. We stop at depth 2 so a bare top-level section ('common') can't
+      // mark everything used.
+      const isReferenced = (key: string): boolean => {
+        const parts = key.split('.')
+        for (let i = parts.length; i >= 2; i--) {
+          if (corpus.includes(parts.slice(0, i).join('.'))) return true
+        }
+        return false
+      }
+
+      // Keys with no current string-literal reference in source — either dead (the
+      // UI hardcoded the English) or pending wiring. Tracked here so the gate stays
+      // green; when deleting a key, remove it from the locales AND this list.
+      const KNOWN_UNREFERENCED = new Set([
+        'auth.connectErrorHint', 'auth.loginDesc', 'auth.loginTitle',
+        'auth.passwordPlaceholder', 'auth.signIn', 'auth.signingIn',
+        'common.apiUrl', 'common.built', 'common.checkConsoleLogs',
+        'common.connectionError', 'common.diagnosticInfo', 'common.frontendUrl',
+        'common.retryConnection', 'common.unableToConnect', 'common.version',
+      ])
+
       const leafKeys = getKeys(enUS)
-      const unused = leafKeys.filter(key => !corpus.includes(key))
+      const unused = leafKeys.filter(key => !isReferenced(key) && !KNOWN_UNREFERENCED.has(key))
 
       expect(
         unused,

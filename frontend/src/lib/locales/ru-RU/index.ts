@@ -1,6 +1,8 @@
 export const ruRU = {
   common: {
     search: "Поиск...",
+    any: "Любой",
+    clear: "Очистить",
     create: "Создать",
     new: "Новый",
     cancel: "Отмена",
@@ -213,6 +215,8 @@ export const ruRU = {
     transformation: "Трансформация",
     settings: "Настройки",
     advanced: "Дополнительно",
+    cost: "Стоимость и токены",
+    activity: "Активность",
     nav: "Навигация",
     language: "Переключить язык",
     theme: "Тема",
@@ -455,6 +459,11 @@ export const ruRU = {
     sessionCreated: "Сессия чата создана",
     sessionUpdated: "Сессия обновлена",
     sessionDeleted: "Сессия удалена",
+    trace: "Трассировка",
+    viewTrace: "Просмотреть трассировку рассуждений",
+    domainFilter: "Домен",
+    domainSystem: "Система органов",
+    domainSpecialty: "Специальность",
   },
   ragSignals: {
     fastPath: "Fast path",

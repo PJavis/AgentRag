@@ -57,7 +57,8 @@ corrected and verified, repo consolidated.
 
 ### Prereqs
 - Docker + Docker Compose, `uv`, Node (for frontend).
-- A `GEMINI_API_KEY` (LLM, rerank fallback, eval judge). Ollama for embeddings.
+- LLM key: `DEEPSEEK_API_KEY` for the committed default stack (or `GEMINI_API_KEY` for
+  the cloud alternative). Ollama for orchestration (`llama3.2:3b`) + embeddings.
 
 ### ⚠️ Critical `.env` settings (the gotchas this pass uncovered)
 ```
@@ -66,19 +67,29 @@ corrected and verified, repo consolidated.
 RETRIEVAL_RERANK_BACKEND=local_cross_encoder
 RETRIEVAL_RERANK_MODEL=dengcao/bge-reranker-v2-m3   # NOT an API model name (startup now guards this)
 
-# Embeddings via Ollama (pull the model: `ollama pull nomic-embed-text`)
+# LLM — committed default is self-hosted: Ollama llama3.2:3b for orchestration
+# (classify/decide/domain_router/followup) + DeepSeek for plan/answer/synthesize.
+#   → needs DEEPSEEK_API_KEY  +  `ollama pull llama3.2:3b`
+# Cloud alternative: set GEMINI_API_KEY and swap LLM_TASK_MODEL_MAP to the
+# commented gemini-2.5-* line in .env.example.
+DEEPSEEK_API_KEY=<your key>
+
+# Embeddings — default Ollama nomic-embed-text (`ollama pull nomic-embed-text`).
+# For best Vietnamese retrieval use bge-m3 via TEI instead (`make serve-embed` → :8080,
+# then EMBEDDING_PROVIDER=openai / EMBEDDING_MODEL=BAAI/bge-m3 /
+# EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/). T6 ran on bge-m3.
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_MODEL=nomic-embed-text
-
-GEMINI_API_KEY=<your key>          # LLM_TASK_MODEL_MAP defaults to gemini-2.5-*
 ```
 If you set `local_cross_encoder` but leave an API model name, startup raises a clear
 error (by design). The bge cross-encoder runs on GPU if present, else CPU.
 
 ### Bring it up
 ```bash
-make docker-up        # postgres + elasticsearch + valkey + ollama (tei is CUDA/optional — not the embed path; skip if no GPU)
-ollama pull nomic-embed-text         # embeddings
+make docker-up        # postgres + elasticsearch + valkey + ollama
+ollama pull llama3.2:3b              # orchestration (classify/decide/router/followup)
+ollama pull nomic-embed-text         # default embeddings
+# optional, better VN retrieval: bge-m3 embeddings via TEI (needs GPU) → make serve-embed
 make migrate          # alembic upgrade head
 make seed-ontology    # REQUIRED — ontology resolver + section tagger need it (else those tests/features fail)
 make health           # verify pg/es/valkey/ollama + providers reachable

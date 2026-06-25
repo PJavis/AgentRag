@@ -47,9 +47,17 @@ Migrations are the schema source of truth (never rely on the `create_all` startu
 | **Auth** (token + signup) | `AUTH_ENABLED=true`, `AUTH_ALLOW_SIGNUP` | `adapter/auth.py`, `adapter/auth_service.py` | a request without a valid Bearer token → `401` |
 | **Rate limit** (per-user/min) | `RATE_LIMIT_ENABLED=true`, `RATE_LIMIT_PER_MIN_DEFAULT=120`, `RATE_LIMIT_UPLOAD_PER_MIN=120` | `adapter/rate_limit.py` | exceed 120 chat calls/min → `429` |
 | Doc-scope filter | `DOMAIN_FILTER_ENABLED` | retrieval | answers stay within allowed docs |
+| **PHI trace gate** | `OBSERVABILITY_CAPTURE_CONTENT=false` (default) | `common/langfuse_client.py` | with it off, Langfuse traces carry structure/latency only — no question/answer text |
+| **Prompt-injection defense** | (always on) | `ANTI_INJECTION_RULE` in `agent/service.py` | retrieved doc content is treated as data, not instructions |
+| **Right-to-delete** | (always on, auth-gated) | `DELETE /chat/account` → `adapter/account_deletion.py` | authed user wipes all their data; anonymous/legacy → `403` |
 
 **Hardening checklist before exposing publicly:**
 - Keep `AUTH_ENABLED=true`; set `AUTH_ALLOW_SIGNUP=false` after creating accounts if closed.
+- Keep `OBSERVABILITY_CAPTURE_CONTENT=false` for PHI — only enable on non-PHI/dev data.
+- ⚠️ **Multi-tenancy / IDOR:** notebooks/sources/notes/insights/transformations endpoints
+  have NO per-user ownership check (`docs/security/authz-audit-2026-06-25.md`). Fine for a
+  single-user/per-clinic deployment; **a launch blocker if multi-tenant** — add the shared
+  ownership dependency first.
 - Change Langfuse defaults (`LANGFUSE_NEXTAUTH_SECRET`, `SALT`, `LANGFUSE_INIT_USER_PASSWORD`,
   and the dev keys `pk-/sk-lf-agentrag-dev`) — the compose defaults are dev-only.
 - Put TLS at `nginx` (`edge` profile); never expose Postgres/ES ports publicly.

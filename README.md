@@ -9,6 +9,11 @@ tương thích open-notebook.
 > reference, CLI, benchmark, reset…): **[`docs/README-full.md`](./docs/README-full.md)**.
 > Kiến trúc: [`ARCHITECTURE.md`](./ARCHITECTURE.md). Mỗi module có README riêng
 > (xem [bên dưới](#module-docs)).
+>
+> 🚀 **Chạy ở nhà (app + fine-tune):** [`docs/HOME-RUN.md`](./docs/HOME-RUN.md) ·
+> 🛠️ **Triển khai/vận hành:** [`docs/DEPLOY-RUNBOOK.md`](./docs/DEPLOY-RUNBOOK.md) ·
+> 📝 **Changelog:** [`docs/CHANGELOG.md`](./docs/CHANGELOG.md) ·
+> 🔐 **AuthZ audit:** [`docs/security/authz-audit-2026-06-25.md`](./docs/security/authz-audit-2026-06-25.md)
 
 ---
 

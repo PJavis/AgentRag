@@ -35,6 +35,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.agentrag.agent.service import AgentService, _is_chitchat, _lang_instruction, _CHITCHAT_SYSTEM_PROMPT, _attach_source_ids
+from src.agentrag.common.langfuse_client import observe_chat_turn, update_turn_trace
 from src.agentrag.config import settings
 
 
@@ -496,6 +497,7 @@ _GRAPH = _build_graph()
 class GraphAgentService:
     """Drop-in replacement for AgentService with LangGraph orchestrator (v2 nodes)."""
 
+    @observe_chat_turn
     async def chat(
         self,
         question: str,
@@ -505,6 +507,7 @@ class GraphAgentService:
         domain_filter: dict[str, Any] | None = None,
         verbosity: str | None = None,
     ) -> dict[str, Any]:
+        update_turn_trace(name=(question or "")[:80], session_id=conversation_id)
         # Verbose / summary follow-ups like "viết dài hơn được không?" have no
         # domain terms → retrieval misses everything. Rewrite the question by
         # prepending the most recent prior user question so the retriever

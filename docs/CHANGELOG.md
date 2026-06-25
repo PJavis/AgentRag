@@ -50,8 +50,11 @@ The `e4eb895` "checkpoint" commit shipped two breakages; unit tests masked both 
   full PG-authoritative wipe (documents+segments, conversations+messages, feedback, events,
   user row) + best-effort ES/image purge. Auth-gated (refuses anonymous/legacy).
 - **AuthZ audit** (`docs/security/authz-audit-2026-06-25.md`) — **finding: IDOR/BOLA** on
-  notebooks/sources/notes/insights/transformations (operate by id, no ownership check). High
-  if multi-tenant; needs a tenancy decision + a shared ownership dependency (open follow-up).
+  notebooks/sources/notes/insights/transformations (operate by id, no ownership check).
+  **Resolved 2026-06-25: tenancy = single-tenant / on-prem → IDOR accepted by design**
+  (`AUTH_ENABLED` is an access gate, not isolation). Re-opens as a launch blocker if the
+  product goes multi-account / multi-clinic / multi-VM — then add the shared ownership
+  dependency (audit Recommendation #2) first.
 - **`.env.example` hardening** — empty-value lines no longer take their inline comment as the
   value (`ADAPTER_ADMIN_TOKEN` was silently set to the comment on `cp`-and-go → now disabled).
 

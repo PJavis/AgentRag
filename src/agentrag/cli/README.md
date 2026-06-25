@@ -46,12 +46,12 @@ Khớp với các event do `AgentService.chat_stream` phát ra (`event: <type>\n
 
 | Event | Xử lý trong CLI |
 |---|---|
-| `status` | Cập nhật spinner text `"{step}…"` (vd. `classify`, `retrieve`, `structured_reasoning`, `chitchat`). |
+| `status` | Cập nhật spinner text `"{step}…"` (vd. `chitchat`, `retrieve`, `decide`, `tool`, `answer`). |
 | `token` | Append vào buffer; hiển thị dần trong Live block. |
 | `done` | Đọc `citations`; lưu `done_data` (gồm `reasoning_path`, `sql_query` nếu có). |
 | `error` | In ra `err_console` (stderr, đỏ). |
 
-`reasoning_path` có thể là `chitchat` / `fast` / `structured` / `semantic`. CLI chỉ in badge `path:` khi path khác `semantic`; in `SQL:` khi `done` có `sql_query`.
+`reasoning_path` có thể là `chitchat` / `semantic`. CLI chỉ in badge `path:` khi path khác `semantic`; in `SQL:` khi `done` có `sql_query`.
 
 ### Inline commands trong REPL (`chat.py`)
 | Command | Hành vi thực tế |

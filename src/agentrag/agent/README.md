@@ -149,11 +149,12 @@ Tất cả default-OFF trừ khi ghi rõ. Branch `feat/ragas-langfuse-reranker`:
 
 ## Gotchas
 
-- **`chat_stream` đi đường khác `chat`.** Streaming vẫn dùng loop thủ công trong
-  `AgentService.chat_stream` (chit-chat → semantic_plan → bootstrap → decide loop →
-  assemble → stream tokens). Nó **không** chạy CRAG critique / corrective /
-  multi-hop. Sửa logic ở graph nodes sẽ KHÔNG ảnh hưởng
-  streaming — phải sửa cả hai.
+- **`chat_stream` (GraphAgentService) chạy full LangGraph.** `GraphAgentService.chat_stream`
+  gọi `_GRAPH.ainvoke` (cùng graph với `chat`), bao gồm CRAG critique / corrective /
+  abstain / grounding. Sau khi graph trả về answer hoàn chỉnh, nó phát lại thành
+  các khung ~40-char SSE (typewriter UX) thay vì stream từng token thật sự.
+  `AgentService.chat_stream` vẫn còn loop thủ công (không qua graph, không CRAG)
+  nhưng **không** còn là đường public — factory trả về `GraphAgentService`.
 - **`GraphAgentService` tái dùng một instance toàn cục** `_INNER = AgentService()`
   + một `_GRAPH` compiled. State pickle qua InMemorySaver nên `seen_calls` được
   serialize thành list (không phải set).

@@ -98,6 +98,10 @@ module này.
 Schema thay đổi (qua Alembic), KHÔNG phải logic trong module này:
 - `migrations/versions/2026060501_add_parse_page_columns.py` —
   `Document.parse_total_pages` / `parse_done_pages`.
+- `migrations/versions/2026062501_add_adapter_chat_feedback.py` —
+  bảng `adapter_chat_feedback` (model `AdapterChatFeedback` trong `adapter/db.py`):
+  `user_id`, `conversation_id`, `turn_id`, `rating`, `comment`, `question`, `answer`,
+  `reasoning_path`, `extra_metadata` (JSONB); indexes trên `user_id`, `conversation_id`, `turn_id`.
 - `ChatMessage.citations` / `timings_ms` (đã có sẵn) là chỗ ngồi của các
   UI-signal mới do vòng RAG `feat/ragas-langfuse-reranker` sinh ra: citations
   mang `node_level` / `context_text` (RAPTOR / Contextual Retrieval), và
@@ -111,7 +115,9 @@ Schema thay đổi (qua Alembic), KHÔNG phải logic trong module này:
   quản lý bằng migrations trong `migrations/versions/` (ví dụ
   `aa5dd4a77554_initial.py`, `c3f9f8b1d2e7_add_conversation_tables.py`,
   `d7e2a4b9c1f0_add_adapter_tables.py`, `2026051601_add_user_id_and_event_log.py`,
-  `2026051502_enable_pg_trgm.py`). `create_adapter_tables()` (`adapter/db.py`)
+  `2026051502_enable_pg_trgm.py`, `9f1c2d8a4b7e_add_graph_progress_columns.py`,
+  `2026060501_add_parse_page_columns.py`,
+  `2026062501_add_adapter_chat_feedback.py`). `create_adapter_tables()` (`adapter/db.py`)
   gọi `Base.metadata.create_all(checkfirst=True)` chỉ như lưới an toàn lúc
   startup — thêm/đổi cột vẫn phải viết migration, đừng chỉ sửa `models.py`.
 - `Base` được nhiều module mở rộng: `ontology/models.py` (`OntologyTerm`) và

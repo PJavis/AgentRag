@@ -114,7 +114,7 @@ ra citation. ES lưu cả `content` và `context_text`; `sparse_search` boost
 | `TAGGING_ENABLED` | `True` | Bật SectionTagger (S5 domain tags) |
 | `STRUCTMEM_INDEX` | `agentrag_memory_doc` | Index hợp nhất entry+synthesis (discriminator `kind`) |
 | `STRUCTMEM_CACHE_DIR` | `.cache/agentrag/extract` | Cache parsed text cho ARQ worker (`/parsed/`) |
-| `ELASTICSEARCH_INDEX_NAME` | — | Index segment retrieval (`agentrag_segments`) |
+| `ELASTICSEARCH_INDEX_NAME` | `agentrag_segments` | Index segment retrieval |
 | **PDF / OCR** | | |
 | `PDF_PARSER_BACKEND` | `hybrid` | `hybrid`=PyMuPDF→Tesseract→vision; `mineru`=whole/thin-page MinerU. (Lưu ý gotcha) |
 | `PDF_OCR_VISION_FALLBACK` | `True` | Cho phép gửi page ảnh qua VISION_PROVIDER khi text-layer mỏng |

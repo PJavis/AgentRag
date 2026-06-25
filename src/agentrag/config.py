@@ -347,6 +347,10 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str | None = None
     LANGFUSE_SECRET_KEY: str | None = None
     LANGFUSE_HOST: str = "http://localhost:3000"   # self-host default (docker-compose profile=observability)
+    #: Privacy gate: when False (default) the question/answer/comment TEXT is NOT sent to
+    #: the trace store — only latency/token/structure/session. Medical PHI must not leave
+    #: the app unless this is explicitly enabled (dev/debug on non-PHI data).
+    OBSERVABILITY_CAPTURE_CONTENT: bool = False
 
     # ── Arize Phoenix tracing (alongside Langfuse) ─────────────────────────────
     # Local OTEL trace + eval UI. When enabled, OpenInference instruments the

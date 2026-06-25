@@ -18,6 +18,14 @@ def test_update_turn_trace_noop_when_disabled(monkeypatch):
     assert update_turn_trace(name="q", session_id="conv-1") is None
 
 
+def test_content_or_none_gates_on_capture_flag(monkeypatch):
+    from src.agentrag.common.langfuse_client import _content_or_none
+    monkeypatch.setattr(settings, "OBSERVABILITY_CAPTURE_CONTENT", False)
+    assert _content_or_none("PHI question text") is None  # privacy-safe default
+    monkeypatch.setattr(settings, "OBSERVABILITY_CAPTURE_CONTENT", True)
+    assert _content_or_none("PHI question text") == "PHI question text"
+
+
 def test_current_trace_id_none_when_disabled(monkeypatch):
     from src.agentrag.common.langfuse_client import current_trace_id
     monkeypatch.setattr(settings, "LANGFUSE_ENABLED", False)

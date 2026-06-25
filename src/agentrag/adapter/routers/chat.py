@@ -448,6 +448,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
                 "reasoning_path": result.get("reasoning_path"),
                 "plan_subqueries": result.get("plan_subqueries") or [],
                 "sql_query": result.get("sql_query"),
+                "langfuse_trace_id": result.get("langfuse_trace_id"),
             },
         )
     except Exception:
@@ -697,6 +698,7 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
                 "plan_subqueries": result.get("plan_subqueries") or [],
                 "sql_query": result.get("sql_query"),
                 "regenerated": True,
+                "langfuse_trace_id": result.get("langfuse_trace_id"),
             },
         )
     except Exception:
@@ -1486,6 +1488,25 @@ async def submit_chat_feedback(body: dict, request: Request):
                 reasoning_path=body.get("reasoning_path"),
             ))
         await session.commit()
+    # Mirror the rating to Langfuse as a score on the turn's trace (best-effort).
+    try:
+        from src.agentrag.config import settings as _settings
+
+        if _settings.LANGFUSE_ENABLED:
+            import uuid as _uuid
+
+            from src.agentrag.common.langfuse_client import score_trace
+
+            async with AsyncSessionLocal() as s2:
+                msg = (
+                    await s2.execute(
+                        select(ChatMessage).where(ChatMessage.id == _uuid.UUID(str(turn_id)))
+                    )
+                ).scalar_one_or_none()
+            trace_id = (msg.extra_metadata or {}).get("langfuse_trace_id") if msg else None
+            score_trace(trace_id, name="user_feedback", value=float(rating_int), comment=body.get("comment"))
+    except Exception:
+        pass
     # Emit activity event so feedback shows up in user's activity feed.
     try:
         from src.agentrag.observability.activity import record_event

@@ -80,6 +80,32 @@ def update_turn_trace(*, name=None, session_id=None, metadata=None) -> None:
         log.debug("langfuse update_current_trace skipped: %s", exc)
 
 
+def current_trace_id() -> str | None:
+    """The active Langfuse trace id inside an observed fn, else None (or when off)."""
+    if not settings.LANGFUSE_ENABLED:
+        return None
+    try:
+        from langfuse.decorators import langfuse_context
+
+        return langfuse_context.get_current_trace_id()
+    except Exception as exc:
+        log.debug("langfuse get_current_trace_id skipped: %s", exc)
+        return None
+
+
+def score_trace(trace_id, *, name, value, comment=None) -> None:
+    """Attach a score to a trace by id. No-op when off or trace_id is falsy."""
+    if not settings.LANGFUSE_ENABLED or not trace_id:
+        return
+    try:
+        from langfuse import Langfuse
+
+        Langfuse().score(trace_id=str(trace_id), name=name, value=value,
+                         data_type="NUMERIC", comment=comment)
+    except Exception as exc:
+        log.debug("langfuse score skipped: %s", exc)
+
+
 def langfuse_flush() -> None:
     """Flush buffered traces. Call on app shutdown so nothing is lost.
 

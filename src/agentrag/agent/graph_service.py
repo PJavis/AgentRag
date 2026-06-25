@@ -35,7 +35,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.agentrag.agent.service import AgentService, _is_chitchat, _lang_instruction, _CHITCHAT_SYSTEM_PROMPT, _attach_source_ids
-from src.agentrag.common.langfuse_client import observe_chat_turn, update_turn_trace
+from src.agentrag.common.langfuse_client import current_trace_id, observe_chat_turn, update_turn_trace
 from src.agentrag.config import settings
 
 
@@ -550,6 +550,7 @@ class GraphAgentService:
             "reasoning_path": state.get("reasoning_path", "semantic"),
             "highlights": state.get("highlights", []),
             "timings_ms": state.get("timings_ms", {}),
+            "langfuse_trace_id": current_trace_id(),
             # Retrieved+packed passages used to synthesize the answer. Exposed so
             # eval (RAGAS contexts) and clients can inspect grounding evidence.
             "context": state.get("packed_context", []),

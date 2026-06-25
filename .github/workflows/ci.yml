@@ -10,7 +10,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [master, feat/ragas-langfuse-reranker]
+    branches: [master]   # feat tracks master 1:1 → avoid double runs; PRs cover branches
 
 concurrency:
   group: ci-${{ github.ref }}

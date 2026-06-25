@@ -54,6 +54,32 @@ def make_async_openai(**kwargs: Any) -> AsyncOpenAI:
     return LangfuseAsyncOpenAI(**kwargs)
 
 
+def observe_chat_turn(fn):
+    """Decorator: when Langfuse is on, wrap fn in @observe() so nested LLM
+    generations group under one trace per call. No-op passthrough when off
+    (decided at decoration time — the flag is set from .env at import)."""
+    if not settings.LANGFUSE_ENABLED:
+        return fn
+    try:
+        from langfuse.decorators import observe
+    except Exception as exc:  # langfuse not installed
+        log.warning("LANGFUSE_ENABLED but observe import failed (%s); untraced", type(exc).__name__)
+        return fn
+    return observe(name="chat_turn")(fn)
+
+
+def update_turn_trace(*, name=None, session_id=None, metadata=None) -> None:
+    """Set attrs on the current Langfuse trace (inside an observed fn). No-op when off."""
+    if not settings.LANGFUSE_ENABLED:
+        return
+    try:
+        from langfuse.decorators import langfuse_context
+
+        langfuse_context.update_current_trace(name=name, session_id=session_id, metadata=metadata)
+    except Exception as exc:
+        log.debug("langfuse update_current_trace skipped: %s", exc)
+
+
 def langfuse_flush() -> None:
     """Flush buffered traces. Call on app shutdown so nothing is lost.
 

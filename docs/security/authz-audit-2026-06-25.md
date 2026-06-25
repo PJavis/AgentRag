@@ -5,6 +5,25 @@ Scope: per-resource authorization on the adapter HTTP endpoints. Question: beyon
 **your** resource?). Method: enumerate every router endpoint and check whether it scopes
 the operation to the caller's `user_id`.
 
+## DECISION (2026-06-25): single-tenant / on-prem — Finding 1 ACCEPTED
+
+**Deployment model: single-tenant.** VITAL runs as one on-prem / per-clinic instance —
+**not** multi-account across VMs. Under this model `AUTH_ENABLED` is an **access gate**
+(are you allowed in?), **not** a tenant-isolation boundary, and there is effectively one
+tenant. Therefore **Finding 1 (IDOR/BOLA) is accepted by design and is NOT a launch
+blocker** for this deployment. The ~39-endpoint shared-ownership-dependency refactor in
+Recommendation #2 is **deliberately not done** — it would add cost and risk breaking the
+legacy single-user mode for zero benefit at one tenant.
+
+**This acceptance is conditional. Re-open Finding 1 as a launch blocker BEFORE any of:**
+- enabling real per-user accounts / `AUTH_ALLOW_SIGNUP` for untrusted users,
+- deploying a shared instance serving more than one clinic/tenant,
+- exposing the resource endpoints to a second VM / multi-tenant front end.
+
+At that point implement Recommendation #2 (one shared ownership dependency + list-scoping)
+first. Findings 2–4 (inconsistent scoping, list-endpoint leakage, `stubs.py`) are likewise
+N/A under single-tenant and re-open with it.
+
 ## Posture by router (`get_identity` + user-scope filter present?)
 
 | Router | Endpoints | User-scoped? |

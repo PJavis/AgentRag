@@ -398,6 +398,11 @@ mine-pairs:
 	uv run python scripts/mine_finetune_pairs.py \
 	  --out data/finetune/embed_triplets.jsonl
 
+.PHONY: mine-preference
+mine-preference:
+	uv run python scripts/mine_preference.py \
+	  --out data/finetune/preference.jsonl --format kto
+
 .PHONY: split-pairs
 split-pairs:
 	uv run python scripts/split_pairs.py \

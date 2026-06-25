@@ -26,5 +26,19 @@ turn's 8 LLM generations nested. ✅
 ## Notes
 - Guarded + default-OFF in `.env.example`; a fresh deploy is untraced until the 4 vars
   are set. The app is unchanged when `LANGFUSE_ENABLED=false`.
-- `user_id` is not propagated to the agent layer yet (deferred). Feedback→Langfuse
-  score is the natural follow-up (links thumbs to the trace for online quality monitoring).
+- `user_id` is not propagated to the agent layer yet (deferred).
+
+## Feedback → score — verified (commit `568035a`)
+`chat()` now returns its `langfuse_trace_id`; non-stream handlers persist it on the
+assistant turn's `extra_metadata`; `/chat/feedback` loads the turn and scores
+`user_feedback=rating` on that trace. Verified in-process:
+
+```
+chat result langfuse_trace_id = 20ec2068-d82e-4cd9-a6ef-382918b40a4c
+GET /api/public/scores?name=user_feedback
+→ user_feedback = 1 | trace: 20ec2068-... | comment: verify
+```
+
+The trace-id capture + score attach work end-to-end (Langfuse mechanics). The
+`/feedback` DB lookup of `extra_metadata.langfuse_trace_id` is plain guarded SQLAlchemy.
+Streaming path (`chat_stream`) feedback→score remains a follow-up.

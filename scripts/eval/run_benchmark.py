@@ -147,6 +147,26 @@ def _print_refusal_table(refusal: dict) -> None:
         print(f"  [{c['verdict']:<12}] {c['question'][:46]:<46} → {c['answer'][:36]}")
 
 
+def _eval_preflight_problems(health: dict, judge_key) -> list[str]:
+    """Pure check of a `collect_provider_health()` dict + judge key. Returns a list
+    of blocking problems for a benchmark run (empty = ready). Targets the two failure
+    modes the report named: embedding/Ollama down mid-run, and a missing judge key."""
+    problems: list[str] = []
+    if not health.get("ok", True):
+        problems.append(f"settings validation failed: {health.get('validation_error')}")
+    es = (health.get("infra") or {}).get("elasticsearch") or {}
+    if es.get("reachable") is False:
+        problems.append(f"Elasticsearch unreachable: {es.get('error')}")
+    emb = (health.get("providers") or {}).get("embedding") or {}
+    if emb.get("reachable") is False:  # only local (ollama) sets False; cloud is None
+        problems.append(f"embedding provider unreachable ({emb.get('base_url')}) — ingest will fail")
+    if not emb.get("token_present", True):
+        problems.append(f"embedding provider '{emb.get('provider')}' token missing")
+    if not judge_key:
+        problems.append("judge API key missing for the selected --judge-provider")
+    return problems
+
+
 async def main() -> None:
     p = argparse.ArgumentParser(description="9-metric RAG benchmark")
     p.add_argument("--suite", default="vn", choices=["vn", "en", "both"])
@@ -158,8 +178,32 @@ async def main() -> None:
     p.add_argument("--group-size", type=int, default=0, help="merge N gold contexts per ingested doc (0=one per doc; >0 activates RAPTOR/distractors)")
     p.add_argument("--refusal-set", help="path to a JSON list of out-of-corpus questions; runs an abstention eval after the main run")
     p.add_argument("--out", help="report path (default data/eval/benchmark_<suite>.json)")
+    p.add_argument("--skip-preflight", action="store_true", help="run even if the env preflight finds problems")
     args = p.parse_args()
     validate_settings(settings)
+
+    # ── Preflight: fail fast on a half-up stack (ES/embedding down, no judge key) ──
+    from src.agentrag.health.providers import collect_provider_health
+
+    _judge_key = {
+        "gemini": settings.GEMINI_API_KEY,
+        "deepseek": settings.DEEPSEEK_API_KEY or settings.OPENAI_API_KEY,
+        "openai": settings.OPENAI_API_KEY,
+    }.get(args.judge_provider, settings.GEMINI_API_KEY)
+    _problems = _eval_preflight_problems(collect_provider_health(settings), _judge_key)
+    if _problems:
+        print("[PREFLIGHT] eval environment not ready:")
+        for _pr in _problems:
+            print("   -", _pr)
+        if not args.skip_preflight:
+            print("   → fix the above, or re-run with --skip-preflight to override.")
+            raise SystemExit(2)
+    else:
+        print("[PREFLIGHT] ok — ES + embedding + judge reachable")
+    # Fidelity note: cost/latency reflect the configured model map, not necessarily
+    # production. Run with the internal-model LLM_TASK_MODEL_MAP for representative cost.
+    print("[NOTE] cost/latency reflect the configured LLM_TASK_MODEL_MAP "
+          "(not production unless that map = your prod map).")
 
     if not settings.LLM_COST_TRACKING_ENABLED:
         print("[WARN] LLM_COST_TRACKING_ENABLED is false → cost/query will be 0.")

@@ -1,6 +1,8 @@
 export const bnIN = {
   common: {
     search: "অনুসন্ধান...",
+    any: "যেকোনো",
+    clear: "মুছুন",
     create: "নতুন",
     new: "নতুন",
     cancel: "বাতিল",
@@ -213,6 +215,8 @@ export const bnIN = {
     transformation: "ট্রান্সফরমেশন",
     settings: "সেটিংস",
     advanced: "উন্নত",
+    cost: "খরচ ও টোকেন",
+    activity: "কার্যকলাপ",
     nav: "নেভিগেশন",
     language: "ভাষা টগল",
     theme: "থিম",
@@ -455,6 +459,11 @@ export const bnIN = {
     sessionCreated: "চ্যাট সেশন তৈরি হয়েছে",
     sessionUpdated: "সেশন আপডেট হয়েছে",
     sessionDeleted: "সেশন মুছে ফেলা হয়েছে",
+    trace: "ট্রেস",
+    viewTrace: "যুক্তি ট্রেস দেখুন",
+    domainFilter: "ডোমেন",
+    domainSystem: "শরীরের সিস্টেম",
+    domainSpecialty: "বিশেষত্ব",
   },
   ragSignals: {
     fastPath: "Fast path",

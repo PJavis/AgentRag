@@ -1,6 +1,8 @@
 export const ptBR = {
   common: {
     search: "Buscar...",
+    any: "Qualquer",
+    clear: "Limpar",
     create: "Novo",
     new: "Novo",
     cancel: "Cancelar",
@@ -213,6 +215,8 @@ export const ptBR = {
     transformation: "Transformação",
     settings: "Configurações",
     advanced: "Avançado",
+    cost: "Custo e Tokens",
+    activity: "Atividade",
     nav: "Navegação",
     language: "Alternar idioma",
     theme: "Tema",
@@ -455,6 +459,11 @@ export const ptBR = {
     sessionCreated: "Sessão de chat criada",
     sessionUpdated: "Sessão atualizada",
     sessionDeleted: "Sessão excluída",
+    trace: "Rastro",
+    viewTrace: "Ver rastro de raciocínio",
+    domainFilter: "Domínio",
+    domainSystem: "Sistema corporal",
+    domainSpecialty: "Especialidade",
   },
   ragSignals: {
     fastPath: "Fast path",

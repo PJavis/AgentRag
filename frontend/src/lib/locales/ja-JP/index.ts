@@ -1,6 +1,8 @@
 export const jaJP = {
   common: {
     search: "検索...",
+    any: "すべて",
+    clear: "クリア",
     create: "新規",
     new: "新規",
     cancel: "キャンセル",
@@ -213,6 +215,8 @@ export const jaJP = {
     transformation: "トランスフォーメーション",
     settings: "設定",
     advanced: "詳細設定",
+    cost: "コストとトークン",
+    activity: "アクティビティ",
     nav: "ナビゲーション",
     language: "言語を切り替え",
     theme: "テーマ",
@@ -455,6 +459,11 @@ export const jaJP = {
     sessionCreated: "チャットセッションを作成しました",
     sessionUpdated: "セッションを更新しました",
     sessionDeleted: "セッションを削除しました",
+    trace: "トレース",
+    viewTrace: "推論トレースを表示",
+    domainFilter: "ドメイン",
+    domainSystem: "身体系統",
+    domainSpecialty: "専門分野",
   },
   ragSignals: {
     fastPath: "Fast path",

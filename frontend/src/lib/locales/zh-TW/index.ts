@@ -1,6 +1,8 @@
 export const zhTW = {
   common: {
     search: "搜尋...",
+    any: "任意",
+    clear: "清除",
     create: "新增",
     new: "新建",
     cancel: "取消",
@@ -213,6 +215,8 @@ export const zhTW = {
     transformation: "轉換",
     settings: "設定",
     advanced: "進階",
+    cost: "費用與令牌",
+    activity: "活動",
     nav: "導覽",
     language: "切換語言",
     theme: "主題",
@@ -455,6 +459,11 @@ export const zhTW = {
     sessionCreated: "聊天會話已建立",
     sessionUpdated: "會話已更新",
     sessionDeleted: "會話已刪除",
+    trace: "推理鏈路",
+    viewTrace: "查看推理鏈路",
+    domainFilter: "領域",
+    domainSystem: "身體系統",
+    domainSpecialty: "專科",
   },
   ragSignals: {
     fastPath: "Fast path",

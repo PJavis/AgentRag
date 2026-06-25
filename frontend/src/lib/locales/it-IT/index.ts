@@ -1,6 +1,8 @@
 export const itIT = {
   common: {
     search: "Cerca...",
+    any: "Qualsiasi",
+    clear: "Cancella",
     create: "Nuovo",
     new: "Nuovo",
     cancel: "Annulla",
@@ -213,6 +215,8 @@ export const itIT = {
     transformation: "Trasformazione",
     settings: "Impostazioni",
     advanced: "Avanzate",
+    cost: "Costo e token",
+    activity: "Attività",
     nav: "Navigazione",
     language: "Cambia lingua",
     theme: "Tema",
@@ -455,6 +459,11 @@ export const itIT = {
     sessionCreated: "Sessione chat creata",
     sessionUpdated: "Sessione aggiornata",
     sessionDeleted: "Sessione eliminata",
+    trace: "Traccia",
+    viewTrace: "Vedi traccia di ragionamento",
+    domainFilter: "Dominio",
+    domainSystem: "Sistema corporeo",
+    domainSpecialty: "Specialità",
   },
   ragSignals: {
     fastPath: "Fast path",

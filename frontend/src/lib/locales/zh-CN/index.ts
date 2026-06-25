@@ -1,6 +1,8 @@
 export const zhCN = {
   common: {
     search: "搜索...",
+    any: "任意",
+    clear: "清除",
     create: "新建",
     new: "新建",
     cancel: "取消",
@@ -213,6 +215,8 @@ export const zhCN = {
     transformation: "转换",
     settings: "设置",
     advanced: "高级",
+    cost: "费用与令牌",
+    activity: "活动",
     nav: "导航",
     language: "切换语言",
     theme: "主题",
@@ -455,6 +459,11 @@ export const zhCN = {
     sessionCreated: "聊天会话已创建",
     sessionUpdated: "会话已更新",
     sessionDeleted: "会话已删除",
+    trace: "推理链路",
+    viewTrace: "查看推理链路",
+    domainFilter: "领域",
+    domainSystem: "身体系统",
+    domainSpecialty: "专科",
   },
   ragSignals: {
     fastPath: "Fast path",

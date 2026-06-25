@@ -1,6 +1,8 @@
 export const esES = {
   common: {
     search: "Buscar...",
+    any: "Cualquiera",
+    clear: "Limpiar",
     create: "Nuevo",
     new: "Nuevo",
     cancel: "Cancelar",
@@ -213,6 +215,8 @@ export const esES = {
     transformation: "Transformación",
     settings: "Configuración",
     advanced: "Avanzado",
+    cost: "Costo y tokens",
+    activity: "Actividad",
     nav: "Navegación",
     language: "Cambiar idioma",
     theme: "Tema",
@@ -455,6 +459,11 @@ export const esES = {
     sessionCreated: "Sesión de chat creada",
     sessionUpdated: "Sesión actualizada",
     sessionDeleted: "Sesión eliminada",
+    trace: "Traza",
+    viewTrace: "Ver traza de razonamiento",
+    domainFilter: "Dominio",
+    domainSystem: "Sistema corporal",
+    domainSpecialty: "Especialidad",
   },
   ragSignals: {
     fastPath: "Fast path",

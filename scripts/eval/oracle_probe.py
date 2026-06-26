@@ -109,30 +109,43 @@ async def main(args: argparse.Namespace) -> None:
         examples = load_suite(args.suite, n=args.n)
         print(f"[probe] {len(examples)} examples (suite={args.suite}, n={args.n})")
 
+    async def _score_one(ex) -> ProbeRow:
+        gold_ctx = "\n".join(ex.gold_contexts)
+        out = await agent.chat(question=ex.question, document_title=None, conversation_id=f"probe-{ex.id}")
+        if out.get("timed_out"):
+            # graceful agent timeout (total-budget) is not a scorable answer — retry/skip it
+            raise RuntimeError("agent timed_out")
+        system_ans = out.get("answer", "") or ""
+        oracle_ans = await generate_oracle_answer(ex.question, gold_ctx, gateway)
+        sys_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway)
+        ora_e = await score_correctness(ex.question, oracle_ans, ex.reference_answer, gold_ctx, gateway)
+        # judge2 routes through the eval_judge2 task slot — map LLM_TASK_MODEL_MAP.eval_judge2
+        # to a DIFFERENT model to get a real cross-model noise floor; if it is unmapped,
+        # judge2 falls back to the same model and the pearson is ~1.0 (self-consistency only).
+        j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway, task="eval_judge2")
+        return ProbeRow(ex.id, sys_e.mean, ora_e.mean, j2_e.mean)
+
     rows: list[ProbeRow] = []
     failures = 0
     for i, ex in enumerate(examples):
-        gold_ctx = "\n".join(ex.gold_contexts)
-        try:
-            out = await agent.chat(question=ex.question, document_title=None, conversation_id=f"probe-{ex.id}")
-            system_ans = out.get("answer", "") or ""
-            oracle_ans = await generate_oracle_answer(ex.question, gold_ctx, gateway)
-
-            sys_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway)
-            ora_e = await score_correctness(ex.question, oracle_ans, ex.reference_answer, gold_ctx, gateway)
-            # judge2 routes through the eval_judge2 task slot — map LLM_TASK_MODEL_MAP.eval_judge2
-            # to a DIFFERENT model to get a real cross-model noise floor; if it is unmapped,
-            # judge2 falls back to the same model and the pearson is ~1.0 (self-consistency only).
-            j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway, task="eval_judge2")
-        except Exception as exc:
-            # One transient provider error (e.g. gemini 503 high-demand) must not abort the
-            # whole run — skip this question and keep going, like run_benchmark does.
-            failures += 1
-            print(f"  [{i+1}/{len(examples)}] ERR {type(exc).__name__}: skipped", flush=True)
+        row: ProbeRow | None = None
+        for attempt in range(args.retries + 1):
+            try:
+                row = await _score_one(ex)
+                break
+            except Exception as exc:
+                # Transient provider errors (gemini 503 high-demand, agent timeout) shouldn't
+                # skip a question on first failure — retry with exponential backoff so a clean
+                # high-n run isn't decimated by overload spikes. Skip only after exhausting.
+                if attempt < args.retries:
+                    await asyncio.sleep(args.retry_sleep * (2 ** attempt))
+                    continue
+                failures += 1
+                print(f"  [{i+1}/{len(examples)}] ERR {type(exc).__name__}: skipped after {args.retries + 1} tries", flush=True)
+        if row is None:
             continue
-
-        rows.append(ProbeRow(ex.id, sys_e.mean, ora_e.mean, j2_e.mean))
-        print(f"  [{i+1}/{len(examples)}] sys={sys_e.mean:.2f} oracle={ora_e.mean:.2f}", flush=True)
+        rows.append(row)
+        print(f"  [{i+1}/{len(examples)}] sys={row.system_mean:.2f} oracle={row.oracle_mean:.2f}", flush=True)
 
     if failures:
         print(f"[probe] {failures}/{len(examples)} questions skipped on provider errors", flush=True)
@@ -154,6 +167,10 @@ def parse_args() -> argparse.Namespace:
                    help="path to a local JSONL eval set (EvalExample shape); overrides --suite")
     p.add_argument("--n", type=int, default=20, help="examples per dataset")
     p.add_argument("--out", default="docs/eval/eval_fidelity_probe.md")
+    p.add_argument("--retries", type=int, default=2,
+                   help="retries per question on transient provider error / agent timeout")
+    p.add_argument("--retry-sleep", type=float, default=8.0,
+                   help="base backoff seconds between retries (exponential)")
     return p.parse_args()
 
 

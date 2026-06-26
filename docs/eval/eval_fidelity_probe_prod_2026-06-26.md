@@ -36,10 +36,45 @@ ensemble judge + realistic gold answers**, that cap is gone:
    correctness number is judge-stable, not noise. A low pearson would invalidate everything; 0.965
    validates it.
 3. **Ruler now resolves real system signal.** The **+0.134** gap is not a uniform ceiling — it is a
-   **retrieval-failure tail**: 3 of 26 questions (`0.00`, `0.00`, `0.25`) where the live system
-   retrieved the wrong chunk / answered wrong while the oracle, *given the gold chunk*, nailed it.
-   ~17/26 score 1.0. The old eval could not surface these misses; this one does, and they are
-   actionable (retrieval, not the metric).
+   small tail of failures: 3 of 26 questions (`0.00`, `0.00`, `0.25`). ~17/26 score 1.0. The old
+   eval could not surface these; this one does, and they are actionable. **Investigated (see
+   addendum) — the misses are NOT retrieval failures: they are flaky false-abstentions at the
+   relevance floor.**
+
+## Addendum — root cause of the 3 misses (2026-06-26, systematic-debugging)
+
+Rows 11/18/21 (pest-risk law, China factory accidents, Bob Marley). Evidence gathered at each
+component boundary:
+
+- **Retrieval is fine.** Hybrid search returns the gold source-chunk at **rank 0** for all three.
+- **Generation is fine.** When not gated, the agent answers correctly (e.g. row 21 → "Bob Marley
+  died at 36 of a malignant tumor [1]…", matches gold).
+- **The gate is the culprit — and it's flaky.** `_is_thin_context` (service.py:67) abstains when
+  `max(rerank_score) < RETRIEVAL_RELEVANCE_FLOOR (0.6)`. The bge cross-encoder
+  (`dengcao/bge-reranker-v2-m3`) scores the one relevant chunk at **~0.61–0.73 and every other
+  chunk a flat 0.5** (it only meaningfully scores the top hit). The agent fires the question +3 LLM
+  query-rewrites, so the max rerank score wobbles **right around 0.6** run-to-run: one run scored
+  the top chunk **0.619 → answered correctly**; other runs (incl. the probe) dipped **< 0.6 →
+  abstained** ("Tài liệu hiện có không có thông tin để trả lời câu hỏi này") → judge scores 0.
+
+**Root cause:** borderline false-abstention at the `RETRIEVAL_RELEVANCE_FLOOR=0.6` boundary. The
+floor (T7-calibrated at "in-corpus ~0.73" on a *different* set) sits inside the score mass of
+genuinely-relevant-but-paraphrased Vietnamese chunks, so normal rewrite/rerank variance flips
+answer↔abstain. Not retrieval, not generation.
+
+**Side finding (separate bug):** `agent.chat` can **hang indefinitely** under a stalled gemini
+connection (no per-call timeout) — observed a 42-minute hang on one question. Worth a request
+timeout on the gateway client.
+
+**Fix options (safety-sensitive — lowering the floor re-admits OOC hallucination, the exact thing
+the gate was added to prevent):**
+1. Lower `RETRIEVAL_RELEVANCE_FLOOR` modestly (e.g. 0.6 → 0.55) for borderline margin — re-validate
+   OOC abstention doesn't regress (T7 set: OOC ~0.50, so 0.55 keeps separation).
+2. Make the gate less knife-edge: require the best chunk to clear the floor by a margin, or average
+   the top-k real scores, instead of a single-chunk `max < floor` flip.
+3. Make query-rewrite deterministic (temperature 0) so the same question doesn't flip between runs.
+4. Recalibrate the floor against the *prod* corpus relevance distribution (the synthetic prod-Q mass
+   centers lower than T7's validation set).
 
 **So: the eval is measurably better.** It credits correctness up to ~0.98 (vs the old 0.74 cap),
 agrees across judge models, and exposes the system's true headroom as identifiable retrieval
@@ -64,16 +99,17 @@ failures rather than an inscrutable plateau.
 ## Gate decision
 
 **The eval-fidelity goal is met: the new ensemble ruler resolves correctness where the old one
-plateaued.** Adopt it. The system's measured headroom is **retrieval** (3 hard misses), not the
-metric — so resuming retrieval tuning is now worthwhile *and measurable*.
+plateaued.** Adopt it. The first concrete, eval-surfaced system bug is **flaky false-abstention at
+the relevance floor** (see addendum) — NOT retrieval. Fixing it is a safety-gate tuning decision.
 
 **Next:**
-1. Tighten gold-answer prompt (drop the "based on the context" preamble) → oracle → ~1.0.
-2. Add the multi-chunk subset (v1.1) so the eval discriminates across the whole set, not just the tail.
-3. Human calibration spot-check (25–30 Q, κ ≥ 0.7) to trust absolute numbers.
-4. Re-run at higher n with retry/backoff on 503 (or off-peak) to cut the skip rate.
-5. Investigate the 3 retrieval misses (Q with sys=0.00/0.25) — the first concrete, eval-surfaced
-   system bug.
+1. ✅ Tightened gold-answer prompt (commit `872a863`, drops the "based on the context" preamble) →
+   regenerate eval set to take effect.
+2. **Fix the floor flakiness** (addendum fix options) — re-validate OOC abstention doesn't regress.
+3. Add the multi-chunk subset (v1.1) so the eval discriminates across the whole set, not just the tail.
+4. Human calibration spot-check (25–30 Q, κ ≥ 0.7) to trust absolute numbers.
+5. Re-run at higher n with retry/backoff on 503 (or off-peak) to cut the skip rate.
+6. Add a per-call request timeout on the gateway client (the 42-min `agent.chat` hang).
 
 ## Files
 `scripts/eval/build_prod_evalset.py`, `scripts/eval/oracle_probe.py`,

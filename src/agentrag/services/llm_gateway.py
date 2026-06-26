@@ -71,10 +71,11 @@ class LLMGateway:
         system_prompt: str,
         user_prompt: str,
         task: str = "general",
+        temperature: float | None = None,
     ) -> tuple[dict[str, Any], float]:
         client = self._resolve_client(task, content=system_prompt + user_prompt)
         started = time.perf_counter()
-        payload = await client.json_response(system_prompt, user_prompt, task=task)
+        payload = await client.json_response(system_prompt, user_prompt, task=task, temperature=temperature)
         latency_ms = (time.perf_counter() - started) * 1000
         return payload, latency_ms
 

@@ -224,6 +224,7 @@ class AgentLLM:
         system_prompt: str,
         user_prompt: str,
         task: str = "json",
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
         # DeepSeek (and some other OpenAI-compatible backends) reject
@@ -234,7 +235,7 @@ class AgentLLM:
             system_prompt = (system_prompt + "\n\nRespond with a valid JSON object.").strip()
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            temperature=self.temperature,
+            temperature=self.temperature if temperature is None else temperature,
             max_tokens=settings.AGENT_MAX_OUTPUT_TOKENS,
             response_format={"type": "json_object"},
             messages=[

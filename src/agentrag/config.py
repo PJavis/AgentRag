@@ -120,11 +120,15 @@ class Settings(BaseSettings):
     #: Only effective with RETRIEVAL_RERANK_BACKEND=local_cross_encoder (the only
     #: backend that emits a score). Default OFF (changes answer behavior).
     RETRIEVAL_RELEVANCE_GATE_ENABLED: bool = False
-    #: Calibrated 2026-06-19: bge-reranker-v2-m3 (sigmoid) scores irrelevant/off-corpus
-    #: content ~0.50 (logit≈0) and relevant top-chunks ~0.73 — cleanly bimodal. 0.6 sits
-    #: in the gap. The old 0.3 was BELOW the whole output range → every floor-based feature
-    #: was inert (see docs/eval/benchmark_abstain_ab_2026-06-19_vi.md). Re-measure per corpus.
-    RETRIEVAL_RELEVANCE_FLOOR: float = 0.6
+    #: bge-reranker-v2-m3 (sigmoid) scores off-corpus content ~0.50 (logit≈0). 2026-06-19
+    #: calibration put relevant top-chunks ~0.73 and set the floor at 0.6; the 2026-06-26
+    #: prod-corpus probe (docs/eval/eval_fidelity_probe_prod_2026-06-26.md) found that
+    #: PARAPHRASED relevant VN chunks score as low as ~0.61 and jitter under 0.6 across the
+    #: agent's query-rewrites → flaky FALSE-abstention with the gold chunk at rank 0. Lowered
+    #: to 0.55 — mid-band between OOC ~0.50 and low-relevant ~0.61, giving ~0.05 margin both
+    #: sides (this realises the "margin/anti-knife-edge" intent without a separate constant
+    #: that would double-loosen). Re-measure + re-validate OOC abstention per corpus.
+    RETRIEVAL_RELEVANCE_FLOOR: float = 0.55
     #: When best rerank score is in [floor, floor+GRAY_MARGIN), treat the
     #: context as uncertain and force the strong-abstain prompt (out-of-corpus
     #: distractors that score just over the floor → confident-hallucination fix).
@@ -141,6 +145,11 @@ class Settings(BaseSettings):
     ANSWER_ABSTAIN_ON_THIN_CONTEXT: bool = True
 
     AGENT_MAX_STEPS: int = 3   # serial decide→tool round-trips; lower = faster p50
+    #: Per-request timeout (seconds) for every AsyncOpenAI client (make_async_openai).
+    #: Guards against a stalled provider connection hanging a call indefinitely — a
+    #: 42-min agent.chat hang was observed under gemini high-demand (2026-06-26). On
+    #: timeout the openai SDK retries rather than blocking forever.
+    LLM_REQUEST_TIMEOUT_S: float = 60.0
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10

@@ -52,6 +52,36 @@ The `e4eb895` "checkpoint" commit shipped two breakages; unit tests masked both 
   `data/originals` with realistic gold (the deferred A/B, now the priority) + consider a
   rubric/reference-free correctness judge. Only then is the P3 embedding/reranker fine-tune
   (the remaining structural lever) worth measuring.
+- **✅ RESOLVED (2026-06-26) — the ruler was built; the 0.74 cap was the OLD metric.**
+  Ensemble correctness judge (`src/agentrag/eval/correctness_judge.py`, nugget-recall +
+  reference-guided rubric, `task`-routable) + prod-corpus eval set
+  (`scripts/eval/build_prod_evalset.py`, synth-Q + grounded gold over `Segment.content`, no
+  re-ingest) + oracle probe (`scripts/eval/oracle_probe.py`). Prod-corpus probe
+  (`docs/eval/eval_fidelity_probe_prod_2026-06-26.md`): the new judge credits a correct answer
+  **~0.98** (oracle) — NOT capped at 0.74 — and two judge models (flash vs pro) agree **0.965**
+  (trustworthy). So the plateau was **RAGAS `answer_correctness` (claim-F1) penalising
+  extra-true/rephrased claims vs terse public gold**, not a universal eval cap. **Adopt the
+  ensemble ruler.**
+
+## 🟢 Abstain robustness — flaky false-abstention fixed (2026-06-26)
+The prod-corpus probe surfaced 3 questions the live system refused **despite the gold chunk at
+rank 0**. Root-caused (systematic-debugging) to the thin-context abstain gate — NOT retrieval,
+NOT generation:
+- **Floor `0.6→0.55`** (`f5dfe76`) — bge scores paraphrased-relevant VN chunks ~0.61 (others a
+  flat 0.5); the agent's query-rewrites made `max(rerank_score)` wobble around 0.6 → flip
+  answer↔abstain run-to-run. 0.55 sits mid-band (OOC ~0.50 | floor | relevant ~0.61).
+- **Raw-question retrieval injected into the rerank pool** (`c706d6c`,
+  `RETRIEVAL_INCLUDE_RAW_QUERY=true`) — the agent's decide-step rewrites (hybrid_kg + variants)
+  retrieved worse chunks than the raw question; injecting the raw hits guarantees rewrites only
+  ADD, never drop the best chunk below the floor.
+- **Deterministic query-rewrite** (temp 0, threaded through `json_response`).
+- **Hang budget** (`dcbe196`, `AGENT_TOTAL_TIMEOUT_S=90` + per-call `LLM_REQUEST_TIMEOUT_S=60`) —
+  bounds the whole `agent.chat` loop; graceful "busy, retry" on exceed (a 42-min hang was
+  observed under a gemini 503 storm).
+- **Validated** (`docs/eval/eval_fidelity_probe_prod_v2_2026-06-26.md`): system
+  **0.842→0.950**, oracle−system **+0.134→+0.019** (gap → noise), **0 hard misses (was 3)**,
+  OOC safety preserved (genuine out-of-corpus still abstains at 0.55). Directional (n=20, high
+  gemini-503 skip) — a cleaner higher-n run is the home-run follow-up.
 
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each

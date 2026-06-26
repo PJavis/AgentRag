@@ -97,3 +97,43 @@ uv run python scripts/finetune_dpo.py --method kto \
 **AuthZ IDOR** (`docs/security/authz-audit-2026-06-25.md`): notebooks/sources/notes endpoints
 have no per-user ownership check. Fine for **single-user/on-prem**; a launch blocker if
 **multi-tenant** (decide the tenancy model, then add the ownership dependency).
+
+## 5. Eval-fidelity probe — the new ruler (2026-06-26)
+
+The 0.74 `answer_correctness` plateau was the OLD RAGAS claim-F1 metric, not a system limit. A new
+**ensemble correctness judge** (nugget-recall + reference-guided rubric) over a **prod-corpus eval
+set** measures correctness honestly. Background: `docs/eval/eval_fidelity_probe_prod_2026-06-26.md`
+(+ `_v2_` post-fix). This also surfaced + fixed a flaky false-abstention
+(`docs/INSTRUCTION-abstain-thin-context-2026-06-16.md` → 2026-06-26 update).
+
+**Relevant `.env` (cloud/gemini path; all have safe code defaults):**
+```bash
+# eval task slots — strong oracle/gold, flash-vs-pro judge noise floor (gemini path)
+LLM_TASK_MODEL_MAP={..., "oracle_gen":"gemini-2.5-pro","gold_gen":"gemini-2.5-pro",
+                    "eval_judge":"gemini-2.5-flash","eval_judge2":"gemini-2.5-pro"}
+RETRIEVAL_RELEVANCE_FLOOR=0.55       # calibrated (was 0.6 — flaky false-abstain)
+RETRIEVAL_INCLUDE_RAW_QUERY=true     # inject raw-question hits into the rerank pool
+AGENT_TOTAL_TIMEOUT_S=90             # bound the whole agent.chat loop (graceful "busy")
+LLM_REQUEST_TIMEOUT_S=60             # per-call gemini timeout
+```
+> Claude in the eval slots is deferred — the gateway has no `anthropic` provider yet + no
+> `ANTHROPIC_API_KEY` (see `agent/llm.py::_resolve_backend_for`).
+
+**Run it** (stack up; the corpus already ingested in ES; no re-ingest):
+```bash
+# 1. build a prod-corpus eval set (synth-Q + grounded gold over Segment.content)
+uv run python scripts/eval/build_prod_evalset.py --n 50 --out data/eval/prod_corpus_evalset.jsonl
+
+# 2. probe: live system vs oracle (perfect retrieval + strong model), ensemble-judged,
+#    --retries rides out gemini 503 spikes
+uv run python scripts/eval/oracle_probe.py \
+  --eval-set data/eval/prod_corpus_evalset.jsonl --n 50 --retries 3 \
+  --out docs/eval/eval_fidelity_probe_prod.md
+```
+A **ready 50-row eval set** from this session is already at `data/eval/prod_corpus_evalset_v3.jsonl`
+(gitignored) — point `--eval-set` at it to skip the rebuild.
+
+**Read:** `oracle − system` small (< ~0.05) → system is at the eval ceiling (the metric, not
+retrieval/generation, is the cap); `judge-noise pearson` high → the judge is trustworthy. The v2
+run got system **0.950**, gap **+0.019**, 0 hard misses — a cleaner higher-n run is the home-run
+follow-up to firm up the (directional, n=20) numbers.

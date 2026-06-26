@@ -115,3 +115,38 @@ def load_suite(suite: str, n: int = 30) -> list[EvalExample]:
     for name in SUITES[suite]:
         examples.extend(load_eval_examples(name, n=n))
     return examples
+
+
+def load_local_jsonl(path: str, n: int | None = None) -> list[EvalExample]:
+    """Load EvalExamples from a local JSONL file (prod-corpus eval set).
+
+    Each line is a JSON object with at least `question` and `gold_contexts`.
+    Rows missing either are skipped (they can't be scored). `n` caps the count.
+    """
+    import json as _json
+
+    out: list[EvalExample] = []
+    with open(path, encoding="utf-8") as f:
+        for idx, line in enumerate(f):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            question = str(row.get("question", "")).strip()
+            contexts = _as_context_list(row.get("gold_contexts"))
+            if not question or not contexts:
+                continue
+            out.append(EvalExample(
+                id=str(row.get("id") or f"local-{idx}"),
+                question=question,
+                reference_answer=str(row.get("reference_answer", "")).strip(),
+                gold_contexts=contexts,
+                lang=str(row.get("lang", "en")),
+                source=str(row.get("source", "local")),
+            ))
+            if n is not None and len(out) >= n:
+                break
+    return out

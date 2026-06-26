@@ -79,9 +79,9 @@ def summarize_probe(rows: list[ProbeRow]) -> dict:
     }
 
 
-def _render(summary: dict, suite: str, n: int) -> str:
+def _render(summary: dict, label: str, n: int) -> str:
     return (
-        f"# Eval-fidelity probe — {suite} n={n}\n\n"
+        f"# Eval-fidelity probe — {label} n={n}\n\n"
         f"- examples: {summary['n']}\n"
         f"- system avg (ensemble): {summary['system_avg']:.3f}\n"
         f"- oracle avg (strong model + gold context): {summary['oracle_avg']:.3f}\n"
@@ -101,8 +101,13 @@ async def main(args: argparse.Namespace) -> None:
 
     gateway = LLMGateway()
     agent = get_agent_service()
-    examples = load_suite(args.suite, n=args.n)
-    print(f"[probe] {len(examples)} examples (suite={args.suite}, n={args.n})")
+    if args.eval_set:
+        from src.agentrag.eval.benchmark_datasets import load_local_jsonl
+        examples = load_local_jsonl(args.eval_set, n=args.n)
+        print(f"[probe] {len(examples)} examples (eval-set={args.eval_set}, n={args.n})")
+    else:
+        examples = load_suite(args.suite, n=args.n)
+        print(f"[probe] {len(examples)} examples (suite={args.suite}, n={args.n})")
 
     rows: list[ProbeRow] = []
     for i, ex in enumerate(examples):
@@ -124,7 +129,8 @@ async def main(args: argparse.Namespace) -> None:
     summary = summarize_probe(rows)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(_render(summary, args.suite, args.n), encoding="utf-8")
+    label = args.eval_set if args.eval_set else args.suite
+    out_path.write_text(_render(summary, label, args.n), encoding="utf-8")
     print(f"[probe] wrote {out_path}")
     print(f"[probe] oracle−system = {summary['oracle_minus_system']:+.3f}, "
           f"judge-noise = {summary['judge_noise_pearson']:.3f}")
@@ -133,6 +139,8 @@ async def main(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--suite", default="vn", choices=["vn", "en", "both"])
+    p.add_argument("--eval-set", default=None,
+                   help="path to a local JSONL eval set (EvalExample shape); overrides --suite")
     p.add_argument("--n", type=int, default=20, help="examples per dataset")
     p.add_argument("--out", default="docs/eval/eval_fidelity_probe.md")
     return p.parse_args()

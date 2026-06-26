@@ -129,6 +129,14 @@ class Settings(BaseSettings):
     #: sides (this realises the "margin/anti-knife-edge" intent without a separate constant
     #: that would double-loosen). Re-measure + re-validate OOC abstention per corpus.
     RETRIEVAL_RELEVANCE_FLOOR: float = 0.55
+    #: Always merge a plain-hybrid retrieval on the RAW question into the rerank
+    #: candidate pool (ContextAssembler). The agent's decide-step rewrites/sub-queries
+    #: (hybrid_kg + variants) can retrieve worse chunks than the raw question and drop the
+    #: packed-context max rerank below the floor → flaky false-abstain (2026-06-26 row21:
+    #: raw hybrid = 0.716, agent pool topped at <floor). Injecting the raw hits guarantees
+    #: rewrites only ADD, never degrade. Doesn't loosen OOC (raw OOC query still ~0.50).
+    RETRIEVAL_INCLUDE_RAW_QUERY: bool = True
+    RETRIEVAL_RAW_QUERY_TOP_K: int = 8
     #: When best rerank score is in [floor, floor+GRAY_MARGIN), treat the
     #: context as uncertain and force the strong-abstain prompt (out-of-corpus
     #: distractors that score just over the floor → confident-hallucination fix).

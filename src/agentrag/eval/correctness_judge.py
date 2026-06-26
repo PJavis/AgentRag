@@ -10,6 +10,7 @@ directly. Async orchestration (Task 2) injects an LLM gateway.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 
@@ -69,3 +70,72 @@ def ensemble(nugget: float, rubric: float, *, delta_threshold: float = 0.2) -> E
         abs_delta=abs_delta,
         low_confidence=abs_delta > delta_threshold,
     )
+
+
+_NUGGET_EXTRACT_SYSTEM = (
+    "You extract atomic factual claims from a reference answer. Break the "
+    "reference into the smallest standalone must-have facts a correct answer "
+    "must convey. Do not invent facts not present. Same language as the input. "
+    'Return strict JSON: {"nuggets": ["fact 1", "fact 2", ...]}'
+)
+
+_NUGGET_SCORE_SYSTEM = (
+    "You compare a candidate answer against a list of required facts (nuggets). "
+    "For each nugget, output exactly one label:\n"
+    "  covered      - the answer states this fact (any phrasing).\n"
+    "  contradicted - the answer states something that conflicts with this fact.\n"
+    "  absent       - the answer neither states nor contradicts it.\n"
+    "Extra correct information in the answer is fine and must NOT be penalized. "
+    'Return strict JSON: {"labels": ["covered", "absent", ...]} in nugget order.'
+)
+
+_RUBRIC_SYSTEM = (
+    "You are a strict grader. Given a question, a reference (gold) answer, the "
+    "gold context, and a candidate answer, rate how correctly and completely the "
+    "candidate answers the question. Credit valid paraphrase and extra correct "
+    "facts; penalize only wrong, missing, or contradictory content.\n"
+    "Anchors: 1.0 fully correct & complete; 0.7 correct, minor gap; 0.4 partially "
+    "correct; 0.0 wrong or contradicts the gold.\n"
+    'Return strict JSON: {"score": <float 0-1>, "reason": "<one sentence>"}'
+)
+
+
+async def extract_nuggets(gold: str, gateway) -> list[str]:
+    raw, _ = await gateway.json_response(
+        system_prompt=_NUGGET_EXTRACT_SYSTEM,
+        user_prompt=gold,
+        task="eval_judge",
+    )
+    return parse_nuggets(raw)
+
+
+async def score_nuggets(question: str, answer: str, nuggets: list[str], gateway) -> NuggetScore:
+    if not nuggets:
+        return NuggetScore(0, 0, 0, 0.0, 0.0, 0.0)
+    user = json.dumps(
+        {"question": question, "answer": answer, "nuggets": nuggets},
+        ensure_ascii=False,
+    )
+    raw, _ = await gateway.json_response(
+        system_prompt=_NUGGET_SCORE_SYSTEM, user_prompt=user, task="eval_judge"
+    )
+    labels = [l for l in (raw.get("labels") or []) if isinstance(l, str)]
+    return aggregate_nugget_labels(labels)
+
+
+async def score_rubric(question: str, answer: str, gold: str, gold_context: str, gateway) -> float:
+    user = json.dumps(
+        {"question": question, "gold_answer": gold, "gold_context": gold_context[:4000], "answer": answer},
+        ensure_ascii=False,
+    )
+    raw, _ = await gateway.json_response(
+        system_prompt=_RUBRIC_SYSTEM, user_prompt=user, task="eval_judge"
+    )
+    return clamp01(raw.get("score") or 0.0)
+
+
+async def score_correctness(question: str, answer: str, gold: str, gold_context: str, gateway) -> EnsembleScore:
+    nuggets = await extract_nuggets(gold, gateway)
+    ns = await score_nuggets(question, answer, nuggets, gateway)
+    rubric = await score_rubric(question, answer, gold, gold_context, gateway)
+    return ensemble(ns.score, rubric)

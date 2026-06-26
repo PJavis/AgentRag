@@ -44,6 +44,42 @@ ranks by `.encode()` cosine — a **bi-encoder** eval. A **cross-encoder reranke
 improves real-corpus retrieval. GATE 2 is inconclusive only because the eval tool is bi-encoder-
 only — the reranker is trained and awaits a proper rerank eval. Goal criterion 1 = **PASS**.
 
+## Criterion 2 — end-to-end propagation: execution runbook (turnkey)
+
+Does the retrieval gain propagate to ANSWER correctness? Requires promoting the FT embedding
+(serve + re-ingest at its dim) then an oracle probe. **Environment-gated** — pick one:
+
+**A. Company (gemini) — the TRUSTWORTHY version (criterion 2 as written):**
+```bash
+# 1. promote FT embedding: serve agentrag-embed-v1 via TEI, point .env at it
+make serve-embed                       # serves $FT_OUT_EMBED on :8080 (TEI)
+# .env: EMBEDDING_MODEL=agentrag-embed-v1  EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/
+#       EMBEDDING_OUTPUT_DIM=768   (e5-base dim; bge-m3 was 1024 → new index)
+# 2. re-ingest the real corpus with the FT embedding (text-only, no MinerU/vLLM, no RAPTOR):
+VISION_PROVIDER= PDF_PARSER_BACKEND=pymupdf PDF_OCR_FALLBACK_ENABLED=false \
+  RAPTOR_ENABLED=false CONTEXTUAL_RETRIEVAL_ENABLED=false STRUCTMEM_INGEST_MODE=async \
+  PYTHONPATH=$PWD uv run python - <<'PY'  # or reuse ~/_lean_ingest.py
+import asyncio; from src.agentrag.ingestion.pipeline import ingest_folder
+asyncio.run(ingest_folder("data/originals"))
+PY
+# 3. build eval set + oracle probe with the GEMINI eval slots (paid):
+#    LLM_TASK_MODEL_MAP=...gemini eval slots (see .env.example "Eval-fidelity run" block)
+uv run python scripts/eval/build_prod_evalset.py --n 50 --out data/eval/prod_corpus_evalset.jsonl
+uv run python scripts/eval/oracle_probe.py --eval-set data/eval/prod_corpus_evalset.jsonl \
+  --n 50 --retries 3 --out docs/eval/eval_fidelity_probe_FT_embed.md
+# Compare FT-system correctness vs the baseline (bge-m3) probe. Above noise → DEPLOY.
+```
+Then re-run for baseline (bge-m3 embedding) and diff. **Decision rule:** FT correctness − baseline
+> noise floor → deploy FT embedding; else keep model, note "retrieval gain didn't propagate."
+
+**B. Home (deepseek judge) — DIRECTIONAL only:** same steps but all-deepseek eval slots (the
+self-preference caveat applies — not the trustworthy cross-provider number). Tests propagation
+direction; does NOT satisfy criterion 2's "trustworthy" bar.
+
+**Status:** criterion 2 is prepared + turnkey; **execution is environment-gated** (gemini = company;
+home would be a heavy re-ingest at a new embedding dim + a non-trustworthy deepseek judge). Run A at
+the office to close the goal.
+
 ## Honest caveats (the standing rule: trustworthy numbers)
 1. **Synthetic-test inflation.** The 588 test triplets come from the SAME synthetic-Q generator as
    training → the model partly learned the synth-Q→chunk style → the +0.20–0.33 **magnitude is

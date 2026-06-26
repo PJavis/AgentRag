@@ -24,9 +24,25 @@ The one structural lever not yet pulled: VN-medical domain fine-tune of the retr
 **Gate verdict: PROMOTE = YES** (recall@10 +0.204 ≥ 0.05 threshold; mrr@10 +0.335 ≥ 0.03).
 **The fine-tune lever WORKS** — far above the bar.
 
-## GATE 2 — reranker FT vs bge-reranker-v2-m3
-*(pending — reranker retrain in progress after a sentence-transformers-5.x save bug; results
-appended on completion.)*
+## GATE 2 — reranker FT vs bge-reranker-v2-m3 — INVALID EVAL (tooling gap)
+
+Reported numbers (recall@10 0.010 baseline / 0.002 FT, "PROMOTE: no") are a **measurement
+artifact, not a result.** `eval_retrieval.py` loads every model as a `SentenceTransformer` and
+ranks by `.encode()` cosine — a **bi-encoder** eval. A **cross-encoder reranker** has no usable
+`.encode()`, so BOTH baseline and FT score ~1% recall (garbage). The script's docstring claims
+"(or reranker)" support but does not implement it.
+
+- The reranker FT model **trained + saved fine** (loss 0.225, `models/agentrag-rerank-v1`,
+  after fixing the st-5.x save bug). It is simply **un-gated** by the available tool.
+- A correct rerank eval = retrieve top-K per query (BM25/embedding) → score each (q, candidate)
+  pair with the cross-encoder → re-rank → recall@k/MRR after rerank. **Follow-up:** write that
+  eval (or run it at the company alongside the end-to-end probe). Do NOT read GATE 2 as the
+  reranker failing.
+
+## Verdict
+**The fine-tune lever is PROVEN** by GATE 1 (embedding, valid eval): domain fine-tuning massively
+improves real-corpus retrieval. GATE 2 is inconclusive only because the eval tool is bi-encoder-
+only — the reranker is trained and awaits a proper rerank eval. Goal criterion 1 = **PASS**.
 
 ## Honest caveats (the standing rule: trustworthy numbers)
 1. **Synthetic-test inflation.** The 588 test triplets come from the SAME synthetic-Q generator as

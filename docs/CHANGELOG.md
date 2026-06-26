@@ -36,6 +36,23 @@ The `e4eb895` "checkpoint" commit shipped two breakages; unit tests masked both 
   `vn_bkai`/`vn_legal` sets, so **CR+RAPTOR is kept ON in `.env` pending a prod-corpus A/B**
   (synthetic Q-gen over `data/originals`, **deferred**). `docs/CHANGELOG-2026-06-25.md`.
 
+## 🧭 Key finding — the correctness ceiling is the EVAL, not the system (2026-06-26)
+- **answer-model A/B** (`benchmark_answer_model_ab_2026-06-26.md`): same index + same vn n=40,
+  `answer=flash` vs `answer=pro`. pro moved **correctness +0.006 (noise)** — a 2× answer model
+  does NOT lift correctness — while faithfulness rose +0.04 (0.93→0.97) at ~2× latency. **Keep
+  `answer=deepseek-v4-flash`.**
+- **Conclusion:** two independent strong levers — retrieval architecture (T6) AND answer-model
+  quality (this A/B) — both fail to move correctness off **~0.74**. When neither better
+  retrieval nor a better generator shifts a metric, the metric is the bottleneck. Faithfulness
+  (reference-free) *does* move, so the system responds; correctness (reference-based, vs terse
+  synthetic public-dataset gold + LLM judge) is **gold/judge-bound**. So the plateau is an
+  **eval-fidelity ceiling, not a system limit or design flaw** (architecture is sound; faith
+  0.93–0.97 proves the hard part works).
+- **Next investment = the ruler, not the engine:** build a prod-corpus eval set over
+  `data/originals` with realistic gold (the deferred A/B, now the priority) + consider a
+  rubric/reference-free correctness judge. Only then is the P3 embedding/reranker fine-tune
+  (the remaining structural lever) worth measuring.
+
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each
   `/chat` turn into one trace (`session_id=conversation_id`). Self-host on `:3002`.

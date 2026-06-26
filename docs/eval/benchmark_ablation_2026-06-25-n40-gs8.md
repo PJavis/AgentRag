@@ -59,3 +59,26 @@ real gain. This does not change the query-time-flag verdict (all OFF).
 Caveat: gs=8 is a distractor-dense synthetic eval corpus, harder than production. If the
 real medical corpus (natural multi-chunk docs) is materially different, a one-off prod-shape
 A/B could revisit — but on the evidence we have, OFF is the cost-justified default.
+
+### Decision (2026-06-26): keep CR+RAPTOR ON pending a prod-corpus A/B (DEFERRED)
+
+The synthetic-corpus evidence says OFF, but the result is on the public `vn_bkai`/`vn_legal`
+gold-context sets, **not** the real medical corpus. Decision: **leave CR+RAPTOR ON in the
+live `.env` for now**; do not flip on synthetic evidence alone. Settle it with a
+**prod-corpus A/B** — **DEFERRED** (next-step, not yet built).
+
+**Prod-corpus A/B plan (when picked up):**
+1. **Eval set = synthetic Q-gen over the real corpus.** Run `mine_finetune_pairs.py`
+   (synthetic Q from `data/originals` chunks, 114 PDFs) → `(question, gold source-chunk)`
+   pairs. The source chunk is the gold context → enables precision/recall + judged
+   faithfulness/correctness on the actual docs. ~100-200 Q.
+2. **A/B (build needed — harness extension):** ingest `data/originals` with CR+RAPTOR
+   **off** → score the synth set; re-ingest with CR+RAPTOR **on** → re-score; compare.
+   The current `run_benchmark`/`run_ablation` ingest a suite's gold contexts via
+   `load_suite`; this needs a path to ingest the real corpus + load the synth eval set
+   (new dataset loader or a focused script). Each ingest of 114 real PDFs is heavy.
+3. **Decide:** flip CR+RAPTOR OFF only if the real corpus also shows no precision gain
+   (consistent with this n=80 result); keep ON if prod shape genuinely favors RAPTOR.
+
+Until then the live default stays ON (status quo), and this n=80 synthetic result stands
+as the documented evidence that the win is unproven at scale.

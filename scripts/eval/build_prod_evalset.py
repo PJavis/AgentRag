@@ -26,7 +26,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 _SYNTH_SYSTEM = (
@@ -71,7 +70,7 @@ async def synth_question(chunk: str, gateway) -> str | None:
     )
     qs = payload.get("questions") or []
     for q in qs:
-        if isinstance(q, str) and len(q.strip()) > 0:
+        if isinstance(q, str) and len(q.strip()) >= 5:
             return q.strip()
     return None
 
@@ -84,7 +83,7 @@ async def gen_gold_answer(question: str, chunk: str, gateway) -> str:
 
 
 async def _sample_chunks(n: int) -> list[str]:
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from src.agentrag.database import AsyncSessionLocal
     from src.agentrag.database.models import Segment
 
@@ -93,7 +92,7 @@ async def _sample_chunks(n: int) -> list[str]:
             await s.execute(
                 select(Segment.content)
                 .where(Segment.content.isnot(None))
-                .order_by(Segment.id)
+                .order_by(func.random())
                 .limit(n * 4)  # over-sample, then filter+shuffle
             )
         ).scalars().all()
@@ -103,6 +102,7 @@ async def _sample_chunks(n: int) -> list[str]:
 
 
 async def main(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     from src.agentrag.services.llm_gateway import LLMGateway
 
     gateway = LLMGateway()

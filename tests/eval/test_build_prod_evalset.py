@@ -41,9 +41,9 @@ def test_build_eval_row_shape():
 
 @pytest.mark.asyncio
 async def test_synth_question_takes_first():
-    gw = FakeGateway(json_payloads=[{"questions": ["Q1?", "Q2?"]}])
+    gw = FakeGateway(json_payloads=[{"questions": ["What causes this condition?", "Is it reversible?"]}])
     q = await synth_question("a chunk of text long enough to matter", gw)
-    assert q == "Q1?"
+    assert q == "What causes this condition?"
     assert gw.calls[0]["task"] == "schema_discovery"
 
 

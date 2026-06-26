@@ -82,6 +82,15 @@ NOT generation:
   **0.842→0.950**, oracle−system **+0.134→+0.019** (gap → noise), **0 hard misses (was 3)**,
   OOC safety preserved (genuine out-of-corpus still abstains at 0.55). Directional (n=20, high
   gemini-503 skip) — a cleaner higher-n run is the home-run follow-up.
+- **Cleaner n=50 follow-up** (`docs/eval/eval_fidelity_probe_prod_v3_2026-06-26.md`, 0 skips):
+  oracle−system **+0.046 (< 0.05) → ceiling conclusion HOLDS** at the larger sample. But system
+  avg is **0.888, not 0.950** — the v2 0.950 was inflated by the 10/30 gemini-503 skips
+  (easy-Q selection bias) + a different judge; trust the clean 0.888. Caveat: free-tier gemini
+  serves `gemini-2.5-pro` at limit:0 so this ran **all-DeepSeek** judges (flash vs pro) →
+  judge-noise pearson 0.730 is the optimistic same-provider case + mild self-preference risk;
+  a **paid-gemini cross-provider judge** is needed before quoting a correctness number with
+  confidence. Corpus = indexed `vn_bkai`/`vn_legal` residue, not `data/originals` (real-corpus
+  A/B still deferred).
 
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each

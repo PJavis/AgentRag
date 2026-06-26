@@ -96,7 +96,7 @@ def _render(summary: dict, label: str, n: int) -> str:
 
 
 async def main(args: argparse.Namespace) -> None:
-    from src.agentrag.services.agent_service import get_agent_service  # live system answers
+    from src.agentrag.agent.factory import get_agent_service  # live system answers (same as run_benchmark)
     from src.agentrag.services.llm_gateway import LLMGateway
 
     gateway = LLMGateway()
@@ -110,21 +110,32 @@ async def main(args: argparse.Namespace) -> None:
         print(f"[probe] {len(examples)} examples (suite={args.suite}, n={args.n})")
 
     rows: list[ProbeRow] = []
+    failures = 0
     for i, ex in enumerate(examples):
         gold_ctx = "\n".join(ex.gold_contexts)
-        out = await agent.chat(question=ex.question, document_title=None, conversation_id=f"probe-{ex.id}")
-        system_ans = out.get("answer", "") or ""
-        oracle_ans = await generate_oracle_answer(ex.question, gold_ctx, gateway)
+        try:
+            out = await agent.chat(question=ex.question, document_title=None, conversation_id=f"probe-{ex.id}")
+            system_ans = out.get("answer", "") or ""
+            oracle_ans = await generate_oracle_answer(ex.question, gold_ctx, gateway)
 
-        sys_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway)
-        ora_e = await score_correctness(ex.question, oracle_ans, ex.reference_answer, gold_ctx, gateway)
-        # judge2 routes through the eval_judge2 task slot — map LLM_TASK_MODEL_MAP.eval_judge2
-        # to a DIFFERENT model to get a real cross-model noise floor; if it is unmapped,
-        # judge2 falls back to the same model and the pearson is ~1.0 (self-consistency only).
-        j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway, task="eval_judge2")
+            sys_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway)
+            ora_e = await score_correctness(ex.question, oracle_ans, ex.reference_answer, gold_ctx, gateway)
+            # judge2 routes through the eval_judge2 task slot — map LLM_TASK_MODEL_MAP.eval_judge2
+            # to a DIFFERENT model to get a real cross-model noise floor; if it is unmapped,
+            # judge2 falls back to the same model and the pearson is ~1.0 (self-consistency only).
+            j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway, task="eval_judge2")
+        except Exception as exc:
+            # One transient provider error (e.g. gemini 503 high-demand) must not abort the
+            # whole run — skip this question and keep going, like run_benchmark does.
+            failures += 1
+            print(f"  [{i+1}/{len(examples)}] ERR {type(exc).__name__}: skipped", flush=True)
+            continue
 
         rows.append(ProbeRow(ex.id, sys_e.mean, ora_e.mean, j2_e.mean))
-        print(f"  [{i+1}/{len(examples)}] sys={sys_e.mean:.2f} oracle={ora_e.mean:.2f}")
+        print(f"  [{i+1}/{len(examples)}] sys={sys_e.mean:.2f} oracle={ora_e.mean:.2f}", flush=True)
+
+    if failures:
+        print(f"[probe] {failures}/{len(examples)} questions skipped on provider errors", flush=True)
 
     summary = summarize_probe(rows)
     out_path = Path(args.out)

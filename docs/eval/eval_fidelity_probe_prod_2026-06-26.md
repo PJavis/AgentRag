@@ -93,12 +93,19 @@ Revalidation (6 live Qs, floor 0.55):
 - **Hang partially mitigated:** the 60s per-call timeout doesn't bound *total* agent.chat (4 rewrites
   × retries) — row11 still exceeded 120s. A total/step budget is the fuller fix.
 
-**Residual root cause (next fix):** the agent decide-step tool-query generation is non-deterministic
-and can retrieve worse chunks than the raw question → packed-context max rerank dips below floor →
-false abstain. Candidate fixes: (a) make the decide-step deterministic (temp 0) like QueryRewriter;
-(b) **always keep the raw-question retrieval in the rerank candidate pool** so rewrites can only ADD,
-never degrade, the best chunk (raw row21 = 0.716 would always be present → never thin). (b) is more
-robust and doesn't depend on determinism, and doesn't loosen OOC (raw OOC query still ~0.50).
+**Residual root cause:** the agent decide-step tool-query generation is non-deterministic and can
+retrieve worse chunks than the raw question → packed-context max rerank dips below floor → false
+abstain.
+
+**RESOLVED (commit `c706d6c`):** `ContextAssembler.assemble` now merges a plain-hybrid retrieval on
+the RAW question into the rerank candidate pool (`RETRIEVAL_INCLUDE_RAW_QUERY=True`, top_k=8) — the
+global rerank already keys on the raw question, only the pool was rewrite-dependent. Rewrites can now
+only ADD; the raw gold chunk (row21 = 0.716) is always present → never thin. Live revalidation:
+**row18 + row21 now ANSWER correctly** (both were abstaining); OOC "capital of France" / "first US
+president" **still ABSTAIN** (raw OOC hits also ~0.50 < 0.55 → injection does not loosen OOC). The
+floor + raw-query-pool fixes together close the false-abstention. (row11 still times out — that is the
+separate total-agent.chat hang, only partially mitigated by the per-call 60s timeout; a step/total
+budget is the fuller fix and remains open.)
 
 **So: the eval is measurably better.** It credits correctness up to ~0.98 (vs the old 0.74 cap),
 agrees across judge models, and exposes the system's true headroom as identifiable retrieval

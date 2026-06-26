@@ -540,7 +540,35 @@ class GraphAgentService:
         from src.agentrag.retrieval.context import set_domain_filter
         set_domain_filter(domain_filter)
         config = {"configurable": {"thread_id": conversation_id or f"anon-{id(initial)}"}}
-        state = await _GRAPH.ainvoke(initial, config=config)
+        # Total wall-clock budget: the per-call LLM timeout does NOT bound the whole
+        # decide→tools→rerank→answer loop (each call retryable). Under a gemini 503 storm
+        # the total can run away (>120s, 42-min hang observed). Cap it and degrade
+        # gracefully instead of hanging the caller.
+        import asyncio as _aio
+        import logging as _logging
+        try:
+            state = await _aio.wait_for(
+                _GRAPH.ainvoke(initial, config=config),
+                timeout=settings.AGENT_TOTAL_TIMEOUT_S,
+            )
+        except _aio.TimeoutError:
+            _logging.getLogger(__name__).warning(
+                "agent.chat exceeded total budget %.0fs (question=%r) — graceful timeout",
+                settings.AGENT_TOTAL_TIMEOUT_S, (question or "")[:60],
+            )
+            return {
+                "question": question,
+                "document_title": document_title,
+                "answer": "Hệ thống đang bận, vui lòng thử lại sau giây lát.",
+                "citations": [],
+                "tool_trace": [],
+                "reasoning_path": "timeout",
+                "highlights": [],
+                "timings_ms": {},
+                "langfuse_trace_id": current_trace_id(),
+                "context": [],
+                "timed_out": True,
+            }
         return {
             "question": question,
             "document_title": document_title,

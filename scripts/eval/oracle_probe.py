@@ -113,9 +113,10 @@ async def main(args: argparse.Namespace) -> None:
 
         sys_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway)
         ora_e = await score_correctness(ex.question, oracle_ans, ex.reference_answer, gold_ctx, gateway)
-        # judge2: re-score the SAME system answer; the gateway routes eval_judge to the
-        # configured judge — swap via LLM_TASK_MODEL_MAP.eval_judge2 env for the 2nd model.
-        j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway)
+        # judge2 routes through the eval_judge2 task slot — map LLM_TASK_MODEL_MAP.eval_judge2
+        # to a DIFFERENT model to get a real cross-model noise floor; if it is unmapped,
+        # judge2 falls back to the same model and the pearson is ~1.0 (self-consistency only).
+        j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway, task="eval_judge2")
 
         rows.append(ProbeRow(ex.id, sys_e.mean, ora_e.mean, j2_e.mean))
         print(f"  [{i+1}/{len(examples)}] sys={sys_e.mean:.2f} oracle={ora_e.mean:.2f}")

@@ -100,16 +100,16 @@ _RUBRIC_SYSTEM = (
 )
 
 
-async def extract_nuggets(gold: str, gateway) -> list[str]:
+async def extract_nuggets(gold: str, gateway, *, task: str = "eval_judge") -> list[str]:
     raw, _ = await gateway.json_response(
         system_prompt=_NUGGET_EXTRACT_SYSTEM,
         user_prompt=gold,
-        task="eval_judge",
+        task=task,
     )
     return parse_nuggets(raw)
 
 
-async def score_nuggets(question: str, answer: str, nuggets: list[str], gateway) -> NuggetScore:
+async def score_nuggets(question: str, answer: str, nuggets: list[str], gateway, *, task: str = "eval_judge") -> NuggetScore:
     if not nuggets:
         return NuggetScore(0, 0, 0, 0.0, 0.0, 0.0)
     user = json.dumps(
@@ -117,25 +117,25 @@ async def score_nuggets(question: str, answer: str, nuggets: list[str], gateway)
         ensure_ascii=False,
     )
     raw, _ = await gateway.json_response(
-        system_prompt=_NUGGET_SCORE_SYSTEM, user_prompt=user, task="eval_judge"
+        system_prompt=_NUGGET_SCORE_SYSTEM, user_prompt=user, task=task
     )
     labels = [l for l in (raw.get("labels") or []) if isinstance(l, str)]
     return aggregate_nugget_labels(labels)
 
 
-async def score_rubric(question: str, answer: str, gold: str, gold_context: str, gateway) -> float:
+async def score_rubric(question: str, answer: str, gold: str, gold_context: str, gateway, *, task: str = "eval_judge") -> float:
     user = json.dumps(
         {"question": question, "gold_answer": gold, "gold_context": gold_context[:4000], "answer": answer},
         ensure_ascii=False,
     )
     raw, _ = await gateway.json_response(
-        system_prompt=_RUBRIC_SYSTEM, user_prompt=user, task="eval_judge"
+        system_prompt=_RUBRIC_SYSTEM, user_prompt=user, task=task
     )
     return clamp01(raw.get("score") or 0.0)
 
 
-async def score_correctness(question: str, answer: str, gold: str, gold_context: str, gateway) -> EnsembleScore:
-    nuggets = await extract_nuggets(gold, gateway)
-    ns = await score_nuggets(question, answer, nuggets, gateway)
-    rubric = await score_rubric(question, answer, gold, gold_context, gateway)
+async def score_correctness(question: str, answer: str, gold: str, gold_context: str, gateway, *, task: str = "eval_judge") -> EnsembleScore:
+    nuggets = await extract_nuggets(gold, gateway, task=task)
+    ns = await score_nuggets(question, answer, nuggets, gateway, task=task)
+    rubric = await score_rubric(question, answer, gold, gold_context, gateway, task=task)
     return ensemble(ns.score, rubric)

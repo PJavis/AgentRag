@@ -63,3 +63,21 @@ async def test_score_correctness_full_flow():
     assert e.mean == 0.475
     assert e.low_confidence is True  # |0.25-0.7| = 0.45 > 0.2
     assert len(gw.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_score_correctness_threads_custom_task():
+    gw = FakeGateway([
+        {"nuggets": ["A"]},
+        {"labels": ["covered"]},
+        {"score": 0.8},
+    ])
+    await score_correctness("q", "ans", "gold", "ctx", gw, task="eval_judge2")
+    assert [c["task"] for c in gw.calls] == ["eval_judge2", "eval_judge2", "eval_judge2"]
+
+
+@pytest.mark.asyncio
+async def test_score_rubric_missing_key_returns_zero():
+    gw = FakeGateway([{}])
+    r = await score_rubric("q", "ans", "gold", "ctx", gw)
+    assert r == 0.0

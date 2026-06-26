@@ -37,7 +37,10 @@ _SYNTH_SYSTEM = (
 _GOLD_SYSTEM = (
     "Answer the question using ONLY the provided context. Be complete, precise, and "
     "self-contained — a strong reference answer. Do not add facts beyond the context. "
-    "Answer in the context's language."
+    "Answer in the context's language. "
+    "State the answer directly. Do NOT preface it with meta-phrases like "
+    "'Based on the provided context', 'Theo ngữ cảnh được cung cấp', 'Dựa trên/vào ngữ cảnh', "
+    "or any reference to 'the context' — write the fact itself, as a clean reference answer."
 )
 
 

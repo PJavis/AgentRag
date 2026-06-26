@@ -59,8 +59,11 @@ def main(args: argparse.Namespace) -> None:
         warmup_steps=int(0.1 * len(examples) / args.batch_size),
         output_path=str(out),
         show_progress_bar=True,
-        use_amp=True,
+        use_amp=not args.fp32,
     )
+    # sentence-transformers 5.x CrossEncoder.fit does NOT persist to output_path
+    # the way older versions did → save explicitly so the model dir is usable.
+    ce.save(str(out))
     logger.info("saved → %s", out)
 
 
@@ -71,6 +74,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", default="models/agentrag-rerank-v1")
     p.add_argument("--epochs", type=int, default=2)
     p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--fp32", action="store_true",
+                   help="disable mixed precision (amp triggers 'CUDA device not ready' on this WSL/new-GPU driver)")
     return p.parse_args()
 
 

@@ -39,7 +39,14 @@ def main(args: argparse.Namespace) -> None:
     from torch.utils.data import DataLoader
 
     model = SentenceTransformer(args.base)
-    logger.info("loaded base: %s | dim=%d", args.base, model.get_sentence_embedding_dimension())
+    # Cap sequence length: bge-m3 defaults to 8192 → activation memory explodes
+    # (and most chunks are far shorter). 512 keeps VRAM/RAM sane with no real
+    # quality loss on chunk-sized inputs.
+    model.max_seq_length = args.max_seq_length
+    logger.info(
+        "loaded base: %s | dim=%d | max_seq_length=%d",
+        args.base, model.get_sentence_embedding_dimension(), model.max_seq_length,
+    )
 
     # E5 family expects "query: " / "passage: " prefixes for best results.
     needs_e5_prefix = "e5" in args.base.lower()
@@ -73,7 +80,7 @@ def main(args: argparse.Namespace) -> None:
         warmup_steps=int(0.1 * len(loader)),
         output_path=str(out),
         show_progress_bar=True,
-        use_amp=True,
+        use_amp=not args.fp32,
     )
     logger.info("saved → %s", out)
     logger.info("Next: run `make eval-embed` to gate the swap, then `make serve-embed`.")
@@ -87,6 +94,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", default="models/agentrag-embed-v1")
     p.add_argument("--epochs", type=int, default=2)
     p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--max-seq-length", type=int, default=512,
+                   help="cap token length (bge-m3 default 8192 → OOM; 512 is plenty for chunks)")
+    p.add_argument("--fp32", action="store_true",
+                   help="disable mixed precision (amp can trigger 'CUDA device not ready' on flaky WSL/new-GPU drivers)")
     return p.parse_args()
 
 

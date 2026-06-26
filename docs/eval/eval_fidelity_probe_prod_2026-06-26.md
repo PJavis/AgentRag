@@ -76,6 +76,30 @@ the gate was added to prevent):**
 4. Recalibrate the floor against the *prod* corpus relevance distribution (the synthetic prod-Q mass
    centers lower than T7's validation set).
 
+### Fix applied + revalidation (commit `f5dfe76`)
+
+Applied: floor `0.6→0.55`, deterministic `QueryRewriter` (temp 0), per-request gateway timeout (60s).
+
+Revalidation (6 live Qs, floor 0.55):
+- **row18** (was abstaining) → **answers correctly** ✅. Floor fix worked here.
+- **row21** → **still abstains** ❌. But raw-question retrieve+rerank gives **max 0.716, stable across
+  3 runs, >> 0.55** — so the floor is NOT row21's problem. The agent's *decide-step* generates
+  rewritten/sub-queries (tool_trace showed 4 variants) whose assembled packed-context top score
+  drops below the floor (0.619 one run, <0.55 another). The `QueryRewriter` temp-0 fix did NOT touch
+  the decide-step tool-query generation — **residual flakiness lives there.**
+- **OOC safety holds:** "capital of France" and "first US president" still abstain ✅ at 0.55
+  (genuinely out-of-corpus). ("sulfuric acid" answered — but it is in-corpus: top hit is a lab
+  sample-processing chunk, so not an OOC regression.)
+- **Hang partially mitigated:** the 60s per-call timeout doesn't bound *total* agent.chat (4 rewrites
+  × retries) — row11 still exceeded 120s. A total/step budget is the fuller fix.
+
+**Residual root cause (next fix):** the agent decide-step tool-query generation is non-deterministic
+and can retrieve worse chunks than the raw question → packed-context max rerank dips below floor →
+false abstain. Candidate fixes: (a) make the decide-step deterministic (temp 0) like QueryRewriter;
+(b) **always keep the raw-question retrieval in the rerank candidate pool** so rewrites can only ADD,
+never degrade, the best chunk (raw row21 = 0.716 would always be present → never thin). (b) is more
+robust and doesn't depend on determinism, and doesn't loosen OOC (raw OOC query still ~0.50).
+
 **So: the eval is measurably better.** It credits correctness up to ~0.98 (vs the old 0.74 cap),
 agrees across judge models, and exposes the system's true headroom as identifiable retrieval
 failures rather than an inscrutable plateau.

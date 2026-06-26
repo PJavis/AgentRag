@@ -34,8 +34,9 @@ _ORACLE_SYSTEM = (
 async def generate_oracle_answer(question: str, gold_context: str, gateway) -> str:
     """Strong-model answer given gold context — the achievable correctness ceiling."""
     user = f"CONTEXT:\n{gold_context}\n\nQUESTION: {question}"
+    # own task slot so the operator can map oracle→strong model (LLM_TASK_MODEL_MAP) independently of the judge
     return await gateway.text_response(
-        system_prompt=_ORACLE_SYSTEM, user_prompt=user, task="eval_judge"
+        system_prompt=_ORACLE_SYSTEM, user_prompt=user, task="oracle_gen"
     )
 
 

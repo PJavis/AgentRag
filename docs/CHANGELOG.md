@@ -29,8 +29,12 @@ The `e4eb895` "checkpoint" commit shipped two breakages; unit tests masked both 
   `gemini-2.5-flash-lite` (cut decide/HyDE parse-failure storms).
 - **Rerank config:** `RETRIEVAL_RERANK_BACKEND=local_cross_encoder` is the only backend that
   emits `rerank_score` (powers abstain) — startup guards an API model-name under it.
-- **T6 WS1-5 ablation** (separate session): **CR+RAPTOR = contextual_precision +0.04 (keep ON)**;
-  CRAG/fast-path/semantic-cache/multi-hop OFF. `docs/CHANGELOG-2026-06-25.md`.
+- **T6 WS1-5 ablation** (separate session): CRAG/fast-path/semantic-cache/multi-hop OFF (no
+  above-noise gain). CR+RAPTOR looked like contextual_precision +0.04 at n=10, **but the n=40
+  confirmation (80 q/config) did NOT hold it** — precision +0.014 (noise), faithfulness −0.039,
+  for a heavy ingest cost (`benchmark_ablation_2026-06-25-n40-gs8.md`). All on the synthetic
+  `vn_bkai`/`vn_legal` sets, so **CR+RAPTOR is kept ON in `.env` pending a prod-corpus A/B**
+  (synthetic Q-gen over `data/originals`, **deferred**). `docs/CHANGELOG-2026-06-25.md`.
 
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each

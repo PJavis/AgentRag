@@ -80,6 +80,22 @@ direction; does NOT satisfy criterion 2's "trustworthy" bar.
 home would be a heavy re-ingest at a new embedding dim + a non-trustworthy deepseek judge). Run A at
 the office to close the goal.
 
+### C2 home-feasibility — EMPIRICALLY TESTED (2026-06-27), result: NOT feasible on free-tier
+
+Tried to run C2's gemini-judged probe at home. Findings (evidence, not assumption):
+- `gemini-2.5-pro` = **limit:0** (free tier doesn't serve it at all).
+- `gemini-2.5-flash` / `flash-lite` = respond, BUT free-tier quota is **`limit: 5` requests/MINUTE**
+  (hard 429). A probe makes ~80 parallel gemini calls (build gold + oracle + 2 judges × n) → instant
+  429-storm → the eval-set build got only **12/20 rows** before throttling; the probe would be the
+  same. **A clean trustworthy probe is impractical at 5 RPM** (lossy, and a daily token cap looms).
+- FT side additionally needs a prod-embedding migration (serve e5-FT, recreate the ES index at
+  dim 768 vs current 1024, full re-ingest) — a supervised migration, not a safe 4am auto-run.
+
+**Conclusion: C2's trustworthy number genuinely requires the COMPANY's paid gemini** (quota), now
+proven by the 5-RPM throttle — not merely asserted. There is no clean home workaround for a
+multi-call eval under a 5 req/min limit. Criterion 1 already proved the lever; C2 is the
+deploy-confirmation, correctly run at the office (runbook A above, turnkey).
+
 ## Honest caveats (the standing rule: trustworthy numbers)
 1. **Synthetic-test inflation.** The 588 test triplets come from the SAME synthetic-Q generator as
    training → the model partly learned the synth-Q→chunk style → the +0.20–0.33 **magnitude is

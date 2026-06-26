@@ -158,6 +158,12 @@ class Settings(BaseSettings):
     #: 42-min agent.chat hang was observed under gemini high-demand (2026-06-26). On
     #: timeout the openai SDK retries rather than blocking forever.
     LLM_REQUEST_TIMEOUT_S: float = 60.0
+    #: Total wall-clock budget (seconds) for one agent.chat graph run. The per-call
+    #: LLM_REQUEST_TIMEOUT_S does NOT bound the whole multi-step/multi-rewrite loop
+    #: (decide + N tool searches + rerank + answer, each retryable) — under a gemini
+    #: 503 storm the total can exceed 120s (2026-06-26). On exceeding this budget the
+    #: chat returns a graceful "busy, retry" response (timed_out=True) instead of hanging.
+    AGENT_TOTAL_TIMEOUT_S: float = 90.0
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10

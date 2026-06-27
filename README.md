@@ -27,7 +27,7 @@ tương thích open-notebook.
   ontology + `pg_trgm` fuzzy + `DomainRouter` SLM.
 - **StructMem** — bộ nhớ tri thức (factual + relational + synthesis) cho document
   và hội thoại, thay sliding-window.
-- **Page-aware citations · Vision LLM · MinerU (opt-in) · Mindmap & Summary** —
+- **Page-aware citations · Vision LLM · Mindmap & Summary** —
   trích dẫn đúng trang, mô tả ảnh y tế, layout/OCR/formula, mermaid mindmap.
 - **Cost dashboard · Reasoning trace** — `/cost` page (p50/p95, recent calls);
   nút Trace → node graph `plan → decide → tool → assemble → answer → critique`.

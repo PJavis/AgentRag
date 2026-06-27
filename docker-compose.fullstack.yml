@@ -1,0 +1,16 @@
+# Full-container override: run EVERYTHING in docker (incl ollama) — nothing on the host.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.fullstack.yml \
+#     --profile app --profile local-llm up -d --build
+#   docker exec agentrag-ollama ollama pull llama3.2:3b   # decide/classify/router/followup
+# Base compose stays host-GPU mode (`make docker-up-app` reaches TEI/ollama on the host).
+# This override points the app at the in-network tei + ollama services instead.
+services:
+  api:
+    environment:
+      EMBEDDING_BASE_URL: http://tei:80/v1/
+      OLLAMA_BASE_URL: http://ollama:11434/v1/
+  worker:
+    environment:
+      EMBEDDING_BASE_URL: http://tei:80/v1/
+      OLLAMA_BASE_URL: http://ollama:11434/v1/

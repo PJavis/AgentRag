@@ -181,9 +181,6 @@ class Settings(BaseSettings):
     LLM_TASK_MODEL_MAP: str = "{}"
     LLM_COST_TRACKING_ENABLED: bool = False
 
-    # PDF parser backend: pymupdf (page-aware, recommended) or markitdown (legacy)
-    PDF_PARSER_BACKEND: Literal["pymupdf", "markitdown"] = "pymupdf"
-
     # Vision LLM — for describing images extracted from PDFs and standalone image files.
     # If VISION_PROVIDER is None, image extraction is skipped (text-only ingestion).
     VISION_PROVIDER: Literal["openai", "gemini", "ollama"] | None = None
@@ -268,33 +265,7 @@ class Settings(BaseSettings):
     PDF_OCR_VISION_THRESHOLD: int = 30
     # PDF parser backend escalation when PyMuPDF text-layer is thin:
     #   hybrid (default) → Tesseract → vision LLM
-    #   mineru           → MinerU (layout + OCR + formula + table) replaces tiers 2+3
     PDF_PARSER_BACKEND: str = "hybrid"
-    # MinerU CLI backend (auto-detects GPU when local engine selected):
-    #   pipeline           — classic, lightweight, no VLM
-    #   vlm-auto-engine    — DEFAULT; Qwen2-VL multilingual, preserves Vietnamese
-    #                        diacritics natively (no OCR fallback to 'latin')
-    #   hybrid-auto-engine — faster but uses paddleocr 'latin' for some pages →
-    #                        DROPS Vietnamese diacritics. Pick if corpus is
-    #                        English/CJK and latency matters more than accents.
-    #   *-http-client      — remote OpenAI-compatible VLM (set MINERU_URL)
-    MINERU_BACKEND: str = "vlm-auto-engine"
-    MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
-    # Whole-doc MinerU only kicks in when at least this fraction of pages have a
-    # thin text layer. Below it, the fast per-page path (PyMuPDF + Tesseract/
-    # vision on thin pages only) handles the doc — searchable in seconds rather
-    # than minutes of whole-doc VLM for a mostly-text PDF with a few figures.
-    PDF_MINERU_MIN_THIN_FRACTION: float = 0.4
-    # MinerU lang (newer CLI vocab). Vietnamese → 'latin'.
-    # Allowed: ch | en | korean | japan | chinese_cht | latin | arabic | …
-    MINERU_LANG: str = "latin"
-    # Legacy field kept for back-compat; ignored by the new CLI (which
-    # picks device automatically via backend).
-    MINERU_DEVICE: str = "cuda"
-    # Route PPTX through libreoffice → PDF → MinerU (preserves slide
-    # layout + extracts formulas/tables). Requires libreoffice on PATH.
-    # Falls back to MarkItDown when off or libreoffice/mineru missing.
-    INGEST_USE_MINERU_FOR_PPTX: bool = False
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

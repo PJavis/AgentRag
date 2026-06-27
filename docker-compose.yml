@@ -144,6 +144,7 @@ services:
     env_file: .env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"   # in-network postgres listens on 5432 (the .env 5433 is the host-mapped port)
       ELASTICSEARCH_URL: http://elasticsearch:9200
       REDIS_URL: redis://valkey:6379/0
       # GPU services (TEI embed + Ollama light tasks) run on the host → reach
@@ -181,6 +182,7 @@ services:
     env_file: .env
     environment:
       POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"   # in-network postgres port (.env 5433 is host-mapped)
       ELASTICSEARCH_URL: http://elasticsearch:9200
       REDIS_URL: redis://valkey:6379/0
       EMBEDDING_BASE_URL: http://host.docker.internal:8080/v1/

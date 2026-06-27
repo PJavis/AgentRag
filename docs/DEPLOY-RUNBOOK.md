@@ -54,10 +54,14 @@ Migrations are the schema source of truth (never rely on the `create_all` startu
 **Hardening checklist before exposing publicly:**
 - Keep `AUTH_ENABLED=true`; set `AUTH_ALLOW_SIGNUP=false` after creating accounts if closed.
 - Keep `OBSERVABILITY_CAPTURE_CONTENT=false` for PHI — only enable on non-PHI/dev data.
-- ⚠️ **Multi-tenancy / IDOR:** notebooks/sources/notes/insights/transformations endpoints
-  have NO per-user ownership check (`docs/security/authz-audit-2026-06-25.md`). Fine for a
-  single-user/per-clinic deployment; **a launch blocker if multi-tenant** — add the shared
-  ownership dependency first.
+- ✅ **Tenancy decision (2026-06-25): single-tenant / on-prem — IDOR accepted by design.**
+  `AUTH_ENABLED` is an access gate, not tenant isolation. notebooks/sources/notes/insights/
+  transformations endpoints have no per-user ownership check; that is fine for one
+  on-prem/per-clinic instance (one tenant). **Do NOT** enable real multi-account / signup for
+  untrusted users, serve >1 clinic from one instance, or expose these endpoints to a second
+  VM **without first** adding the shared ownership dependency + list-scoping — at that point
+  the IDOR finding becomes a launch blocker. See `docs/security/authz-audit-2026-06-25.md`
+  (Decision + Recommendation #2).
 - Change Langfuse defaults (`LANGFUSE_NEXTAUTH_SECRET`, `SALT`, `LANGFUSE_INIT_USER_PASSWORD`,
   and the dev keys `pk-/sk-lf-agentrag-dev`) — the compose defaults are dev-only.
 - Put TLS at `nginx` (`edge` profile); never expose Postgres/ES ports publicly.

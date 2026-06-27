@@ -20,6 +20,17 @@ def test_is_thin_context_false_when_no_scores():
     assert _is_thin_context(None, 0.3) is False
 
 
+def test_borderline_relevant_chunk_no_longer_abstains_at_new_floor():
+    """Prod finding (2026-06-26): paraphrased-relevant VN chunks score ~0.61 on the bge
+    reranker and jitter under the old 0.6 floor → flaky false-abstention. The floor was
+    lowered to 0.55 (mid-band: OOC ~0.50 | floor | relevant ~0.61) so a relevant chunk that
+    dips to ~0.58 still answers, while genuinely off-corpus (~0.50) still abstains."""
+    floor = svc.settings.RETRIEVAL_RELEVANCE_FLOOR
+    assert floor <= 0.55, f"floor regressed to {floor}; borderline-relevant chunks will flaky-abstain"
+    assert _is_thin_context([{"rerank_score": 0.58}], floor) is False   # relevant → answer
+    assert _is_thin_context([{"rerank_score": 0.50}], floor) is True    # off-corpus → abstain
+
+
 def test_prompt_thin_override_instructs_clean_abstain(monkeypatch):
     monkeypatch.setattr(svc.settings, "ANSWER_ABSTAIN_ON_THIN_CONTEXT", True)
     monkeypatch.setattr(svc.settings, "RETRIEVAL_RELEVANCE_FLOOR", 0.3)

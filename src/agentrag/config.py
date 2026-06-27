@@ -120,11 +120,23 @@ class Settings(BaseSettings):
     #: Only effective with RETRIEVAL_RERANK_BACKEND=local_cross_encoder (the only
     #: backend that emits a score). Default OFF (changes answer behavior).
     RETRIEVAL_RELEVANCE_GATE_ENABLED: bool = False
-    #: Calibrated 2026-06-19: bge-reranker-v2-m3 (sigmoid) scores irrelevant/off-corpus
-    #: content ~0.50 (logit≈0) and relevant top-chunks ~0.73 — cleanly bimodal. 0.6 sits
-    #: in the gap. The old 0.3 was BELOW the whole output range → every floor-based feature
-    #: was inert (see docs/eval/benchmark_abstain_ab_2026-06-19_vi.md). Re-measure per corpus.
-    RETRIEVAL_RELEVANCE_FLOOR: float = 0.6
+    #: bge-reranker-v2-m3 (sigmoid) scores off-corpus content ~0.50 (logit≈0). 2026-06-19
+    #: calibration put relevant top-chunks ~0.73 and set the floor at 0.6; the 2026-06-26
+    #: prod-corpus probe (docs/eval/eval_fidelity_probe_prod_2026-06-26.md) found that
+    #: PARAPHRASED relevant VN chunks score as low as ~0.61 and jitter under 0.6 across the
+    #: agent's query-rewrites → flaky FALSE-abstention with the gold chunk at rank 0. Lowered
+    #: to 0.55 — mid-band between OOC ~0.50 and low-relevant ~0.61, giving ~0.05 margin both
+    #: sides (this realises the "margin/anti-knife-edge" intent without a separate constant
+    #: that would double-loosen). Re-measure + re-validate OOC abstention per corpus.
+    RETRIEVAL_RELEVANCE_FLOOR: float = 0.55
+    #: Always merge a plain-hybrid retrieval on the RAW question into the rerank
+    #: candidate pool (ContextAssembler). The agent's decide-step rewrites/sub-queries
+    #: (hybrid_kg + variants) can retrieve worse chunks than the raw question and drop the
+    #: packed-context max rerank below the floor → flaky false-abstain (2026-06-26 row21:
+    #: raw hybrid = 0.716, agent pool topped at <floor). Injecting the raw hits guarantees
+    #: rewrites only ADD, never degrade. Doesn't loosen OOC (raw OOC query still ~0.50).
+    RETRIEVAL_INCLUDE_RAW_QUERY: bool = True
+    RETRIEVAL_RAW_QUERY_TOP_K: int = 8
     #: When best rerank score is in [floor, floor+GRAY_MARGIN), treat the
     #: context as uncertain and force the strong-abstain prompt (out-of-corpus
     #: distractors that score just over the floor → confident-hallucination fix).
@@ -141,6 +153,17 @@ class Settings(BaseSettings):
     ANSWER_ABSTAIN_ON_THIN_CONTEXT: bool = True
 
     AGENT_MAX_STEPS: int = 3   # serial decide→tool round-trips; lower = faster p50
+    #: Per-request timeout (seconds) for every AsyncOpenAI client (make_async_openai).
+    #: Guards against a stalled provider connection hanging a call indefinitely — a
+    #: 42-min agent.chat hang was observed under gemini high-demand (2026-06-26). On
+    #: timeout the openai SDK retries rather than blocking forever.
+    LLM_REQUEST_TIMEOUT_S: float = 60.0
+    #: Total wall-clock budget (seconds) for one agent.chat graph run. The per-call
+    #: LLM_REQUEST_TIMEOUT_S does NOT bound the whole multi-step/multi-rewrite loop
+    #: (decide + N tool searches + rerank + answer, each retryable) — under a gemini
+    #: 503 storm the total can exceed 120s (2026-06-26). On exceeding this budget the
+    #: chat returns a graceful "busy, retry" response (timed_out=True) instead of hanging.
+    AGENT_TOTAL_TIMEOUT_S: float = 90.0
     AGENT_TOOL_TOP_K: int = 5
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10
@@ -157,9 +180,6 @@ class Settings(BaseSettings):
     LLM_ROUTING_ENABLED: bool = False
     LLM_TASK_MODEL_MAP: str = "{}"
     LLM_COST_TRACKING_ENABLED: bool = False
-
-    # PDF parser backend: pymupdf (page-aware, recommended) or markitdown (legacy)
-    PDF_PARSER_BACKEND: Literal["pymupdf", "markitdown"] = "pymupdf"
 
     # Vision LLM — for describing images extracted from PDFs and standalone image files.
     # If VISION_PROVIDER is None, image extraction is skipped (text-only ingestion).
@@ -245,33 +265,7 @@ class Settings(BaseSettings):
     PDF_OCR_VISION_THRESHOLD: int = 30
     # PDF parser backend escalation when PyMuPDF text-layer is thin:
     #   hybrid (default) → Tesseract → vision LLM
-    #   mineru           → MinerU (layout + OCR + formula + table) replaces tiers 2+3
     PDF_PARSER_BACKEND: str = "hybrid"
-    # MinerU CLI backend (auto-detects GPU when local engine selected):
-    #   pipeline           — classic, lightweight, no VLM
-    #   vlm-auto-engine    — DEFAULT; Qwen2-VL multilingual, preserves Vietnamese
-    #                        diacritics natively (no OCR fallback to 'latin')
-    #   hybrid-auto-engine — faster but uses paddleocr 'latin' for some pages →
-    #                        DROPS Vietnamese diacritics. Pick if corpus is
-    #                        English/CJK and latency matters more than accents.
-    #   *-http-client      — remote OpenAI-compatible VLM (set MINERU_URL)
-    MINERU_BACKEND: str = "vlm-auto-engine"
-    MINERU_OUTPUT_DIR: str = ".cache/agentrag/mineru"
-    # Whole-doc MinerU only kicks in when at least this fraction of pages have a
-    # thin text layer. Below it, the fast per-page path (PyMuPDF + Tesseract/
-    # vision on thin pages only) handles the doc — searchable in seconds rather
-    # than minutes of whole-doc VLM for a mostly-text PDF with a few figures.
-    PDF_MINERU_MIN_THIN_FRACTION: float = 0.4
-    # MinerU lang (newer CLI vocab). Vietnamese → 'latin'.
-    # Allowed: ch | en | korean | japan | chinese_cht | latin | arabic | …
-    MINERU_LANG: str = "latin"
-    # Legacy field kept for back-compat; ignored by the new CLI (which
-    # picks device automatically via backend).
-    MINERU_DEVICE: str = "cuda"
-    # Route PPTX through libreoffice → PDF → MinerU (preserves slide
-    # layout + extracts formulas/tables). Requires libreoffice on PATH.
-    # Falls back to MarkItDown when off or libreoffice/mineru missing.
-    INGEST_USE_MINERU_FOR_PPTX: bool = False
     # Lost-in-the-middle: reorder packed chunks so the top-ranked entries sit
     # at the start AND end of the prompt, weaker middle. Set false for plain
     # rank-order packing.

@@ -68,75 +68,12 @@ class PDFParser:
             raise FileNotFoundError(f"File not found: {file_path}")
 
         doc = fitz.open(str(path))
-        backend = (settings.PDF_PARSER_BACKEND or "hybrid").lower()
         ocr_enabled = settings.PDF_OCR_FALLBACK_ENABLED
         ocr_min = settings.PDF_OCR_MIN_TEXT_CHARS
         ocr_dpi = settings.PDF_OCR_DPI
         ocr_lang = settings.PDF_OCR_LANG
         vision_fallback = settings.PDF_OCR_VISION_FALLBACK
         vision_threshold = settings.PDF_OCR_VISION_THRESHOLD
-
-        # MinerU backend: only hand the WHOLE PDF to MinerU (slow VLM/layout
-        # pass) when the doc is *mostly* scanned. A mostly-text PDF with a few
-        # thin pages (a figure, a scanned appendix) falls through to the fast
-        # per-page path below (PyMuPDF text + Tesseract/vision only on the thin
-        # pages) — searchable in seconds instead of minutes of whole-doc VLM.
-        if backend == "mineru" and ocr_enabled:
-            page_count = doc.page_count
-            thin_pages = [
-                pnum
-                for pnum, p in enumerate(doc, start=1)
-                if len((p.get_text("text", sort=True) or "").strip()) < ocr_min
-            ]
-            thin_fraction = (len(thin_pages) / page_count) if page_count else 0.0
-            needs_mineru = thin_fraction >= settings.PDF_MINERU_MIN_THIN_FRACTION
-            if needs_mineru and thin_pages:
-                # Per-page routing: PyMuPDF text for the good pages, MinerU
-                # (VLM/layout) for ONLY the thin pages — not the whole doc.
-                logger.info(
-                    "PDFParser: %d/%d pages thin (%.0f%%) — MinerU on thin pages only",
-                    len(thin_pages), page_count, thin_fraction * 100,
-                )
-                try:
-                    from src.agentrag.ingestion.parsers import mineru_parser
-                    mineru_result = mineru_parser.parse_pages(str(path), thin_pages)
-                except Exception as exc:
-                    logger.warning("mineru_parser.parse_pages raised: %s — falling back", exc)
-                    mineru_result = None
-
-                if mineru_result is not None:
-                    thin_set = set(thin_pages)
-                    merged: list[dict[str, Any]] = []
-                    # Good pages → PyMuPDF text.
-                    for pnum, page in enumerate(doc, start=1):
-                        if pnum in thin_set:
-                            continue
-                        text = page.get_text("text", sort=True)
-                        if text.strip():
-                            merged.append({"page_num": pnum, "text": text, "source": "text"})
-                    # Thin pages → MinerU (already remapped to original page nums).
-                    merged.extend(mineru_result.get("page_data", []))
-                    doc.close()
-                    merged.sort(key=lambda r: r.get("page_num", 0))
-                    parts = [
-                        f"{make_page_marker(r['page_num'])}\n{r['text']}"
-                        for r in merged
-                        if (r.get("text") or "").strip()
-                    ]
-                    summary = {
-                        s: sum(1 for r in merged if r.get("source") == s)
-                        for s in ("text", "ocr", "vision", "mineru")
-                    }
-                    logger.info(
-                        "PDFParser: %d pages from %s (per-page MinerU) — sources=%s",
-                        len(merged), path.name, summary,
-                    )
-                    return {
-                        "parsed_content": "\n\n".join(parts),
-                        "pages": max(len(merged), 1),
-                        "page_data": merged,
-                    }
-                logger.info("MinerU per-page failed; falling back to Tesseract+vision path")
 
         parts: list[str] = []
         page_data: list[dict[str, Any]] = []
@@ -183,7 +120,7 @@ class PDFParser:
         full_content = "\n\n".join(parts)
         summary = {
             s: sum(1 for p in page_data if p["source"] == s)
-            for s in ("text", "ocr", "vision", "mineru")
+            for s in ("text", "ocr", "vision")
         }
         logger.info(
             "PDFParser: %d pages from %s — sources=%s",

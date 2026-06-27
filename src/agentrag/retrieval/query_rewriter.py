@@ -63,6 +63,7 @@ class QueryRewriter:
                 system_prompt=_HYDE_SYSTEM,
                 user_prompt=json.dumps({"question": question}, ensure_ascii=False),
                 task="decide",  # reuse decide task slot (lightweight LLM call)
+                temperature=0.0,  # deterministic: same question must not flip retrieval run-to-run
             )
             text = (raw.get("hypothetical") or "").strip()
             if text:
@@ -82,6 +83,7 @@ class QueryRewriter:
                 system_prompt=_DECOMPOSE_SYSTEM,
                 user_prompt=json.dumps({"question": question}, ensure_ascii=False),
                 task="decide",
+                temperature=0.0,  # deterministic: same question must not flip retrieval run-to-run
             )
             subs = raw.get("sub_questions")
             if isinstance(subs, list) and subs:

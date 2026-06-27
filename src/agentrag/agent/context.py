@@ -51,9 +51,37 @@ class ContextAssembler:
         from src.agentrag.retrieval.reranker import LLMReranker
 
         self._reranker = LLMReranker()
+        # Lazily-connected ES retriever for the raw-question pool injection below.
+        from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetriever
+
+        self._retriever = ElasticsearchRetriever()
+
+    async def _inject_raw_query_hits(
+        self, question: str, retrieved: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Merge a plain-hybrid retrieval on the RAW question into the candidate pool.
+
+        The agent's decide-step rewrites can retrieve worse chunks than the raw question
+        (hybrid_kg + query variants), dropping the best chunk out of the pool and the
+        packed-context max rerank below the abstain floor → flaky false-abstain. Adding the
+        raw-question hits guarantees rewrites only ADD; dedupe merges overlaps, the global
+        rerank (also keyed on the raw question) then scores the gold chunk correctly. Failure
+        is non-fatal — fall back to the tool-only pool."""
+        if not question.strip():
+            return retrieved
+        try:
+            res = await self._retriever.search(
+                query=question, mode="hybrid", top_k=settings.RETRIEVAL_RAW_QUERY_TOP_K
+            )
+            hits = res.get("results", []) if isinstance(res, dict) else []
+        except Exception:
+            return retrieved
+        return retrieved + [h for h in hits if isinstance(h, dict)]
 
     async def assemble(self, question: str, tool_results: list[dict[str, Any]]) -> dict[str, Any]:
         retrieved = self._stage_retrieve(tool_results)
+        if settings.RETRIEVAL_INCLUDE_RAW_QUERY:
+            retrieved = await self._inject_raw_query_hits(question, retrieved)
         deduped = self._stage_dedupe(retrieved)
         ranked = self._stage_rank_trim(question, deduped)
         # Global cross-encoder rerank → true relevance order. Membership is

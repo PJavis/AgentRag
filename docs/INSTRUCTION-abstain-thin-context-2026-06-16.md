@@ -55,3 +55,38 @@ Run both configs on the same ingested corpus (`--skip-ingest` for the 2nd so onl
 - If B doesn't help → leave both OFF; the abstain problem needs a different approach (e.g. a dedicated refusal classifier), and we discuss.
 
 Prior reports: `docs/eval/benchmark_gate_ab_2026-06-16_vi.md` (gate disproved), `docs/eval/benchmark_grouped_2026-06-15_vi.md`. Broader next-steps: `docs/NEXT-STEPS-2026-06-16.md`.
+
+---
+
+## UPDATE 2026-06-26 — calibrated + the flaky-abstention fix (this is now the SHIPPED state)
+
+`ANSWER_ABSTAIN_ON_THIN_CONTEXT` is **ON** (default). The prod-corpus eval-fidelity probe
+(`docs/eval/eval_fidelity_probe_prod_2026-06-26.md`) surfaced the first concrete bug: 3 questions
+the live system **refused despite the gold chunk being retrieved at rank 0**. Root-caused
+(systematic-debugging) to *this* gate — not retrieval, not generation:
+
+- `_is_thin_context` abstains when `max(rerank_score) < RETRIEVAL_RELEVANCE_FLOOR`. The bge
+  cross-encoder scores **paraphrased-relevant** VN chunks ~**0.61** (and every other chunk a flat
+  0.5 — it only meaningfully scores the top hit). The agent's decide-step query-rewrites make that
+  max **wobble around the old 0.6 floor** → flip answer↔abstain run-to-run.
+
+**Shipped fixes:**
+1. **`RETRIEVAL_RELEVANCE_FLOOR` 0.6 → 0.55** (`f5dfe76`). Mid-band: OOC ~0.50 | floor | relevant
+   ~0.61, ~0.05 margin both sides. **Supersedes the old "if recall drops, try 0.25" note above** —
+   0.25 is below the bge output range (gate inert); 0.55 is the calibrated value. Re-validate OOC
+   abstention if you re-tune it.
+2. **`RETRIEVAL_INCLUDE_RAW_QUERY=true`** (`c706d6c`) — `ContextAssembler` always merges a
+   plain-`hybrid` retrieval on the RAW question into the rerank candidate pool. The agent's
+   rewrites (hybrid_kg + variants) can retrieve worse chunks than the raw question; this guarantees
+   the rewrites only ADD, never drop the best chunk below the floor. `RETRIEVAL_RAW_QUERY_TOP_K=8`.
+3. **Deterministic query-rewrite** (temp 0) so the same question doesn't flip.
+
+**Validated** (`docs/eval/eval_fidelity_probe_prod_v2_2026-06-26.md`): system avg **0.842→0.950**,
+oracle−system **+0.134→+0.019** (within noise), **0 hard misses (was 3)**, and **OOC safety holds**
+— genuinely out-of-corpus questions ("capital of France", "first US president") still abstain at
+0.55 (their raw hits also score ~0.50 < floor, so the raw-query injection does NOT loosen OOC).
+
+**Still tunable / open:** the per-call `LLM_REQUEST_TIMEOUT_S=60` + total `AGENT_TOTAL_TIMEOUT_S=90`
+bound runaway `agent.chat` under gemini 503 storms (graceful "busy" response). A higher-n probe
+re-run (`scripts/eval/oracle_probe.py --retries`) to firm up the directional n=20 numbers is the
+home-run follow-up.

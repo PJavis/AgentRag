@@ -26,12 +26,11 @@ LLM).
 | `section_tagger.py` | S5 — gán `system_tag` / `specialty_tag` / `canonical_terms` cho chunk |
 | `connectors/folder.py` | `FolderConnector` — quét đệ quy, map extension → `source_type`, tính `content_hash` |
 | `connectors/markdown.py` | `MarkdownConnector` — legacy, chỉ quét `.md` |
-| `parsers/pdf_parser.py` | `PDFParser` — page-aware (PyMuPDF) + Tesseract/vision/MinerU OCR escalation; page markers; `extract_images()` |
+| `parsers/pdf_parser.py` | `PDFParser` — page-aware (PyMuPDF) + Tesseract/vision OCR escalation; page markers; `extract_images()` |
 | `parsers/markitdown_parser.py` | `MarkItDownParser` — DOCX/PPTX/HTML → Markdown (không có page info) |
 | `parsers/excel_parser.py` | `ExcelParser` — XLSX/XLS/CSV → markdown table hoặc CSV-for-SQL |
 | `parsers/image_parser.py` | `ImageParser` — mô tả ảnh qua Vision LLM (standalone + PDF-extracted) |
 | `parsers/audio_parser.py` | `AudioParser` — Whisper transcription (faster-whisper / OpenAI) với timestamp markers |
-| `parsers/mineru_parser.py`, `pptx_via_mineru.py` | MinerU CLI shim (opt-in: layout + OCR + formula + table) |
 | `chunkers/hybrid_chunker.py` | `HybridChunker` — split theo heading/paragraph/token; strip page markers → `page_start/page_end` |
 | `embedders/base.py` | `BaseEmbeddingProvider` — interface + LRU cache + batch loop |
 | `embedders/factory.py` | `build_embedding_provider(settings)` — chọn provider theo `EMBEDDING_PROVIDER` |
@@ -116,11 +115,8 @@ ra citation. ES lưu cả `content` và `context_text`; `sparse_search` boost
 | `STRUCTMEM_CACHE_DIR` | `.cache/agentrag/extract` | Cache parsed text cho ARQ worker (`/parsed/`) |
 | `ELASTICSEARCH_INDEX_NAME` | `agentrag_segments` | Index segment retrieval |
 | **PDF / OCR** | | |
-| `PDF_PARSER_BACKEND` | `hybrid` | `hybrid`=PyMuPDF→Tesseract→vision; `mineru`=whole/thin-page MinerU. (Lưu ý gotcha) |
+| `PDF_PARSER_BACKEND` | `hybrid` | `hybrid`=PyMuPDF→Tesseract→vision (escalation). (Lưu ý gotcha) |
 | `PDF_OCR_VISION_FALLBACK` | `True` | Cho phép gửi page ảnh qua VISION_PROVIDER khi text-layer mỏng |
-| `PDF_MINERU_MIN_THIN_FRACTION` | `0.4` | Ngưỡng % trang mỏng để kích MinerU |
-| `MINERU_BACKEND` / `MINERU_LANG` | `vlm-auto-engine` / `latin` | MinerU CLI config |
-| `INGEST_USE_MINERU_FOR_PPTX` | `False` | PPTX → libreoffice→PDF→MinerU |
 | **Vision images** | | |
 | `VISION_PROVIDER` / `VISION_MODEL` | `None` | `None`=bỏ qua image parsing hoàn toàn |
 | `VISION_INGEST_MODE` | `async` | `sync`=describe inline (block); `async`=ARQ `vision_extract` |
@@ -168,13 +164,9 @@ Tất cả mặc định **OFF** trừ khi ghi chú khác — flag-gated, không
   `VISUAL_EMBEDDING_ENABLED`.
 
 ## Gotchas
-- **Hai định nghĩa `PDF_PARSER_BACKEND` trong `config.py`.** Cái đầu là
-  `Literal["pymupdf","markitdown"] = "pymupdf"`, cái sau (`str = "hybrid"`) **ghi đè**
-  trong Pydantic → giá trị thực tế là `"hybrid"`. Mọi PDF luôn route qua `PDFParser`
-  (pipeline `_PYMUPDF_SOURCE_TYPES = {"pdf"}` cố định); `PDFParser` đọc
-  `settings.PDF_PARSER_BACKEND` cho escalation nội bộ `hybrid` vs `mineru`. Nhánh
-  `markitdown` cho PDF **không còn được pipeline dùng** — `_MARKITDOWN_SOURCE_TYPES`
-  chỉ chứa `"word"`.
+- **`PDF_PARSER_BACKEND` = `hybrid` (PyMuPDF → Tesseract → vision escalation).** Mọi PDF
+  luôn route qua `PDFParser` (pipeline `_PYMUPDF_SOURCE_TYPES = {"pdf"}` cố định);
+  `PDFParser` đọc config cho escalation nội bộ `hybrid` (mặc định, khuyến nghị).
 - **Page markers `\x00P{N}\x00`** là ký tự null không in được, embed trong full text.
   `HybridChunker._resolve_page_numbers` strip chúng + gán `page_start/page_end` rồi
   **recompute `content_hash`**. Đừng dedupe/so hash trước khi qua chunker.

@@ -39,8 +39,18 @@ def init_langfuse() -> None:
     log.info("Langfuse tracing enabled → %s", settings.LANGFUSE_HOST)
 
 
+def _with_timeout_default(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Inject a per-request timeout if the caller didn't set one. Without it a
+    stalled provider connection (gemini 503/high-demand) hangs the call forever —
+    a 42-min agent.chat hang was observed (2026-06-26). The openai SDK then retries
+    on timeout instead of blocking."""
+    kwargs.setdefault("timeout", settings.LLM_REQUEST_TIMEOUT_S)
+    return kwargs
+
+
 def make_async_openai(**kwargs: Any) -> AsyncOpenAI:
     """Construct an AsyncOpenAI client, Langfuse-traced when enabled."""
+    kwargs = _with_timeout_default(kwargs)
     if not settings.LANGFUSE_ENABLED:
         return AsyncOpenAI(**kwargs)
     try:

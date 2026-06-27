@@ -24,7 +24,6 @@ domain-aware retrieval + reasoning trace + cost dashboard.
 - **Chat StructMem** — Semantic conversation memory thay sliding-window.
 - **Page-aware citations** — Số trang chính xác cho PDF (NotebookLM-style).
 - **Vision LLM** — Mô tả ảnh y tế trong PDF + ảnh standalone.
-- **MinerU backend (opt-in)** — Layout + OCR + formula → LaTeX + table → HTML một lượt. PPTX cũng có thể đi qua libreoffice → PDF → MinerU.
 - **Mindmap & Summary** — Mermaid mindmap + cấu trúc tóm tắt y khoa.
 - **RAG enhancement (2026-06, mặc định OFF)** — bật từng cờ để A/B
   ([§5.5](#55-retrieval--reranking)):
@@ -102,8 +101,7 @@ POST /ingest/folder
     ├── Parse:
     │     .pdf  → PDFParser — text-layer first; tiered escalation per page:
     │              hybrid backend  → Tesseract → Vision LLM (fallback)
-    │              mineru backend  → MinerU (layout + OCR + formula + table, one pass)
-    │     .pptx → MarkItDownParser  (or libreoffice → PDF → MinerU when INGEST_USE_MINERU_FOR_PPTX)
+    │     .pptx → MarkItDownParser
     │     .docx/.html → MarkItDownParser
     │     .jpg/.png/...     → ImageParser → vision_response()
     │     .md/.txt          → MarkdownConnector
@@ -778,57 +776,20 @@ SCALER_POLL_SECONDS=5
 SCALER_COOLDOWN_SECONDS=30
 ```
 
-### 5.8 PDF, OCR & MinerU
+### 5.8 PDF, OCR & Vision
 
-Two parser backends — pick via `PDF_PARSER_BACKEND`.
-
-| Backend | Tiers | When |
-|---|---|---|
-| `hybrid` (default) | PyMuPDF text-layer → Tesseract OCR → Vision LLM fallback (per page, escalates only when thin) | No GPU / no MinerU install. Vietnamese ⇒ set `PDF_OCR_LANG=vie+eng` |
-| `mineru` | PyMuPDF text-layer → **MinerU** single-pass (layout + OCR + formula→LaTeX + table→HTML) — replaces Tesseract + vision tiers | GPU available, want formulas/tables/layout preserved, fewer LLM calls |
+PDF parsing uses the `hybrid` tier path: PyMuPDF text-layer → Tesseract OCR → Vision LLM fallback (per page, escalates only when thin).
 
 ```env
-PDF_PARSER_BACKEND=hybrid        # hybrid | mineru
+PDF_PARSER_BACKEND=hybrid
 
-# Tesseract path (hybrid backend only)
+# Tesseract path
 PDF_OCR_LANG=vie+eng
 PDF_OCR_MIN_TEXT_CHARS=50
 PDF_OCR_DPI=300
 PDF_OCR_VISION_FALLBACK=true     # tier-3 escalation when Tesseract output still thin
 PDF_OCR_VISION_THRESHOLD=30
-
-# MinerU (mineru backend). Auto-picks GPU when local engine selected.
-MINERU_BACKEND=vlm-auto-engine   # pipeline | vlm-auto-engine (default) | hybrid-auto-engine | *-http-client
-MINERU_OUTPUT_DIR=.cache/agentrag/mineru
-MINERU_LANG=latin                # Vietnamese uses Latin script → 'latin'
-                                 # Allowed: ch | en | korean | japan | chinese_cht | latin | arabic | east_slavic | cyrillic | devanagari
-MINERU_DEVICE=cuda               # legacy, ignored by new CLI (device chosen via backend)
-
-# Route PPTX → libreoffice → PDF → MinerU (preserves slide layout + formulas).
-# Falls back to MarkItDown when off or libreoffice/mineru missing.
-INGEST_USE_MINERU_FOR_PPTX=false
 ```
-
-**Picking `MINERU_BACKEND`:**
-
-| Value | Notes |
-|---|---|
-| `pipeline` | Classic; lightweight; no VLM; runs CPU-OK |
-| `vlm-auto-engine` | **Default.** Qwen2-VL multilingual; preserves Vietnamese diacritics natively (no OCR fallback to `latin`). Needs GPU |
-| `hybrid-auto-engine` | Faster than `vlm-auto-engine` but uses paddleocr `latin` for some pages → **drops Vietnamese accents**. Pick only if corpus is English/CJK and latency matters more than accents |
-| `*-http-client` | Remote OpenAI-compatible VLM (set `MINERU_URL`) |
-
-**Install MinerU:**
-
-```bash
-pip install -U mineru          # CPU only
-pip install -U "mineru[all]"   # + GPU + table-rec + formula models
-mineru --version               # confirm CLI on PATH
-```
-
-Models download lazily on first run (~3-5 GB). Subsequent calls cache to `MINERU_OUTPUT_DIR`.
-
-`INGEST_USE_MINERU_FOR_PPTX=true` also requires `libreoffice` on PATH (`apt install libreoffice-impress`).
 
 ```env
 # Vision LLM (used by hybrid backend tier-3 + standalone image ingest).
@@ -856,7 +817,6 @@ ORIGINALS_DIR=data/originals
 ```
 
 Image-heavy PDFs (e.g. 100-page scanned thesis):
-- `PDF_PARSER_BACKEND=mineru` → one MinerU pass extracts text + layout + tables + formulas; no vision-LLM tier needed.
 - `PDF_PARSER_BACKEND=hybrid` → `vision_extract` ARQ job describes each thin page with the vision LLM, embeds, then upserts segments to Postgres + Elasticsearch in batches. ES `docs.count` climbs every batch instead of one bulk write at the end.
 
 ### 5.9 Open-Notebook Adapter
@@ -1254,7 +1214,7 @@ Dùng với bất kỳ MCP-compatible client (Claude Desktop, Claude Code, custo
 
 ### Citations với số trang (NotebookLM-style)
 
-Bất kể backend (`hybrid` hay `mineru`), `PDFParser` chèn marker page trong text khi parse; mỗi chunk được tag `page_start` / `page_end`:
+`PDFParser` chèn marker page trong text khi parse; mỗi chunk được tag `page_start` / `page_end`:
 
 ```json
 {
@@ -1688,9 +1648,7 @@ AgentRag/
     │   ├── chunkers/                    # HybridChunker (page-aware)
     │   ├── connectors/
     │   ├── parsers/
-    │   │   ├── pdf_parser.py            # PyMuPDF — page-aware; dispatches to Tesseract/Vision/MinerU
-    │   │   ├── mineru_parser.py         # MinerU CLI shim (layout + OCR + formula + table, one pass)
-    │   │   ├── pptx_via_mineru.py       # PPTX → libreoffice PDF → MinerU (opt-in)
+    │   │   ├── pdf_parser.py            # PyMuPDF — page-aware; tiered: Tesseract → Vision LLM
     │   │   ├── image_parser.py          # Vision LLM mô tả ảnh
     │   │   ├── markitdown_parser.py     # DOCX/PPTX/HTML
     │   │   └── excel_parser.py

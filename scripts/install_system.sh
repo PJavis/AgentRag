@@ -157,7 +157,7 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo unknown)
   ok "GPU detected: ${GPU_NAME}"
 else
-  warn "nvidia-smi not found. MinerU + vLLM will run on CPU (very slow)."
+  warn "nvidia-smi not found. Vision LLM (Ollama/llava) will run on CPU (very slow)."
   warn "  On WSL2: install NVIDIA driver on Windows host + WSL2 GPU support."
   warn "  On bare-metal: \`sudo apt install nvidia-driver-550\` (or current) then reboot."
 fi

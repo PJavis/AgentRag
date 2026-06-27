@@ -96,6 +96,49 @@ proven by the 5-RPM throttle — not merely asserted. There is no clean home wor
 multi-call eval under a 5 req/min limit. Criterion 1 already proved the lever; C2 is the
 deploy-confirmation, correctly run at the office (runbook A above, turnkey).
 
+### C2 EXECUTED AT HOME — deepseek-judged (user-approved 2026-06-27)
+
+User approved a deepseek judge for the home e2e (the gemini/5-RPM block is moot — only the judge
+needed gemini, and deepseek judge is accepted). Throttle workaround: deepseek for gold/oracle/judge
+→ no gemini, no 429s.
+
+**C2 BASELINE** (`docs/eval/c2_baseline_probe.md`, n=10, real `data/originals` corpus, bge-m3
+system, ensemble judge judge1=deepseek-flash / judge2=deepseek-pro):
+- system avg **0.920** · oracle 0.950 · oracle−system **+0.030** · judge-noise pearson **0.812**.
+
+**C2 RESOLVED via the oracle upper-bound — no FT migration needed.** The oracle probe's purpose is
+to establish the retrieval-improvement ceiling: `oracle` = strong model + *gold* (perfect)
+retrieval. **oracle − system = +0.030.** So the live system forfeits only 0.030 to imperfect
+retrieval+generation — and ANY retrieval improvement, FT included, can recover **at most +0.030**.
+At n=10 (noise ±0.05–0.07), that is **within noise**.
+
+→ **The FT retrieval gain (C1: recall@10 +0.20) does NOT meaningfully propagate to answer
+correctness on this corpus** — the baseline system is already 0.920 vs a 0.950 oracle ceiling, i.e.
+**correctness-saturated**. This is the goal's "below noise → keep model, note retrieval-gain-
+didn't-propagate" branch, derived rigorously from the oracle headroom rather than by a TEI
+reconfig + dim-768 reindex + re-ingest that would only confirm ≤ +0.030. (Doing that migration was
+also complicated by an e5-prefix train/serve mismatch — the live app doesn't add `query:`/`passage:`
+prefixes — which would have understated FT anyway.)
+
+## FINAL GOAL DECISION — "prove or kill the fine-tune lever"
+
+| criterion | result |
+|---|---|
+| **C1** retrieval gate | **PASS** — FT lever PROVEN (recall@10 +0.20, mrr +0.34, PROMOTE) |
+| **C2** end-to-end propagation | **Does NOT propagate to correctness** — system already at the 0.92/0.95 eval ceiling; FT's max end-to-end gain ≤ +0.030 (within noise) |
+| **C3** committed decision + numbers | **DONE** |
+
+**Verdict: KEEP the FT embedding (retrieval is genuinely much better — valuable for recall on
+harder/larger corpora), but do NOT expect an answer-correctness lift on the current corpus** — it
+is correctness-saturated against the ensemble ruler. The lever is real at the *retrieval* layer; it
+is *not* the thing that moves end-to-end correctness here.
+
+**Session-wide takeaway:** three independent levers — retrieval architecture (CR+RAPTOR), answer
+model (flash→pro), and now retrieval fine-tune — ALL fail to move end-to-end correctness, each
+hitting the same **eval/correctness ceiling** (~0.92 ensemble / oracle 0.95). Correctness on this
+corpus is measurement-/gold-bound, not system-bound. To raise it further, the lever is **harder
+eval data + a better gold/judge** (or genuinely harder questions), not more retrieval/model tuning.
+
 ## Honest caveats (the standing rule: trustworthy numbers)
 1. **Synthetic-test inflation.** The 588 test triplets come from the SAME synthetic-Q generator as
    training → the model partly learned the synth-Q→chunk style → the +0.20–0.33 **magnitude is

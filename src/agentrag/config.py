@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     #: DeepSeek (OpenAI-compatible). Routed per-task via a "deepseek-*" model name
     #: in LLM_TASK_MODEL_MAP. Falls back to OPENAI_API_KEY if unset.
     DEEPSEEK_API_KEY: str | None = None
+    #: Anthropic / Claude — routed per-task via a "claude-*" model name in
+    #: LLM_TASK_MODEL_MAP, through Anthropic's OpenAI-compatible endpoint
+    #: (https://api.anthropic.com/v1/). Primary use: an INDEPENDENT cross-provider
+    #: eval judge (eval_judge/eval_judge2) so the score isn't self-graded by the
+    #: answer model's provider. Judge-only path — no adaptive-thinking on the compat API.
+    ANTHROPIC_API_KEY: str | None = None
 
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434/v1/"
     OLLAMA_API_KEY: str = "ollama"

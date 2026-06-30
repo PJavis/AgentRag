@@ -28,26 +28,14 @@ The v3 0.888 isn't quotable until a model that does **not** share a provider wit
 
 ### Option A (recommended) — Claude judge (also closes the deferred "Claude in eval slots")
 
-1. **Wire the `anthropic` provider** — `src/agentrag/agent/llm.py`:
-   - In the auto-derive block (~line 92, beside the `deepseek`/`gpt-` branches) add:
-     ```python
-     elif mlow.startswith("claude"):
-         provider_override = "anthropic"
-     ```
-   - In `_resolve_backend_for` add a branch:
-     ```python
-     if provider == "anthropic":
-         if not settings.ANTHROPIC_API_KEY:
-             raise ValueError("ANTHROPIC_API_KEY required for Claude-routed task")
-         # Anthropic's OpenAI-compatible endpoint — works with the existing AsyncOpenAI
-         # client for chat-completions JSON (judge only; no adaptive-thinking on this path).
-         return (model or "claude-haiku-4-5", "https://api.anthropic.com/v1/", settings.ANTHROPIC_API_KEY)
-     ```
-   - `src/agentrag/config.py`: add `ANTHROPIC_API_KEY: str | None = None`.
-   - (Optional, cleaner) add a config-validation guard rejecting a non-`claude-*` model under the
-     anthropic provider, mirroring the local-reranker guard.
-2. **`.env`** — add the key and point the eval slots so the PRIMARY judge is independent of the
-   answer model, and the noise floor is cross-provider:
+> ✅ **The `anthropic` provider is already wired** (`agent/llm.py` auto-derive + `_resolve_backend_for`,
+> `config.ANTHROPIC_API_KEY`, 3 tests — `tests/agent/test_anthropic_provider.py`). A `claude-*` model
+> routes to `https://api.anthropic.com/v1/` (Anthropic's OpenAI-compat endpoint, judge-only). So this
+> is now **config + key only** — no code step.
+
+1. **`.env`** — add the key and point the eval slots so the PRIMARY judge is independent of the
+   answer model, and the noise floor is cross-provider (ready-made map in `.env.example` →
+   "Eval-fidelity run (CLAUDE judge)"):
    ```bash
    ANTHROPIC_API_KEY=sk-ant-...
    # eval_judge (primary score) = Claude (independent of the deepseek answer model -> no self-preference)
@@ -56,7 +44,7 @@ The v3 0.888 isn't quotable until a model that does **not** share a provider wit
                        "eval_judge":"claude-haiku-4-5","eval_judge2":"deepseek-v4-pro"}
    ```
    (Use `claude-sonnet-4-6` for a stronger judge if budget allows.)
-3. **Smoke** one judge call:
+2. **Smoke** one judge call:
    `uv run python -c "import asyncio;from src.agentrag.services.llm_gateway import LLMGateway;
    g=LLMGateway();print(asyncio.run(g.json_response(system_prompt='return json',user_prompt='{\"ok\":1}',task='eval_judge')))"`
 

@@ -91,6 +91,8 @@ class AgentLLM:
                 provider_override = "openai"
             elif mlow.startswith("deepseek"):
                 provider_override = "deepseek"
+            elif mlow.startswith("claude"):
+                provider_override = "anthropic"
             # else: stay on default provider (Ollama / whatever AGENT_PROVIDER set)
         if provider_override:
             self.model, self.base_url, self.api_key = self._resolve_backend_for(
@@ -133,6 +135,13 @@ class AgentLLM:
             if not key:
                 raise ValueError("DEEPSEEK_API_KEY (or OPENAI_API_KEY) required for DeepSeek-routed task")
             return (model or "deepseek-v4-pro", "https://api.deepseek.com", key)
+        if provider == "anthropic":
+            # Claude via Anthropic's OpenAI-compatible endpoint — reuses the AsyncOpenAI
+            # client like every other provider here. Primary use: an independent
+            # cross-provider eval judge (see config.ANTHROPIC_API_KEY).
+            if not settings.ANTHROPIC_API_KEY:
+                raise ValueError("ANTHROPIC_API_KEY required for Claude-routed task")
+            return (model or "claude-haiku-4-5", "https://api.anthropic.com/v1/", settings.ANTHROPIC_API_KEY)
         if provider == "ollama":
             return (
                 model or settings.AGENT_MODEL or settings.EXTRACTION_MODEL,

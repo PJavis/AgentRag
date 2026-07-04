@@ -469,7 +469,7 @@ retrain-embedding-nightly:
 	  rm -rf $(FT_OUT_EMBED).prev && \
 	  mv -f $(FT_OUT_EMBED) $(FT_OUT_EMBED).prev 2>/dev/null || true && \
 	  mv models/agentrag-embed-candidate $(FT_OUT_EMBED) && \
-	  uv run hf upload pjavis/agentrag-embed-v1 $(FT_OUT_EMBED) . --repo-type model && \
+	  uv run hf upload dung6903/agentrag-embed-v1 $(FT_OUT_EMBED) . --repo-type model && \
 	  docker compose -f deploy/tei.compose.yml restart tei-gpu && \
 	  echo "✅ promoted candidate → prod" || \
 	  echo "❌ candidate failed gate, kept old"

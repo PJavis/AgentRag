@@ -30,7 +30,7 @@ services:
       - tei_hf_cache:/data
     command:
       # Finetuned e5 (agentrag-embed-v1): MEAN pooling, 768-dim.
-      - --model-id=pjavis/agentrag-embed-v1
+      - --model-id=dung6903/agentrag-embed-v1
       - --pooling=mean
       - --max-batch-tokens=16384
     deploy:

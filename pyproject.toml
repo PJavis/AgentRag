@@ -63,6 +63,14 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+# Fine-tune training stack (scripts/finetune_embedding.py, finetune_reranker.py):
+# sentence-transformers 3.x .fit() → HF Trainer needs datasets + accelerate.
+# Previously satisfied only transitively via mineru[all] (removed 2026-06-28) →
+# now declared explicitly so training survives `uv sync`. Install: `uv sync --extra finetune`.
+finetune = [
+    "datasets>=2.0.0",
+    "accelerate>=0.26.0",
+]
 # Langfuse LLM tracing (LANGFUSE_ENABLED=true). Pinned to v2 to match the
 # single-container self-hosted server in docker-compose (profile=observability).
 # v3+ SDK uses the OTEL ingestion endpoint, which needs a v3 server

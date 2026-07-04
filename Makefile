@@ -470,7 +470,7 @@ retrain-embedding-nightly:
 	$(MAKE) train-embed FT_OUT_EMBED=models/agentrag-embed-candidate
 	$(MAKE) eval-embed FT_OUT_EMBED=models/agentrag-embed-candidate
 	rm -rf $(FT_OUT_EMBED).prev
-	mv -f $(FT_OUT_EMBED) $(FT_OUT_EMBED).prev 2>/dev/null || true
+	if [ -d "$(FT_OUT_EMBED)" ]; then mv "$(FT_OUT_EMBED)" "$(FT_OUT_EMBED).prev"; fi
 	mv models/agentrag-embed-candidate $(FT_OUT_EMBED)
 	uv run hf upload dung6903/agentrag-embed-v1 $(FT_OUT_EMBED) . --repo-type model
 	docker compose -f deploy/tei.compose.yml restart tei-gpu

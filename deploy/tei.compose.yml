@@ -21,13 +21,12 @@ services:
     ports:
       - "8080:80"
     volumes:
-      # bge-m3 pre-downloaded on host (TEI 1.5 hf-hub downloader is broken in
-      # this env). Run offline against the mounted dir. For the finetuned
-      # checkpoint instead, mount ../models/agentrag-embed-v1:/data + --pooling=mean.
-      - ../models/bge-m3:/data
+      # Serving the finetuned e5 checkpoint (agentrag-embed-v1, MEAN pooling, 768-dim).
+      # For prod bge-m3 instead: mount ../models/bge-m3:/data + --pooling=cls.
+      - ../models/agentrag-embed-v1:/data
     command:
       - --model-id=/data
-      - --pooling=cls
+      - --pooling=mean
       - --max-batch-tokens=16384
     environment:
       - HF_HUB_OFFLINE=1

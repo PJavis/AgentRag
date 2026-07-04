@@ -459,7 +459,7 @@ train-llm-lora:
 convert-llm:
 	bash scripts/convert_to_ollama.sh $(FT_OUT_LLM) $(FT_OLLAMA_NAME) $(FT_QUANT)
 
-# End-to-end nightly: mine → split → train embed → eval → (if exit 0) restart TEI.
+# End-to-end nightly: mine → split → train embed → eval → (if exit 0) upload to Hub + restart TEI.
 .PHONY: retrain-embedding-nightly
 retrain-embedding-nightly:
 	$(MAKE) mine-pairs
@@ -469,6 +469,7 @@ retrain-embedding-nightly:
 	  rm -rf $(FT_OUT_EMBED).prev && \
 	  mv -f $(FT_OUT_EMBED) $(FT_OUT_EMBED).prev 2>/dev/null || true && \
 	  mv models/agentrag-embed-candidate $(FT_OUT_EMBED) && \
+	  uv run hf upload pjavis/agentrag-embed-v1 $(FT_OUT_EMBED) . --repo-type model && \
 	  docker compose -f deploy/tei.compose.yml restart tei-gpu && \
 	  echo "✅ promoted candidate → prod" || \
 	  echo "❌ candidate failed gate, kept old"

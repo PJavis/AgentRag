@@ -392,6 +392,7 @@ FT_OUT_RERANK ?= models/agentrag-rerank-v1
 FT_OUT_LLM ?= models/qwen-agentrag-7b
 FT_OLLAMA_NAME ?= qwen-agentrag
 FT_QUANT ?= Q4_K_M
+HF_EMBED_REPO ?= dung6903/agentrag-embed-v1
 
 .PHONY: mine-pairs
 mine-pairs:
@@ -472,6 +473,7 @@ retrain-embedding-nightly:
 	rm -rf $(FT_OUT_EMBED).prev
 	if [ -d "$(FT_OUT_EMBED)" ]; then mv "$(FT_OUT_EMBED)" "$(FT_OUT_EMBED).prev"; fi
 	mv models/agentrag-embed-candidate $(FT_OUT_EMBED)
-	uv run hf upload dung6903/agentrag-embed-v1 $(FT_OUT_EMBED) . --repo-type model
+	cp deploy/model-card-agentrag-embed-v1.md $(FT_OUT_EMBED)/README.md
+	uv run hf upload $(HF_EMBED_REPO) $(FT_OUT_EMBED) . --repo-type model
 	docker compose -f deploy/tei.compose.yml restart tei-gpu
 	@echo "✅ promoted candidate → prod"

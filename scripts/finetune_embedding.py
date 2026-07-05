@@ -6,10 +6,18 @@ trains MultipleNegativesRankingLoss with in-batch negatives + the explicit
 hard negatives from the file, and writes the result to `models/<name>/`.
 
 After training:
-    docker compose -f deploy/tei.compose.yml up -d
+    make eval-embed                       # gate candidate vs baseline (or vs prod)
+    # Promotion + Hub upload are handled by `make retrain-embedding-nightly`
+    # (mines pairs, trains, gates, rotates models/agentrag-embed-v1, uploads to
+    # the HF Hub repo, restarts TEI). To do it by hand instead:
+    #   uv run hf upload dung6903/agentrag-embed-v1 models/<name> . --repo-type model
+    # Then serve from the Hub:
+    make serve-embed                       # TEI pulls dung6903/agentrag-embed-v1
     # then in .env:
     EMBEDDING_PROVIDER=openai
-    EMBEDDING_MODEL=agentrag-embed-v1
+    EMBEDDING_MODEL=agentrag-embed-v1     # ignored by TEI (dummy value; TEI always
+                                           # serves whatever --model-id it was started
+                                           # with) — see .env.example
     EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/
     OPENAI_API_KEY=tei-dummy
 

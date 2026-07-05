@@ -392,6 +392,7 @@ FT_OUT_RERANK ?= models/agentrag-rerank-v1
 FT_OUT_LLM ?= models/qwen-agentrag-7b
 FT_OLLAMA_NAME ?= qwen-agentrag
 FT_QUANT ?= Q4_K_M
+FT_GATE_ARGS ?=
 HF_EMBED_REPO ?= dung6903/agentrag-embed-v1
 
 .PHONY: mine-pairs
@@ -423,7 +424,8 @@ eval-embed:
 	uv run python scripts/eval_retrieval.py \
 	  --baseline $(FT_BASE_EMBED) \
 	  --candidate $(FT_OUT_EMBED) \
-	  --test data/finetune/embed_test.jsonl
+	  --test data/finetune/embed_test.jsonl \
+	  $(FT_GATE_ARGS)
 
 .PHONY: serve-embed
 serve-embed:
@@ -464,12 +466,25 @@ convert-llm:
 # Promote/upload/restart live on their own recipe lines (no $(MAKE)) because GNU make
 # EXECUTES recipe lines containing $(MAKE) even under -n; an eval-gate failure aborts
 # the recipe before any promotion happens.
+# Gate: when a prod model already exists ($(FT_OUT_EMBED) present), the candidate is
+# gated against CURRENT PROD (recall@10 / mrr@10 must not regress, gates set to 0) —
+# not just against base e5 — so a candidate that beats base but loses to prod can't
+# auto-promote. Only the very first-ever run (no prod dir yet) uses the vs-base gates.
+# Ops note: if `hf upload` fails mid-run, local prod ($(FT_OUT_EMBED)) is already
+# rotated in but the Hub repo / running TEI still serve the previous revision — rerun
+# this target (or `make -s eval-embed` + a manual `hf upload`) to reconverge; the
+# subsequent `docker compose restart tei-gpu` erroring because TEI isn't running is
+# harmless.
 .PHONY: retrain-embedding-nightly
 retrain-embedding-nightly:
 	$(MAKE) mine-pairs
 	$(MAKE) split-pairs
 	$(MAKE) train-embed FT_OUT_EMBED=models/agentrag-embed-candidate
-	$(MAKE) eval-embed FT_OUT_EMBED=models/agentrag-embed-candidate
+	if [ -d "$(FT_OUT_EMBED)" ]; then \
+	  $(MAKE) eval-embed FT_BASE_EMBED="$(FT_OUT_EMBED)" FT_OUT_EMBED=models/agentrag-embed-candidate FT_GATE_ARGS="--gate-recall 0 --gate-mrr 0"; \
+	else \
+	  $(MAKE) eval-embed FT_OUT_EMBED=models/agentrag-embed-candidate; \
+	fi
 	rm -rf $(FT_OUT_EMBED).prev
 	if [ -d "$(FT_OUT_EMBED)" ]; then mv "$(FT_OUT_EMBED)" "$(FT_OUT_EMBED).prev"; fi
 	mv models/agentrag-embed-candidate $(FT_OUT_EMBED)

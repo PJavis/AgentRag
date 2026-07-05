@@ -196,7 +196,7 @@ services:
         condition: service_healthy
     volumes:
       - images_data:/app/data/images
-    command: ["uv", "run", "arq", "src.agentrag.worker.settings.WorkerSettings"]
+    command: ["arq", "src.agentrag.worker.settings.WorkerSettings"]
 
   frontend:
     image: licht693/agentrag-frontend:latest

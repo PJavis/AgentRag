@@ -1,6 +1,11 @@
 # Text Embeddings Inference (TEI) — OpenAI-compatible embedding server.
-# Serves your finetuned embedding model so AgentRag can hit it via
+# Serves the finetuned embedding model so AgentRag can hit it via
 # EMBEDDING_PROVIDER=openai + EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/.
+#
+# Models are pulled from HF Hub on first start into the tei_hf_cache volume
+# (one-time ~1.1GB download; survives restarts). For offline/local work,
+# swap the volume for a bind mount and use --model-id=/data:
+#   - ../models/agentrag-embed-v1:/data   (+ HF_HUB_OFFLINE=1)
 #
 # Start (GPU, 16 GB box):
 #   docker compose -f deploy/tei.compose.yml --profile gpu up -d
@@ -21,16 +26,13 @@ services:
     ports:
       - "8080:80"
     volumes:
-      # bge-m3 pre-downloaded on host (TEI 1.5 hf-hub downloader is broken in
-      # this env). Run offline against the mounted dir. For the finetuned
-      # checkpoint instead, mount ../models/agentrag-embed-v1:/data + --pooling=mean.
-      - ../models/bge-m3:/data
+      # HF cache — hub downloads land here (TEI sets HUGGINGFACE_HUB_CACHE=/data).
+      - tei_hf_cache:/data
     command:
-      - --model-id=/data
-      - --pooling=cls
+      # Finetuned e5 (agentrag-embed-v1): MEAN pooling, 768-dim.
+      - --model-id=dung6903/agentrag-embed-v1
+      - --pooling=mean
       - --max-batch-tokens=16384
-    environment:
-      - HF_HUB_OFFLINE=1
     deploy:
       resources:
         reservations:
@@ -47,10 +49,11 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ../models/bge-m3:/data
+      - tei_hf_cache:/data
     command:
-      - --model-id=/data
+      - --model-id=BAAI/bge-m3
       - --pooling=cls
-    environment:
-      - HF_HUB_OFFLINE=1
     restart: unless-stopped
+
+volumes:
+  tei_hf_cache:

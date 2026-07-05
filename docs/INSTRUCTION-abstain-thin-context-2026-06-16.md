@@ -81,12 +81,16 @@ the live system **refused despite the gold chunk being retrieved at rank 0**. Ro
    the rewrites only ADD, never drop the best chunk below the floor. `RETRIEVAL_RAW_QUERY_TOP_K=8`.
 3. **Deterministic query-rewrite** (temp 0) so the same question doesn't flip.
 
-**Validated** (`docs/eval/eval_fidelity_probe_prod_v2_2026-06-26.md`): system avg **0.842→0.950**,
-oracle−system **+0.134→+0.019** (within noise), **0 hard misses (was 3)**, and **OOC safety holds**
-— genuinely out-of-corpus questions ("capital of France", "first US president") still abstain at
-0.55 (their raw hits also score ~0.50 < floor, so the raw-query injection does NOT loosen OOC).
+**Validated** — the abstain fix eliminated the false-abstentions: **0 hard misses (was 3)**, row18 +
+row21 now answer correctly, **OOC safety holds** (genuinely out-of-corpus questions still abstain at
+0.55 — their raw hits also score ~0.50 < floor, so the raw-query injection does NOT loosen OOC). The
+directional v2 lift (n=20) read system 0.842→0.950 / gap +0.019, but the **clean n=50 run**
+(`docs/eval/eval_fidelity_probe_prod_v3_2026-06-26.md`, 0 skips) is the trustworthy number: system
+**0.888**, oracle−system **+0.046 (<0.05)** — eval-is-the-ceiling holds, no false-abstention
+regression. (v2's 0.950 was inflated by 10/30 gemini-503 skips = easy-Q selection bias.)
 
 **Still tunable / open:** the per-call `LLM_REQUEST_TIMEOUT_S=60` + total `AGENT_TOTAL_TIMEOUT_S=90`
-bound runaway `agent.chat` under gemini 503 storms (graceful "busy" response). A higher-n probe
-re-run (`scripts/eval/oracle_probe.py --retries`) to firm up the directional n=20 numbers is the
-home-run follow-up.
+bound runaway `agent.chat` under gemini 503 storms (graceful "busy" response). The judge ran
+all-DeepSeek (gemini free-tier `pro` at limit:0) → weak independence (pearson 0.730); an
+**independent judge** (paid gemini, or wire the `anthropic` provider + `ANTHROPIC_API_KEY`) is needed
+before quoting a correctness figure with confidence.

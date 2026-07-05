@@ -134,6 +134,14 @@ A **ready 50-row eval set** from this session is already at `data/eval/prod_corp
 (gitignored) — point `--eval-set` at it to skip the rebuild.
 
 **Read:** `oracle − system` small (< ~0.05) → system is at the eval ceiling (the metric, not
-retrieval/generation, is the cap); `judge-noise pearson` high → the judge is trustworthy. The v2
-run got system **0.950**, gap **+0.019**, 0 hard misses — a cleaner higher-n run is the home-run
-follow-up to firm up the (directional, n=20) numbers.
+retrieval/generation, is the cap); `judge-noise pearson` high → the judge is trustworthy. The
+**clean n=50 run is done** (`eval_fidelity_probe_prod_v3_2026-06-26.md`, 0 skips): system **0.888**,
+oracle−system **+0.046 (<0.05) → ceiling CONFIRMED**. (The earlier v2 0.950 was inflated by 10/30
+gemini-503 skips — easy-Q selection bias; trust the clean **0.888**.)
+
+> **⚠️ Judge independence is the open gap.** Free-tier gemini serves `gemini-2.5-pro` at limit:0, so
+> v3 ran **all-DeepSeek** judges (flash vs pro) — same provider as the answer model
+> (`deepseek-v4-flash`) → mild self-preference risk, judge-noise pearson only 0.730. Before quoting a
+> correctness number with confidence, put an **independent** model in the judge slot: paid gemini, or
+> wire the `anthropic` provider (`agent/llm.py::_resolve_backend_for`) + `ANTHROPIC_API_KEY` so a
+> Claude judge can fill `eval_judge2`. That also closes the deferred "Claude in eval slots" item.

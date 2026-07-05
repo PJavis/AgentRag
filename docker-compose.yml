@@ -135,7 +135,7 @@ services:
   # ── App services (profile: app) ──────────────────────────────────────────
   # Bring up everything: docker compose --profile app up -d --build
   api:
-    image: pjavis/agentrag-api:latest
+    image: licht693/agentrag-api:latest
     build:
       context: .
     container_name: agentrag-api
@@ -174,7 +174,7 @@ services:
       start_period: 30s
 
   worker:
-    image: pjavis/agentrag-api:latest
+    image: licht693/agentrag-api:latest
     build:
       context: .
     container_name: agentrag-worker
@@ -199,7 +199,7 @@ services:
     command: ["uv", "run", "arq", "src.agentrag.worker.settings.WorkerSettings"]
 
   frontend:
-    image: pjavis/agentrag-frontend:latest
+    image: licht693/agentrag-frontend:latest
     build:
       context: ./frontend
     container_name: agentrag-frontend

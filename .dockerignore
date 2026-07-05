@@ -26,3 +26,4 @@ data/finetune/
 data/eval/
 data/docs/
 data/benchmarks/
+data/model_overrides.json

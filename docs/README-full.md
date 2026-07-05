@@ -469,21 +469,23 @@ EMBEDDING_BASE_URL=                   # blank = OLLAMA_BASE_URL
 | Mode | Config | Notes |
 |---|---|---|
 | **Ollama (default)** | `EMBEDDING_PROVIDER=ollama`, `EMBEDDING_MODEL=nomic-embed-text` | Free local, 768-dim, stable. ⚠ Ollama's `bge-m3` GGUF can emit NaN at batch scale — serve bge-m3 via TEI instead. |
-| **TEI — bge-m3 (recommended quality)** | `make serve-embed` → `EMBEDDING_PROVIDER=openai`, `EMBEDDING_MODEL=BAAI/bge-m3`, `EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/` | Local GPU server, 1024-dim, strong VN. |
+| **TEI — finetuned agentrag-embed-v1 (best quality, `make serve-embed`)** | `EMBEDDING_PROVIDER=openai`, `EMBEDDING_MODEL` is ignored by TEI (dummy value), `EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/` | GPU server pulling `dung6903/agentrag-embed-v1` from HF Hub, 768-dim, MEAN pooling, tuned on AgentRag VN-medical data. |
+| **TEI — bge-m3 (stock quality, root compose)** | `docker compose up -d tei` → `EMBEDDING_PROVIDER=openai`, `EMBEDDING_MODEL=BAAI/bge-m3`, `EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/` | Local GPU server, 1024-dim, strong VN, no finetune. |
 | **Cloud** | `EMBEDDING_PROVIDER=gemini` (or `hf_inference`) + key | No local GPU. |
 
-**TEI (Text Embeddings Inference) for bge-m3:**
+**TEI (Text Embeddings Inference) — finetuned embedding (recommended):**
 
 ```bash
 make serve-embed        # docker compose -f deploy/tei.compose.yml --profile gpu up -d  → :8080
 make stop-embed
 ```
 
-- Serves `BAAI/bge-m3` from `models/bge-m3`. Pre-download once:
-  `uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-m3', local_dir='models/bge-m3')"`
+- Serves `dung6903/agentrag-embed-v1` (the finetuned e5 model) straight from HF Hub — no local `models/` checkout needed. First start pulls ~1.1 GB into the `tei_hf_cache` Docker volume, which then survives restarts.
+- CPU-only boxes: `docker compose -f deploy/tei.compose.yml --profile cpu up -d` runs the `tei-cpu` service instead, serving `BAAI/bge-m3` (no GPU required).
+- **TEI (bge-m3), stock quality:** the root `docker-compose.yml` `tei` service (started with plain `docker compose up -d`, no profile) pulls `BAAI/bge-m3` from HF Hub the same way — also no local model dir needed.
 - **Blackwell GPUs (RTX 50xx, compute cap sm_120):** pinned TEI images are sm_80-only and fail with `Runtime compute cap 120 is not compatible`. The compose uses `text-embeddings-inference:cuda-latest` (all-arch PTX) — required for sm_120, fine on older GPUs.
 - TEI ignores the bearer key, so `OPENAI_API_KEY` holding a DeepSeek key is harmless.
-- **Switching embed model changes the vector dimension** (bge-m3 1024 vs nomic 768) → delete + re-ingest the index.
+- **Switching embed model changes the vector dimension** (agentrag-embed-v1 / e5 768-dim vs bge-m3 1024-dim vs nomic 768-dim) → delete + re-ingest the index.
 
 ### 5.2 Database & Cache
 

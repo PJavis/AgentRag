@@ -392,6 +392,7 @@ FT_OUT_RERANK ?= models/agentrag-rerank-v1
 FT_OUT_LLM ?= models/qwen-agentrag-7b
 FT_OLLAMA_NAME ?= qwen-agentrag
 FT_QUANT ?= Q4_K_M
+HF_EMBED_REPO ?= dung6903/agentrag-embed-v1
 
 .PHONY: mine-pairs
 mine-pairs:
@@ -459,16 +460,20 @@ train-llm-lora:
 convert-llm:
 	bash scripts/convert_to_ollama.sh $(FT_OUT_LLM) $(FT_OLLAMA_NAME) $(FT_QUANT)
 
-# End-to-end nightly: mine → split → train embed → eval → (if exit 0) restart TEI.
+# End-to-end nightly: mine → split → train embed → eval gate → promote → upload to Hub → restart TEI.
+# Promote/upload/restart live on their own recipe lines (no $(MAKE)) because GNU make
+# EXECUTES recipe lines containing $(MAKE) even under -n; an eval-gate failure aborts
+# the recipe before any promotion happens.
 .PHONY: retrain-embedding-nightly
 retrain-embedding-nightly:
 	$(MAKE) mine-pairs
 	$(MAKE) split-pairs
 	$(MAKE) train-embed FT_OUT_EMBED=models/agentrag-embed-candidate
-	@$(MAKE) eval-embed FT_OUT_EMBED=models/agentrag-embed-candidate && \
-	  rm -rf $(FT_OUT_EMBED).prev && \
-	  mv -f $(FT_OUT_EMBED) $(FT_OUT_EMBED).prev 2>/dev/null || true && \
-	  mv models/agentrag-embed-candidate $(FT_OUT_EMBED) && \
-	  docker compose -f deploy/tei.compose.yml restart tei-gpu && \
-	  echo "✅ promoted candidate → prod" || \
-	  echo "❌ candidate failed gate, kept old"
+	$(MAKE) eval-embed FT_OUT_EMBED=models/agentrag-embed-candidate
+	rm -rf $(FT_OUT_EMBED).prev
+	if [ -d "$(FT_OUT_EMBED)" ]; then mv "$(FT_OUT_EMBED)" "$(FT_OUT_EMBED).prev"; fi
+	mv models/agentrag-embed-candidate $(FT_OUT_EMBED)
+	cp deploy/model-card-agentrag-embed-v1.md $(FT_OUT_EMBED)/README.md
+	uv run hf upload $(HF_EMBED_REPO) $(FT_OUT_EMBED) . --repo-type model
+	docker compose -f deploy/tei.compose.yml restart tei-gpu
+	@echo "✅ promoted candidate → prod"

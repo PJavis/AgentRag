@@ -15,3 +15,14 @@ data/images/*
 !data/images/.gitkeep
 *.log
 README.md
+models/
+checkpoints/
+docs/
+frontend/
+*.docx
+image.png
+data/originals/
+data/finetune/
+data/eval/
+data/docs/
+data/benchmarks/

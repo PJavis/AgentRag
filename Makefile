@@ -136,6 +136,16 @@ docker-up-edge:
 docker-down-app:
 	docker compose --profile app --profile edge down
 
+# Deploy from prebuilt DockerHub images — pull-only, never builds on the box.
+# Uses docker-compose.deploy.yml (pull_policy: always) so a clean box runs the
+# exact artifact CI pushed instead of triggering a ~9GB local CUDA build.
+# For local dev use docker-up-app (which builds). Requires images pushed + net.
+DEPLOY_COMPOSE = -f docker-compose.yml -f docker-compose.deploy.yml
+.PHONY: docker-deploy
+docker-deploy:
+	docker compose $(DEPLOY_COMPOSE) --profile app --profile edge pull
+	docker compose $(DEPLOY_COMPOSE) --profile app --profile edge up -d --wait
+
 # Bring up Ollama container, then pull every model your .env references.
 # Provider/model pairs scanned: EMBEDDING, EXTRACTION, AGENT, RETRIEVAL_RERANK, VISION.
 # Add OLLAMA_EXTRA_MODELS="tag1 tag2" in .env to pull more (e.g. routing-only tags).

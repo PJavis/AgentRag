@@ -1,0 +1,27 @@
+# Deploy override — pull prebuilt images from DockerHub, never build on the box.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+#
+# Why an override instead of editing the root compose:
+#   Root docker-compose.yml keeps `build:` on api/worker/frontend so `docker
+#   compose up --build` still works for local dev. But those services also carry
+#   `image: licht693/...`, and a plain `up` with a build section BUILDS locally
+#   when the image is absent — it does NOT pull. On a clean deploy box that means
+#   an unwanted ~9GB CUDA build.
+#
+#   This override sets `pull_policy: always` on the app services, which flips
+#   `up` to pull the published image every time and ignore the build section.
+#   Dev is untouched (they don't pass -f this file); the deploy box always runs
+#   the exact artifact CI pushed.
+#
+# Requires: images pushed to DockerHub (the docker-publish workflow) and network
+# reachable. For air-gapped boxes, don't use this override — build locally with
+# `docker compose up --build` or load a saved image tar.
+services:
+  api:
+    pull_policy: always
+  worker:
+    pull_policy: always
+  frontend:
+    pull_policy: always

@@ -1,5 +1,20 @@
 name: docker-publish
 
+# Build/push the api + frontend images. Two design goals beyond "it builds":
+#
+# 1. Docs-only PRs must NOT trigger the ~9GB CUDA api build. A `changes` job
+#    (dorny/paths-filter) decides per-image whether a PR touched real build
+#    inputs; the api/frontend jobs skip when their paths are untouched.
+#    On push to master and on tags we ALWAYS build+push both (release / main
+#    line stays consistent — never trust a path filter for the artifact of
+#    record), so the filter only ever gates PR cost.
+#
+# 2. No required-check deadlock. `build-gate` runs on every event (needs the
+#    build jobs but `if: !cancelled()`), so branch protection can require the
+#    SINGLE `build-gate` check. A skipped image build reports success through
+#    the gate; a real build FAILURE fails the gate. A per-image required check
+#    would hang "pending" on any PR that legitimately skips that image.
+
 on:
   push:
     branches: [master]
@@ -11,16 +26,44 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  # Which images did this PR actually touch? Only meaningful for pull_request;
+  # push/tag events build both unconditionally (see job `if`s below), so this
+  # filter step is skipped for them to sidestep base-ref edge cases on tags.
+  changes:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: agentrag-api
-            context: .
-          - image: agentrag-frontend
-            context: ./frontend
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+
+      - name: Detect changed build inputs
+        if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          # Every path that changes the built api image. Miss one (e.g.
+          # uv.lock) and a dep bump would ship an unrebuilt image.
+          filters: |
+            api:
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'main.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'src/**'
+              - '.github/workflows/docker-publish.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/docker-publish.yml'
+
+  api:
+    needs: changes
+    # Build on any push/tag; on PR only when api build inputs changed.
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.api == 'true' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +82,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: licht693/${{ matrix.image }}
+          images: licht693/agentrag-api
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -48,10 +91,67 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=agentrag-api
+          cache-to: type=gha,mode=max,scope=agentrag-api
+
+  frontend:
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: licht693/agentrag-frontend
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=agentrag-frontend
+          cache-to: type=gha,mode=max,scope=agentrag-frontend
+
+  # Single required status check. Runs whenever the build jobs finished (or were
+  # skipped) but not on cancel. Fails only if a build that DID run failed.
+  build-gate:
+    needs: [api, frontend]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate build results
+        run: |
+          api='${{ needs.api.result }}'
+          fe='${{ needs.frontend.result }}'
+          echo "api=$api frontend=$fe"
+          if [ "$api" = "failure" ] || [ "$fe" = "failure" ]; then
+            echo "::error::a required image build failed"
+            exit 1
+          fi
+          echo "all required image builds passed or were skipped"

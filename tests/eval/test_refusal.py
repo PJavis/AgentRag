@@ -50,3 +50,36 @@ def test_classify_refusal_three_states():
     # dangerous: confident, no hedge
     assert classify_refusal("Thủ đô nước Pháp là Paris.", []) == "hallucinated"
     assert classify_refusal("", []) == "empty"
+
+
+# Regression (2026-07-13): the live answer LLM refuses out-of-corpus questions
+# with phrasings the old marker list missed ("... không có trong tài liệu",
+# "không chứa thông tin", "không thể xác định"), so genuine refusals were
+# mis-scored as hallucinations and kept their distractor citations. These are
+# the EXACT strings the model emitted in the reproduction.
+_REAL_REFUSALS = [
+    "Thông tin về thuốc Blorbocide không có trong các tài liệu được cung cấp.",
+    "Thông tin về tác dụng phụ của thuốc Flebotrin không có trong ngữ cảnh được cung cấp.",
+    "Thông tin về quy trình phẫu thuật Mendoza-Lê không có trong tài liệu được cung cấp.",
+    "Các tài liệu được cung cấp không chứa thông tin về kết quả thử nghiệm này.",
+    "Thông tin về Protein XQ-7 không có trong các tài liệu. Do đó, không thể xác định vai trò của nó.",
+    "The provided documents do not contain information on this drug.",
+    "This topic is not mentioned in the provided context.",
+]
+
+
+def test_real_llm_refusals_are_not_hallucinations():
+    for r in _REAL_REFUSALS:
+        assert is_hallucination(r) is False, f"mis-scored as hallucination: {r!r}"
+
+
+def test_real_llm_refusals_are_abstentions_without_citations():
+    for r in _REAL_REFUSALS:
+        assert is_abstention(r, []) is True, f"not recognized as abstention: {r!r}"
+
+
+def test_real_llm_refusals_with_distractor_citations_are_hedged_not_hallucinated():
+    # thin-context refusal that carried distractor citations must classify as the
+    # soft 'hedged_cited', never the dangerous 'hallucinated'
+    for r in _REAL_REFUSALS:
+        assert classify_refusal(r, [{"source": 1}]) == "hedged_cited", r

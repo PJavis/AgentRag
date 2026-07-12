@@ -54,8 +54,16 @@ def _lang_instruction(question: str) -> str:
 _UNCERTAINTY_MARKERS = (
     "không tìm thấy", "không có thông tin", "không đủ thông tin",
     "không thể trả lời", "tôi không biết", "chưa có dữ liệu",
+    # The answer LLM refuses out-of-corpus questions with these phrasings far
+    # more often than the canonical "không có thông tin" — inverted word order
+    # ("Thông tin về X không có trong tài liệu"), "does not contain", "cannot
+    # determine", "not mentioned". Missing them mis-scored real refusals as
+    # hallucinations and left distractor citations on clean abstentions.
+    "không có trong tài liệu", "không có trong ngữ cảnh", "không có trong các tài liệu",
+    "không chứa thông tin", "không đề cập", "không được đề cập", "không thể xác định",
     "i don't have", "i do not have", "no information", "cannot answer",
-    "not enough information", "unable to answer",
+    "not enough information", "unable to answer", "does not contain",
+    "do not contain", "not mentioned", "no mention", "not found in",
 )
 
 

@@ -14,16 +14,19 @@ Your home GPU: **RTX 5060 Ti 16 GB** (the embedding/reranker/KTO/ORPO trains fit
 # Reranker — local cross-encoder is the ONLY backend that emits rerank_score, which
 # powers abstain/floor safety. Startup REJECTS an API model name under this backend.
 RETRIEVAL_RERANK_BACKEND=local_cross_encoder
-RETRIEVAL_RERANK_MODEL=dengcao/bge-reranker-v2-m3      # cached, free, GPU
+RETRIEVAL_RERANK_MODEL=BAAI/bge-reranker-v2-m3         # cached, free, GPU
 
 # LLM — committed default is self-hosted: Ollama llama3.2:3b orchestration + DeepSeek
 # for plan/answer.  Needs DEEPSEEK_API_KEY + `ollama pull llama3.2:3b`.
 # Cloud alternative: GEMINI_API_KEY + swap LLM_TASK_MODEL_MAP to the gemini-2.5-* line.
 
-# Embeddings — default Ollama nomic-embed-text; for best Vietnamese retrieval use
-# bge-m3 via TEI (`make serve-embed`).
-EMBEDDING_PROVIDER=ollama
-EMBEDDING_MODEL=nomic-embed-text
+# Embeddings — live config serves the fine-tuned e5 (retrieval gate: recall@10 +0.21)
+# via TEI on :8080 (`make serve-embed`; 768-dim, --pooling=mean). Fresh-deploy fallback:
+# EMBEDDING_PROVIDER=ollama + EMBEDDING_MODEL=nomic-embed-text, or bge-m3 via TEI.
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=agentrag-embed-v1
+EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/
+EMBEDDING_OUTPUT_DIM=768
 
 # Privacy — keep OFF (default): medical question/answer TEXT is NOT sent to the trace store.
 OBSERVABILITY_CAPTURE_CONTENT=false
@@ -106,18 +109,21 @@ set** measures correctness honestly. Background: `docs/eval/eval_fidelity_probe_
 (+ `_v2_` post-fix). This also surfaced + fixed a flaky false-abstention
 (`docs/INSTRUCTION-abstain-thin-context-2026-06-16.md` → 2026-06-26 update).
 
-**Relevant `.env` (cloud/gemini path; all have safe code defaults):**
+**Relevant `.env` (independent-judge path — needs a PAID gemini key):**
 ```bash
-# eval task slots — strong oracle/gold, flash-vs-pro judge noise floor (gemini path)
-LLM_TASK_MODEL_MAP={..., "oracle_gen":"gemini-2.5-pro","gold_gen":"gemini-2.5-pro",
-                    "eval_judge":"gemini-2.5-flash","eval_judge2":"gemini-2.5-pro"}
+# eval task slots — deepseek oracle/gold, CROSS-PROVIDER judge pair: primary judge gemini
+# (independent of the deepseek answer model → no self-preference), judge2 deepseek so the
+# judge-noise pearson measures real cross-provider agreement
+LLM_TASK_MODEL_MAP={..., "oracle_gen":"deepseek-v4-pro","gold_gen":"deepseek-v4-pro",
+                    "eval_judge":"gemini-2.5-pro","eval_judge2":"deepseek-v4-pro"}
 RETRIEVAL_RELEVANCE_FLOOR=0.55       # calibrated (was 0.6 — flaky false-abstain)
 RETRIEVAL_INCLUDE_RAW_QUERY=true     # inject raw-question hits into the rerank pool
 AGENT_TOTAL_TIMEOUT_S=90             # bound the whole agent.chat loop (graceful "busy")
 LLM_REQUEST_TIMEOUT_S=60             # per-call gemini timeout
 ```
-> Claude in the eval slots is deferred — the gateway has no `anthropic` provider yet + no
-> `ANTHROPIC_API_KEY` (see `agent/llm.py::_resolve_backend_for`).
+> The `anthropic` provider IS wired (`agent/llm.py` auto-derive + `_resolve_backend_for`,
+> tests in `tests/agent/test_anthropic_provider.py`) — a `claude-*` model in `eval_judge`
+> works with just `ANTHROPIC_API_KEY` set. Alternative independent judge to paid gemini.
 
 **Run it** (stack up; the corpus already ingested in ES; no re-ingest):
 ```bash
@@ -130,8 +136,12 @@ uv run python scripts/eval/oracle_probe.py \
   --eval-set data/eval/prod_corpus_evalset.jsonl --n 50 --retries 3 \
   --out docs/eval/eval_fidelity_probe_prod.md
 ```
-A **ready 50-row eval set** from this session is already at `data/eval/prod_corpus_evalset_v3.jsonl`
-(gitignored) — point `--eval-set` at it to skip the rebuild.
+> ⚠️ **`prod_corpus_evalset_v3.jsonl` is a landmine** — its questions were generated from the
+> 2026-06-26 corpus, which was `vn_bkai`/`vn_legal` eval RESIDUE (driving-law fines etc.), not
+> the real medical docs. Against the current `data/originals` corpus it scores `sys=0.00` on
+> every question (verified 2026-07-13). Use `data/eval/c2_evalset_n40.jsonl` (built from the
+> real corpus) or rebuild with `build_prod_evalset.py` after any re-ingest. Rule: an eval set
+> is only valid against the corpus snapshot it was generated from.
 
 **Read:** `oracle − system` small (< ~0.05) → system is at the eval ceiling (the metric, not
 retrieval/generation, is the cap); `judge-noise pearson` high → the judge is trustworthy. The
@@ -139,9 +149,9 @@ retrieval/generation, is the cap); `judge-noise pearson` high → the judge is t
 oracle−system **+0.046 (<0.05) → ceiling CONFIRMED**. (The earlier v2 0.950 was inflated by 10/30
 gemini-503 skips — easy-Q selection bias; trust the clean **0.888**.)
 
-> **⚠️ Judge independence is the open gap.** Free-tier gemini serves `gemini-2.5-pro` at limit:0, so
-> v3 ran **all-DeepSeek** judges (flash vs pro) — same provider as the answer model
-> (`deepseek-v4-flash`) → mild self-preference risk, judge-noise pearson only 0.730. Before quoting a
-> correctness number with confidence, put an **independent** model in the judge slot: paid gemini, or
-> wire the `anthropic` provider (`agent/llm.py::_resolve_backend_for`) + `ANTHROPIC_API_KEY` so a
-> Claude judge can fill `eval_judge2`. That also closes the deferred "Claude in eval slots" item.
+> ✅ **Judge independence CLOSED (2026-07-13,** `docs/eval/c2_probe_n40_gemini-judge.md`**).**
+> With a paid gemini key, `eval_judge=gemini-2.5-pro` vs `eval_judge2=deepseek-v4-pro` on the
+> real-corpus n=40 set: cross-provider pearson **0.921** (vs 0.730 same-family) and system
+> 0.759 ≈ the deepseek-judged 0.764 → the deepseek-judged history was not self-preference-inflated.
+> Same run shows **oracle−system +0.088** on the real corpus — unlike the residue corpus, real-doc
+> correctness is **system-bound** (real headroom), not metric-bound.

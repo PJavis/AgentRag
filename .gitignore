@@ -12,3 +12,6 @@ vendor/llama.cpp/
 .superpowers/
 image.png
 .deepeval/
+
+# Probe row dumps carry corpus text — keep out of git
+docs/eval/rows_*.jsonl

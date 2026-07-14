@@ -92,6 +92,28 @@ NOT generation:
   confidence. Corpus = indexed `vn_bkai`/`vn_legal` residue, not `data/originals` (real-corpus
   A/B still deferred).
 
+## 🔬 Miss-bucketing + CRAG A/B tooling (2026-07-14, `feat/miss-buckets-crag-flywheel`)
+Follow-up to the 2026-07-13 real-corpus read (oracle−system **+0.088** → system-bound, loss in
+~5/40 misses): tooling to name those failures and act on them. Plan:
+`docs/superpowers/plans/2026-07-14-miss-buckets-crag-flywheel.md`; home-run instructions:
+`docs/HOME-RUN-miss-buckets-2026-07-14.md`.
+- **Per-row probe capture** — `oracle_probe.py --rows-out x.jsonl` dumps per question: system/
+  oracle answers, judge1/judge2 scores, packed passages + rerank scores, inline `[n]` citations,
+  `classify_refusal` class, tool queries (`src/agentrag/eval/probe_rows.py`).
+- **Miss-bucket classifier** — `src/agentrag/eval/miss_buckets.py` +
+  `scripts/eval/report_miss_buckets.py`: each miss (sys < 0.5) → `false_abstention` (floor/gate
+  work) | `retrieval_miss` (gold never packed, Jaccard < 0.35 — HippoRAG-2 gate evidence) |
+  `generation_miss` (gold packed, answer wrong); judge-gap rows (|sys−judge2| ≥ 0.4) flagged.
+- **Citation-reward flywheel (RMM)** — `src/agentrag/eval/citation_mining.py` +
+  `scripts/eval/mine_citation_pairs.py`: the answer LLM's own inline citations label the rerank
+  pool (cited = positive, hardest uncited = hard negative, only rows sys ≥ 0.75) → triplets in
+  the exact `finetune_reranker.py`/`finetune_embedding.py` input shape; `--append` accumulates
+  across probe runs. Zero manual labels.
+- 18 new tests (`test_probe_rows`, `test_miss_buckets`, `test_citation_mining`); eval suite
+  84/84. Live runs (bucket report, CRAG on/off A/B + refusal-safety gate, flywheel seed) are a
+  home-run — the CRAG loop itself was already built (WS3, default OFF); pre-registered enable
+  rule: Δsystem ≥ +0.02 AND zero new hallucinated on the OOC refusal set.
+
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each
   `/chat` turn into one trace (`session_id=conversation_id`). Self-host on `:3002`.

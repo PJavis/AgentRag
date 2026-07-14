@@ -48,6 +48,29 @@ def test_build_probe_row_shape():
     ]
 
 
+def test_build_probe_row_reads_excerpt_field():
+    # Production packed_context (context.py _stage_citation_pack) stores passage
+    # text under "excerpt", NOT "content". The dump must surface it as "content"
+    # so miss_buckets.gold_overlap and citation_mining (both read packed["content"])
+    # see the text — otherwise every miss falsely buckets as retrieval_miss.
+    out = {
+        "answer": "Đáp án đúng [1].",
+        "context": [
+            {"excerpt": "gold passage text", "rerank_score": 0.71,
+             "document_title": "doc.pdf", "section_path": "1>2"},
+            {"excerpt": "distractor passage", "rerank_score": 0.58,
+             "document_title": "doc.pdf", "section_path": "3"},
+        ],
+        "citations": [{"source": 1}],
+    }
+    row = build_probe_row(
+        qid="c2-3", question="q?", chat_out=out, oracle_answer="o",
+        system_mean=1.0, oracle_mean=1.0, judge2_mean=1.0,
+        gold_contexts=["gold passage text"],
+    )
+    assert [p["content"] for p in row["packed"]] == ["gold passage text", "distractor passage"]
+
+
 def test_build_probe_row_abstention():
     out = _chat_out()
     out["answer"] = "Tài liệu hiện có không có thông tin để trả lời câu hỏi này."

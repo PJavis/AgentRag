@@ -164,6 +164,11 @@ async def main(args: argparse.Namespace) -> None:
     from src.agentrag.services.llm_gateway import LLMGateway
 
     gateway = LLMGateway()
+    # Bind this eval set to the corpus snapshot it is generated from — probes
+    # verify the stamp and refuse to score against a different corpus.
+    from src.agentrag.eval.corpus_fingerprint import compute_corpus_fingerprint
+    corpus_fp = await compute_corpus_fingerprint()
+    logger.info("corpus fingerprint: %s", corpus_fp)
     chunks = await _sample_chunks(args.n)
     logger.info("sampled %d chunks (target %d)", len(chunks), args.n)
 
@@ -210,6 +215,7 @@ async def main(args: argparse.Namespace) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         for r in rows:
+            r["corpus_fp"] = corpus_fp
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     logger.info("wrote %d eval rows → %s", len(rows), out_path)
 

@@ -105,6 +105,19 @@ async def main(args: argparse.Namespace) -> None:
     agent = get_agent_service()
     if args.eval_set:
         from src.agentrag.eval.benchmark_datasets import load_local_jsonl
+        from src.agentrag.eval.corpus_fingerprint import (
+            check_fingerprint, compute_corpus_fingerprint, read_evalset_fingerprint,
+        )
+        evalset_fp = read_evalset_fingerprint(args.eval_set)
+        live_fp = await compute_corpus_fingerprint()
+        ok, msg = check_fingerprint(
+            evalset_fp=evalset_fp, live_fp=live_fp,
+            allow_mismatch=args.allow_corpus_mismatch,
+        )
+        if msg:
+            print(f"[probe] ⚠️  {msg}")
+        if not ok:
+            raise SystemExit(2)
         examples = load_local_jsonl(args.eval_set, n=args.n)
         print(f"[probe] {len(examples)} examples (eval-set={args.eval_set}, n={args.n})")
     else:
@@ -190,6 +203,8 @@ def parse_args() -> argparse.Namespace:
                    help="base backoff seconds between retries (exponential)")
     p.add_argument("--rows-out", default=None,
                    help="ALSO dump one JSON row per scored question (miss bucketing / citation mining input)")
+    p.add_argument("--allow-corpus-mismatch", action="store_true",
+                   help="run even when the eval set's corpus_fp does not match the live corpus (numbers may be garbage)")
     return p.parse_args()
 
 

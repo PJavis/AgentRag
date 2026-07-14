@@ -1,5 +1,56 @@
 # VITAL — Home-Run: Miss Buckets + CRAG A/B + Flywheel Seed (2026-07-14)
 
+## ⚡ Quick-start (the whole campaign, copy-paste in order)
+
+```bash
+# 0. code + stack
+git fetch origin && git checkout feat/miss-buckets-crag-flywheel && git pull
+make serve-embed &                                   # TEI :8080 (e5-FT)
+curl -s localhost:9200/_cluster/health | head -c 80  # ES must be green/yellow
+curl -s localhost:8080/health && echo " TEI OK"
+test -f data/eval/c2_evalset_n40.jsonl && echo "EVAL SET OK" || echo "MISSING — see Phase 0.3"
+grep -c "^DEEPSEEK_API_KEY=." .env                   # must be 1; judge map: see Phase 0.2
+
+# 1. baseline arm (CRAG OFF) — ~30-60 min, run detached
+CRAG_ENABLED=false nohup uv run python scripts/eval/oracle_probe.py \
+  --eval-set data/eval/c2_evalset_n40.jsonl --n 40 --retries 3 \
+  --rows-out docs/eval/rows_c2_n40_crag_off.jsonl \
+  --out docs/eval/c2_probe_crag_off_2026-07-14.md > /tmp/probe_off.log 2>&1 &
+tail -f /tmp/probe_off.log                           # wait for "[probe] wrote ..."
+
+# 2. bucket the misses  ← MAIN DELIVERABLE
+uv run python scripts/eval/report_miss_buckets.py \
+  --rows docs/eval/rows_c2_n40_crag_off.jsonl \
+  --out docs/eval/miss_buckets_2026-07-14.md --label c2_evalset_n40-crag-off
+
+# 3. CRAG ON arm — ~30-60 min
+CRAG_ENABLED=true nohup uv run python scripts/eval/oracle_probe.py \
+  --eval-set data/eval/c2_evalset_n40.jsonl --n 40 --retries 3 \
+  --rows-out docs/eval/rows_c2_n40_crag_on.jsonl \
+  --out docs/eval/c2_probe_crag_on_2026-07-14.md > /tmp/probe_on.log 2>&1 &
+tail -f /tmp/probe_on.log
+
+# 4. abstain-safety gate (required before enabling CRAG)
+CRAG_ENABLED=true uv run python scripts/eval/run_refusal_ab.py
+
+# 5. seed the flywheel (both sources)
+uv run python scripts/eval/mine_citation_pairs.py \
+  --rows docs/eval/rows_c2_n40_crag_off.jsonl --out data/finetune/citation_pairs.jsonl
+uv run python scripts/eval/mine_citation_pairs_prod.py --append   # rated prod turns
+
+# 6. write docs/eval/crag_ab_2026-07-14.md (template in Phase 3), commit + push (Wrap-up)
+```
+
+**Decision rules (pre-registered — no post-hoc rationalizing):**
+- Enable `CRAG_ENABLED` in config.py ⟺ step 3 system_avg ≥ step 1 + **0.02** AND step 4 shows **zero hallucinated**.
+- Bucket majority from step 2 picks the next build: `retrieval_miss` → HippoRAG-2 spec (`docs/superpowers/specs/2026-07-14-hipporag2-structmem-design.md`) | `false_abstention` → floor/gate tuning | `generation_miss` → answer-prompt work.
+
+**Expected warnings:** probe prints "eval set has NO corpus fingerprint" on the legacy c2 set — fine, it runs. Hard abort = fingerprint mismatch (only after a rebuild + re-ingest drift).
+
+Details, prereqs, and fallback paths below.
+
+---
+
 Run these at home, in order. Goal: split the **+0.088 real-corpus headroom** (~5/40 misses,
 `docs/eval/c2_probe_n40_gemini-judge.md`) into named failure classes, decide the
 `CRAG_ENABLED` flag with an A/B, and seed the citation-reward reranker training file.
@@ -105,6 +156,29 @@ bucket split | refusal classes`. **Pre-registered rule:** flip `CRAG_ENABLED: bo
 shows **zero new hallucinated**. Otherwise keep OFF and record why. Also record the HippoRAG
 gate verdict from the Phase 1 buckets (multi-hop rows are tagged `source=prod_corpus_multihop`
 if the set was rebuilt with `--multihop`).
+
+Template (fill the ⟨⟩):
+
+```markdown
+# CRAG A/B on the real corpus — 2026-07-14
+
+Eval set: data/eval/c2_evalset_n40.jsonl (n=40, judges: gemini-2.5-pro / deepseek-v4-pro)
+
+| arm | system avg | oracle−system | misses | bucket split | refusal classes (OOC set) |
+|---|---|---|---|---|---|
+| CRAG off | ⟨0.xxx⟩ | ⟨+0.xxx⟩ | ⟨k⟩/40 | ⟨fa/rm/gm counts⟩ | — (baseline: benchmark_answerability_ab_2026-06-24_vi.md) |
+| CRAG on  | ⟨0.xxx⟩ | ⟨+0.xxx⟩ | ⟨k⟩/40 | ⟨fa/rm/gm counts⟩ | ⟨abstained/hedged/hallucinated counts⟩ |
+
+## Decision — CRAG_ENABLED = ⟨True|False⟩
+Rule: Δsystem ≥ +0.02 AND zero hallucinated on OOC. Measured: Δ=⟨…⟩, hallucinated=⟨…⟩ → ⟨verdict⟩.
+
+## HippoRAG-2 gate verdict
+Dominant bucket: ⟨retrieval_miss|false_abstention|generation_miss⟩ (⟨k⟩ of ⟨m⟩ misses;
+multi-hop rows among them: ⟨…⟩) → next build: ⟨HippoRAG-2 spec | floor/gate tuning | answer-prompt work⟩.
+
+## Notes
+⟨anomalies: judge-gap rows, timeouts, retries, anything smelly⟩
+```
 
 ## Phase 4 — Seed the flywheel
 

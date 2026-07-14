@@ -11,8 +11,6 @@ from src.agentrag.eval.refusal import classify_refusal
 # \[(\d{1,2})\] deliberately excludes markdown links ([text](url) has no digit-only body).
 _CITE_RE = re.compile(r"\[(\d{1,2})\]")
 
-_PACKED_FIELDS = ("content", "rerank_score", "document_title", "section_path")
-
 
 def parse_inline_citations(answer: str | None) -> list[int]:
     """Source numbers the answer actually cited — the RMM 'used it' signal."""
@@ -34,8 +32,17 @@ def build_probe_row(
 ) -> dict[str, Any]:
     answer = chat_out.get("answer") or ""
     citations = chat_out.get("citations") or []
+    # Production packed_context stores passage text under "excerpt" (see
+    # context._stage_citation_pack); older/test shapes use "content". Normalise
+    # to "content" so downstream consumers (miss_buckets.gold_overlap,
+    # citation_mining) that read packed["content"] always see the text.
     packed = [
-        {k: item.get(k) for k in _PACKED_FIELDS}
+        {
+            "content": item.get("content") or item.get("excerpt") or "",
+            "rerank_score": item.get("rerank_score"),
+            "document_title": item.get("document_title"),
+            "section_path": item.get("section_path"),
+        }
         for item in (chat_out.get("context") or [])
     ]
     tool_queries = [

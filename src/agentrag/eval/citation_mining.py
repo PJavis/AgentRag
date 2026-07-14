@@ -6,6 +6,38 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agentrag.eval.probe_rows import parse_inline_citations
+
+
+def feedback_to_row(
+    *,
+    question: str,
+    answer: str,
+    citations: list[dict[str, Any]] | None,
+    rating: int | None,
+) -> dict[str, Any] | None:
+    """Convert a rated prod chat turn (ChatMessage.content + .citations,
+    AdapterChatFeedback.rating) into a probe-row-shaped dict for mine_triplets.
+
+    Prod has no judge score — the thumbs rating stands in: +1 → system_mean 1.0
+    (passes the default min_system_mean=0.75 quality filter), else 0.0. Citations
+    carry no rerank_score; mine_triplets' stable sort then keeps them in packed
+    (relevance) order, so 'hardest uncited' = highest-ranked uncited passage."""
+    if not question or not answer or not citations:
+        return None
+    ordered = sorted(citations, key=lambda c: c.get("source") or 0)
+    packed = [
+        {"content": c.get("excerpt") or c.get("content") or "", "rerank_score": None}
+        for c in ordered
+    ]
+    return {
+        "question": question,
+        "system_answer": answer,
+        "system_mean": 1.0 if rating == 1 else 0.0,
+        "cited_sources": parse_inline_citations(answer),
+        "packed": packed,
+    }
+
 
 def mine_triplets(
     rows: list[dict[str, Any]],

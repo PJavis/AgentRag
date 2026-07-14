@@ -113,6 +113,21 @@ Follow-up to the 2026-07-13 real-corpus read (oracle−system **+0.088** → sys
   84/84. Live runs (bucket report, CRAG on/off A/B + refusal-safety gate, flywheel seed) are a
   home-run — the CRAG loop itself was already built (WS3, default OFF); pre-registered enable
   rule: Δsystem ≥ +0.02 AND zero new hallucinated on the OOC refusal set.
+- **Corpus-fingerprint guard** — kills the v3-landmine class (eval set built on residue corpus
+  silently scoring sys=0.00 against the real one): `build_prod_evalset.py` stamps every row
+  with `corpus_fp` (sha1 over sorted document-title:segment-count pairs);
+  `oracle_probe.py --eval-set` recomputes the live fingerprint and REFUSES on mismatch
+  (`--allow-corpus-mismatch` to override; unstamped legacy sets warn only).
+  `src/agentrag/eval/corpus_fingerprint.py`, 9 tests.
+- **Prod-traffic citation miner** — `scripts/eval/mine_citation_pairs_prod.py`: same RMM
+  signal from rated production turns (thumbs-up ⨝ `chat_messages.citations`; rating stands in
+  for the judge score) → flywheel accumulates from real usage, not just eval runs. Pure
+  converter `feedback_to_row` + 4 tests; eval suite 97/97.
+- **HippoRAG-2 StructMem spec DRAFT** (`docs/superpowers/specs/2026-07-14-hipporag2-structmem-design.md`)
+  — phrase/passage bi-modal graph, synonym edges via embedding threshold (replaces the
+  canonicalization prerequisite), query-to-triple seeding + recognition filter + PPR, union
+  merge into the existing rerank pool (can only ADD candidates — floor/abstain untouched).
+  **GATED: build only if the home-run bucket report shows `retrieval_miss` dominant.**
 
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each

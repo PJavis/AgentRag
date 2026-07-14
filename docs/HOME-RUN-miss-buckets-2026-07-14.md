@@ -54,6 +54,11 @@ Tasks 1–3 (the tooling) are already merged on this branch and tested (84/84 ev
    sys=0.00 against the real corpus (validity rule: an eval set is only valid against the
    corpus snapshot it was generated from).
 
+   **Fingerprint guard (new on this branch):** rebuilt sets are stamped with `corpus_fp`;
+   `oracle_probe.py` recomputes the live fingerprint and hard-aborts on mismatch
+   (`--allow-corpus-mismatch` to override). The EXISTING `c2_evalset_n40.jsonl` predates the
+   stamp → probe prints a warning but runs; if you re-ingest anything, rebuild the set.
+
 ## Phase 1 — Baseline arm (CRAG OFF) + bucket report
 
 ```bash

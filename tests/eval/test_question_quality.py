@@ -15,6 +15,10 @@ BROKEN = [
     "Câu 6 hỏi gì?",
     "Bệnh nhân trong câu 12 có tiền sử dị ứng với loại thuốc nào?",
     "Bệnh nhân trong tình huống trên có triệu chứng dị cảm ở vị trí nào?",
+    # 2026-07-16 second leak: English OCR/image-caption artifact (no Vietnamese
+    # anchor) + "các câu hỏi về X" enumerate-the-exam-questions meta.
+    "Whose screen is being viewed?",
+    "Các câu hỏi về đám rối thần kinh cánh tay là gì?",
 ]
 
 # Genuine standalone medical questions from the same run — must NOT be flagged.

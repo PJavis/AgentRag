@@ -26,7 +26,16 @@ _META_PATTERNS = [
     (re.compile(r"\btình huống (trên|này|đó|sau)\b", re.I), "meta-reference: 'tình huống trên/này' (the scenario)"),
     (re.compile(r"ngữ cảnh (được cung cấp|hiện có|sau)", re.I), "meta-reference: 'ngữ cảnh được cung cấp'"),
     (re.compile(r"\btrong ngữ cảnh\b", re.I), "meta-reference: 'trong ngữ cảnh'"),
+    # "(các|những) câu hỏi ..." = enumerate-the-exam-questions, not a medical fact
+    # (e.g. "Các câu hỏi về đám rối thần kinh cánh tay là gì?").
+    (re.compile(r"\b(các|những)\s+câu\s+hỏi\b", re.I), "meta-reference: '(các|những) câu hỏi' (enumerate exam Qs)"),
 ]
+
+# A real VN medical question always carries at least one non-ASCII Vietnamese
+# character (diacritic / đ). A pure-ASCII question is an OCR / image-caption /
+# English artifact with no anchor in this Vietnamese medical corpus
+# (e.g. "Whose screen is being viewed?").
+_NON_ASCII = re.compile(r"[^\x00-\x7f]")
 
 # Dangling demonstrative: a noun that carries an antecedent from OUTSIDE the
 # question, modified by này/đó/trên/kia. The noun list is limited to the ones the
@@ -44,6 +53,8 @@ def is_context_dependent(question: str | None) -> tuple[bool, str]:
     q = (question or "").strip()
     if len(q) < 8:
         return True, "empty or too short"
+    if not _NON_ASCII.search(q):
+        return True, "non-Vietnamese (OCR/image-caption artifact)"
     for pat, reason in _META_PATTERNS:
         if pat.search(q):
             return True, reason

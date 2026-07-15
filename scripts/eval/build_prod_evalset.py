@@ -175,11 +175,19 @@ async def main(args: argparse.Namespace) -> None:
     rows: list[dict] = []
     sem = asyncio.Semaphore(4)
 
+    from src.agentrag.eval.question_quality import is_context_dependent
+    dropped = {"n": 0}
+
     async def _one(idx: int, chunk: str) -> None:
         async with sem:
             try:
                 q = await synth_question(chunk, gateway)
                 if not q:
+                    return
+                bad, reason = is_context_dependent(q)
+                if bad:
+                    dropped["n"] += 1
+                    logger.info("drop context-dependent Q (%s): %s", reason, q[:80])
                     return
                 gold = await gen_gold_answer(q, chunk, gateway)
                 if gold:
@@ -200,6 +208,11 @@ async def main(args: argparse.Namespace) -> None:
                     q = await synth_multihop_question(a, b, gateway)
                     if not q:
                         return
+                    bad, reason = is_context_dependent(q)
+                    if bad:
+                        dropped["n"] += 1
+                        logger.info("drop context-dependent multihop Q (%s): %s", reason, q[:80])
+                        return
                     # gold grounded in BOTH passages
                     gold = await gen_gold_answer(q, f"{a}\n\n---\n\n{b}", gateway)
                     if gold:
@@ -217,7 +230,8 @@ async def main(args: argparse.Namespace) -> None:
         for r in rows:
             r["corpus_fp"] = corpus_fp
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    logger.info("wrote %d eval rows → %s", len(rows), out_path)
+    logger.info("wrote %d eval rows → %s (dropped %d context-dependent questions)",
+                len(rows), out_path, dropped["n"])
 
 
 def parse_args() -> argparse.Namespace:

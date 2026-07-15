@@ -1,5 +1,42 @@
 # VITAL — Home-Run: Miss Buckets + CRAG A/B + Flywheel Seed (2026-07-14)
 
+## 🔁 ROUND 2 (2026-07-15) — clean re-measure after the eval-quality finding
+
+The first run's verdict (`docs/eval/crag_ab_2026-07-14.md`): **CRAG stays OFF**
+(Δ+0.015 < +0.02, decided). But the miss audit showed **6 of 9 misses were broken
+synthetic questions** (dangling "này" / meta-references to "đề thi"/"đoạn văn"), not
+system failures — so the +0.171 oracle−system gap is inflated and HippoRAG-2 is NOT
+green-lit yet. A question-quality filter now ships in `build_prod_evalset.py`. Rebuild
+the eval set clean and re-read the real headroom:
+
+```bash
+git fetch origin && git checkout feat/miss-buckets-crag-flywheel && git pull
+
+# rebuild eval set WITH the context-dependent-question filter (stamps corpus_fp too)
+uv run python scripts/eval/build_prod_evalset.py --n 40 --multihop 12 \
+  --out data/eval/c2_evalset_n40_clean.jsonl
+# log prints "dropped N context-dependent questions" — expect a handful dropped
+
+# re-run CRAG-off probe on the clean set (fingerprint guard now active)
+CRAG_ENABLED=false nohup uv run python scripts/eval/oracle_probe.py \
+  --eval-set data/eval/c2_evalset_n40_clean.jsonl --n 40 --retries 3 \
+  --rows-out docs/eval/rows_c2_clean_off.jsonl \
+  --out docs/eval/c2_probe_clean_off_2026-07-15.md > /tmp/probe_clean.log 2>&1 &
+tail -f /tmp/probe_clean.log
+
+uv run python scripts/eval/report_miss_buckets.py \
+  --rows docs/eval/rows_c2_clean_off.jsonl \
+  --out docs/eval/miss_buckets_clean_2026-07-15.md --label c2_clean-crag-off
+```
+
+**Read:** if the CLEAN oracle−system gap shrinks toward the noise line (~0.05) and the
+few remaining misses are NOT `retrieval_miss` → system is near-ceiling, shelve HippoRAG,
+move to the generation/abstention tail. If `retrieval_miss` is STILL dominant among the
+now-genuine questions → HippoRAG-2 gate is truly green; build the spec. Bring back the
+clean bucket split.
+
+---
+
 ## ⚡ Quick-start (the whole campaign, copy-paste in order)
 
 ```bash

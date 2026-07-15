@@ -10,6 +10,11 @@ BROKEN = [
     "Mô học xương đùi của bệnh nhân này cho thấy gì?",
     "Đoạn văn này chứa những câu hỏi gì?",
     "Những câu hỏi nào được đưa ra trong đoạn văn?",
+    # 2026-07-15 clean-rebuild: bare "câu N" exam-item refs + "tình huống trên"
+    # dangling scenario slipped past the first filter.
+    "Câu 6 hỏi gì?",
+    "Bệnh nhân trong câu 12 có tiền sử dị ứng với loại thuốc nào?",
+    "Bệnh nhân trong tình huống trên có triệu chứng dị cảm ở vị trí nào?",
 ]
 
 # Genuine standalone medical questions from the same run — must NOT be flagged.
@@ -19,6 +24,9 @@ GOOD = [
     "Quản lý và tiên lượng của rối loạn tâm thần trong bệnh gan là gì?",
     "Metformin được chỉ định trong điều trị bệnh gì?",
     "Liều dùng paracetamol cho trẻ em là bao nhiêu?",
+    # legit anatomical "trên bề mặt" / self-contained vignette — must NOT be flagged
+    "Các thụ thể nào trên bề mặt tế bào hủy xương đóng vai trò trong cơ chế cận tiết?",
+    "Một phụ nữ 22 tuổi yếu cẳng chân trái sau tai nạn xe máy, sinh thiết cơ cho thấy gì?",
 ]
 
 

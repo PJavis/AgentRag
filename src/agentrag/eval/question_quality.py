@@ -20,6 +20,10 @@ _META_PATTERNS = [
     (re.compile(r"\bđoạn trích\b", re.I), "meta-reference: 'đoạn trích' (the excerpt)"),
     (re.compile(r"\bcâu hỏi số\b", re.I), "meta-reference: 'câu hỏi số N'"),
     (re.compile(r"\bcâu\s+\d+\s+(đến|tới)\s+câu?\s*\d+", re.I), "meta-reference: 'câu N đến câu M'"),
+    # Bare "câu N" is an exam-item reference (e.g. "Câu 6 hỏi gì?", "trong câu 12")
+    # — a standalone medical question never numbers itself. High precision.
+    (re.compile(r"\bcâu\s+\d+\b", re.I), "meta-reference: 'câu N' (exam item)"),
+    (re.compile(r"\btình huống (trên|này|đó|sau)\b", re.I), "meta-reference: 'tình huống trên/này' (the scenario)"),
     (re.compile(r"ngữ cảnh (được cung cấp|hiện có|sau)", re.I), "meta-reference: 'ngữ cảnh được cung cấp'"),
     (re.compile(r"\btrong ngữ cảnh\b", re.I), "meta-reference: 'trong ngữ cảnh'"),
 ]
@@ -30,7 +34,7 @@ _META_PATTERNS = [
 # phrases ("trong bệnh gan") are not touched.
 _DANGLING = re.compile(
     r"\b(bệnh nhân|người bệnh|môn học|tài liệu|đoạn văn|hình ảnh|trường hợp|"
-    r"ca bệnh|bài|chương|đề bài|văn bản|hình|bảng|biểu đồ)\s+(này|đó|trên|kia)\b",
+    r"ca bệnh|bài|chương|đề bài|văn bản|hình|bảng|biểu đồ|tình huống|kịch bản)\s+(này|đó|trên|kia)\b",
     re.I,
 )
 

@@ -83,14 +83,14 @@ class ContextAssembler:
         if settings.RETRIEVAL_INCLUDE_RAW_QUERY:
             retrieved = await self._inject_raw_query_hits(question, retrieved)
         deduped = self._stage_dedupe(retrieved)
-        ranked = self._stage_rank_trim(question, deduped)
-        # Global cross-encoder rerank → true relevance order. Membership is
-        # unchanged (recall-safe); only the ORDER is corrected, which is what
-        # ContextualPrecisionMetric and citation [n] alignment depend on.
-        # Lost-in-middle reordering is intentionally NOT applied here — it is
-        # applied to the prompt copy only (see service._answer), so the returned
-        # packed_context stays in descending-relevance order for eval + citations.
-        ranked = await self._stage_global_rerank(question, ranked)
+        # Rerank the FULL deduped pool FIRST, then trim — so the cross-encoder,
+        # not the weak pre-rerank rrf heuristic, decides answer-context MEMBERSHIP.
+        # A wide recall pool surfaces gold that ranks deep on rrf (fusion rank
+        # 8–17); reranking before the trim lets that gold win a packed slot while
+        # high-rrf distractors are trimmed by their low rerank score. (2026-07-16
+        # agent-path dig: rrf-keyed trim + wide pool crowded gold out of the pack.)
+        reranked = await self._stage_global_rerank(question, deduped)
+        ranked = self._stage_rank_trim(question, reranked)
         # Relevance-floor gate (default OFF): drop distractors below the rerank
         # floor BEFORE the answer node sees them. No-op unless a cross-encoder
         # rerank_score is present, so it only bites with local_cross_encoder on.
@@ -154,6 +154,12 @@ class ContextAssembler:
         query_tokens = self._tokenize(question)
 
         def rank_score(item: dict[str, Any]) -> float:
+            # When the cross-encoder ran (rerank_score present), IT decides order
+            # and membership — the weak rrf/overlap heuristic below is only the
+            # fallback for a rerank-disabled / non-cross-encoder pool.
+            rr = item.get("rerank_score")
+            if rr is not None:
+                return float(rr)
             base = float(item.get("rrf_score") or item.get("score") or 0.0)
             section = (item.get("section_path") or "").lower()
             content = (item.get("content") or "").lower()

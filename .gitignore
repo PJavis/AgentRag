@@ -15,3 +15,6 @@ image.png
 
 # Probe row dumps carry corpus text — keep out of git
 docs/eval/rows_*.jsonl
+
+# Retrained reranker candidates (large; keep out of git)
+models/agentrag-rerank-*/

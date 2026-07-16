@@ -129,6 +129,39 @@ Follow-up to the 2026-07-13 real-corpus read (oracle−system **+0.088** → sys
   merge into the existing rerank pool (can only ADD candidates — floor/abstain untouched).
   **GATED: build only if the home-run bucket report shows `retrieval_miss` dominant.**
 
+## 🧭 Miss-bucketing campaign — RESULTS (2026-07-14 → 07-16)
+The home run executed both CRAG arms and, after a per-row audit, three eval-set cleaning
+passes. Outcome docs under `docs/eval/` (`crag_ab_2026-07-14.md`,
+`clean_remeasure_v2_2026-07-16.md`, `miss_buckets_clean_v2_2026-07-16.md`,
+`generation_miss_diagnostic_2026-07-16.md`).
+- **CRAG: keep OFF (decided).** On the real c2 n=40 set, CRAG-off 0.740 vs CRAG-on 0.755 →
+  **Δ+0.015 < the +0.02 threshold**, inside judge-noise (pearson 0.94). Safe (0/15 hallucinated
+  on the OOC set) but flips only 1 row — not worth the critique→corrective-retrieve latency.
+  `CRAG_ENABLED` stays `False`.
+- **The "headroom" was partly a broken-eval-set artifact.** The first bucket read
+  (retrieval_miss 6/9) was contaminated: ~6/9 misses were unanswerable synthetic questions —
+  dangling demonstratives ("bệnh nhân **này**") and meta-references to the source artifact
+  ("câu 8 đến 12 trong **đề thi**", English OCR captions). On those, oracle scores ~1.0 only
+  because it is handed the gold; the system has no anchor to retrieve on. New
+  `src/agentrag/eval/question_quality.py` (`is_context_dependent`) filters them at build time;
+  hardened over three passes (dangling nouns, bare "câu N", `(các|những) câu hỏi`, pure-ASCII
+  non-Vietnamese guard).
+- **Clean re-measure — headroom shrinks with each cleaning, as predicted:** dirty 0.740/+0.171 →
+  clean-v1 0.787/+0.163 → **clean-v2 0.802/+0.118**. The residual **+0.118 is real** (> the ~0.05
+  metric-ceiling band); false_abstention went to 0.
+- **HippoRAG-2: SHELVED (gate resolved NO).** On the clean set, **both multi-hop misses failed at
+  generation, not retrieval** (gold_overlap 1.00) — multi-hop retrieval already works, so an
+  entity-graph/PPR traversal targets a non-occurring failure. Spec marked shelved. The real
+  +0.118 splits into single-hop **retrieval coverage** (4/7 misses — high rerank ~0.72 but low
+  gold_overlap ~0.1: the reranker confidently picks wrong chunks on broad "list" clinical Qs →
+  embedding/reranker lever) and **answer generation** (3/7 — gold packed, answer wrong; diagnosed
+  per-row in `generation_miss_diagnostic_2026-07-16.md`: 1 trust-low-rerank-context prompt lever,
+  1 completeness tweak, 1 needs-eyeballing).
+- **Flywheel seeded** — 107 citation triplets accumulated (`data/finetune/citation_pairs.jsonl`);
+  a reranker retrain off this seed is the evidence-backed next lever (hits both residual buckets).
+  Mining now dedups negatives against positives so a duplicate (hybrid+RRF-merged) passage cannot
+  emit a degenerate (q, X, X) training pair. Eval suite 106/106.
+
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each
   `/chat` turn into one trace (`session_id=conversation_id`). Self-host on `:3002`.

@@ -50,3 +50,22 @@ def test_ignores_out_of_range_citation():
     trips = mine_triplets([row])
     assert len(trips) == 1
     assert trips[0]["positive"] == "metformin 500mg"
+
+
+def test_duplicate_passage_never_becomes_its_own_negative():
+    # hybrid+RRF can merge the same chunk into packed twice — one cited, one not.
+    row = _row(
+        cited_sources=[1],
+        packed=[
+            {"content": "metformin 500mg", "rerank_score": 0.72},
+            {"content": "metformin 500mg", "rerank_score": 0.70},  # duplicate, uncited
+            {"content": "paracetamol", "rerank_score": 0.58},
+        ],
+    )
+    trips = mine_triplets([row])
+    assert trips == [{
+        "query": "liều metformin?",
+        "positive": "metformin 500mg",
+        "negative": "paracetamol",  # NOT the duplicate 'metformin 500mg'
+        "source": "citation",
+    }]

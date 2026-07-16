@@ -53,12 +53,18 @@ def mine_triplets(
         if not cited:
             continue
         positives = [packed[n - 1].get("content") or "" for n in sorted(cited)]
+        pos_texts = {p for p in positives if p}
         negatives = sorted(
             (item for i, item in enumerate(packed, start=1) if i not in cited),
             key=lambda c: float(c.get("rerank_score") or 0.0),
             reverse=True,
         )
-        negatives = [c.get("content") or "" for c in negatives if c.get("content")]
+        # Drop any negative whose text equals a positive — hybrid+RRF can merge the
+        # same chunk into packed twice (one cited, one not), which would emit a
+        # degenerate (q, X, X) triplet and train the reranker on contradictory
+        # labels for the same pair.
+        negatives = [c.get("content") or "" for c in negatives
+                     if c.get("content") and c.get("content") not in pos_texts]
         if not negatives:
             continue
         query = row.get("question") or ""

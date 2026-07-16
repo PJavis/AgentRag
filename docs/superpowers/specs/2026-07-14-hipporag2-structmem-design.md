@@ -2,7 +2,15 @@
 
 - **Date:** 2026-07-14
 - **Branch context:** `feat/miss-buckets-crag-flywheel`
-- **Status:** DRAFT — **gated on the miss-bucket verdict** from
+- **Status:** ⛔ **SHELVED (2026-07-16) — gate resolved NO.** The clean re-measure
+  (`docs/eval/clean_remeasure_v2_2026-07-16.md`, eval set filtered of context-dependent
+  questions) shows **every multi-hop miss failed at GENERATION, not retrieval**
+  (gold_overlap = 1.00 on both) — multi-hop retrieval already works, so this design targets
+  a failure mode that is not occurring. The residual +0.118 headroom splits into single-hop
+  retrieval-coverage misses (4/7 — chunking/embedding/rerank, not a graph) and answer-generation
+  misses (3/7 — answer-prompt/model). Do NOT build this. Kept for the record + as a fallback if
+  a future corpus grows a real multi-hop retrieval gap. Original gate rationale below.
+- **Original gate:** DRAFT — gated on the miss-bucket verdict from
   `docs/HOME-RUN-miss-buckets-2026-07-14.md`. Build ONLY if `retrieval_miss` is the dominant
   bucket (especially on multi-hop rows). If `false_abstention` or `generation_miss` dominates,
   shelve this and do floor/gate or answer-prompt work instead.

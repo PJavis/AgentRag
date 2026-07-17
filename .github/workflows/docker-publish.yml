@@ -68,6 +68,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The ~9GB CUDA api image + `cache-to: mode=max` peaks past the ~14GB free
+      # on a stock ubuntu-latest runner → intermittent "No space left on device"
+      # (observed 2026-07-16). Reclaim ~25GB of preinstalled toolchains we don't
+      # use before the build. Self-contained (no third-party action); keeps Docker.
+      - name: Free disk space
+        run: |
+          echo "before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+                      /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune --all --force || true
+          echo "after:"; df -h / | tail -1
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

@@ -92,6 +92,76 @@ NOT generation:
   confidence. Corpus = indexed `vn_bkai`/`vn_legal` residue, not `data/originals` (real-corpus
   A/B still deferred).
 
+## 🔬 Miss-bucketing + CRAG A/B tooling (2026-07-14, `feat/miss-buckets-crag-flywheel`)
+Follow-up to the 2026-07-13 real-corpus read (oracle−system **+0.088** → system-bound, loss in
+~5/40 misses): tooling to name those failures and act on them. Plan:
+`docs/superpowers/plans/2026-07-14-miss-buckets-crag-flywheel.md`; home-run instructions:
+`docs/HOME-RUN-miss-buckets-2026-07-14.md`.
+- **Per-row probe capture** — `oracle_probe.py --rows-out x.jsonl` dumps per question: system/
+  oracle answers, judge1/judge2 scores, packed passages + rerank scores, inline `[n]` citations,
+  `classify_refusal` class, tool queries (`src/agentrag/eval/probe_rows.py`).
+- **Miss-bucket classifier** — `src/agentrag/eval/miss_buckets.py` +
+  `scripts/eval/report_miss_buckets.py`: each miss (sys < 0.5) → `false_abstention` (floor/gate
+  work) | `retrieval_miss` (gold never packed, Jaccard < 0.35 — HippoRAG-2 gate evidence) |
+  `generation_miss` (gold packed, answer wrong); judge-gap rows (|sys−judge2| ≥ 0.4) flagged.
+- **Citation-reward flywheel (RMM)** — `src/agentrag/eval/citation_mining.py` +
+  `scripts/eval/mine_citation_pairs.py`: the answer LLM's own inline citations label the rerank
+  pool (cited = positive, hardest uncited = hard negative, only rows sys ≥ 0.75) → triplets in
+  the exact `finetune_reranker.py`/`finetune_embedding.py` input shape; `--append` accumulates
+  across probe runs. Zero manual labels.
+- 18 new tests (`test_probe_rows`, `test_miss_buckets`, `test_citation_mining`); eval suite
+  84/84. Live runs (bucket report, CRAG on/off A/B + refusal-safety gate, flywheel seed) are a
+  home-run — the CRAG loop itself was already built (WS3, default OFF); pre-registered enable
+  rule: Δsystem ≥ +0.02 AND zero new hallucinated on the OOC refusal set.
+- **Corpus-fingerprint guard** — kills the v3-landmine class (eval set built on residue corpus
+  silently scoring sys=0.00 against the real one): `build_prod_evalset.py` stamps every row
+  with `corpus_fp` (sha1 over sorted document-title:segment-count pairs);
+  `oracle_probe.py --eval-set` recomputes the live fingerprint and REFUSES on mismatch
+  (`--allow-corpus-mismatch` to override; unstamped legacy sets warn only).
+  `src/agentrag/eval/corpus_fingerprint.py`, 9 tests.
+- **Prod-traffic citation miner** — `scripts/eval/mine_citation_pairs_prod.py`: same RMM
+  signal from rated production turns (thumbs-up ⨝ `chat_messages.citations`; rating stands in
+  for the judge score) → flywheel accumulates from real usage, not just eval runs. Pure
+  converter `feedback_to_row` + 4 tests; eval suite 97/97.
+- **HippoRAG-2 StructMem spec DRAFT** (`docs/superpowers/specs/2026-07-14-hipporag2-structmem-design.md`)
+  — phrase/passage bi-modal graph, synonym edges via embedding threshold (replaces the
+  canonicalization prerequisite), query-to-triple seeding + recognition filter + PPR, union
+  merge into the existing rerank pool (can only ADD candidates — floor/abstain untouched).
+  **GATED: build only if the home-run bucket report shows `retrieval_miss` dominant.**
+
+## 🧭 Miss-bucketing campaign — RESULTS (2026-07-14 → 07-16)
+The home run executed both CRAG arms and, after a per-row audit, three eval-set cleaning
+passes. Outcome docs under `docs/eval/` (`crag_ab_2026-07-14.md`,
+`clean_remeasure_v2_2026-07-16.md`, `miss_buckets_clean_v2_2026-07-16.md`,
+`generation_miss_diagnostic_2026-07-16.md`).
+- **CRAG: keep OFF (decided).** On the real c2 n=40 set, CRAG-off 0.740 vs CRAG-on 0.755 →
+  **Δ+0.015 < the +0.02 threshold**, inside judge-noise (pearson 0.94). Safe (0/15 hallucinated
+  on the OOC set) but flips only 1 row — not worth the critique→corrective-retrieve latency.
+  `CRAG_ENABLED` stays `False`.
+- **The "headroom" was partly a broken-eval-set artifact.** The first bucket read
+  (retrieval_miss 6/9) was contaminated: ~6/9 misses were unanswerable synthetic questions —
+  dangling demonstratives ("bệnh nhân **này**") and meta-references to the source artifact
+  ("câu 8 đến 12 trong **đề thi**", English OCR captions). On those, oracle scores ~1.0 only
+  because it is handed the gold; the system has no anchor to retrieve on. New
+  `src/agentrag/eval/question_quality.py` (`is_context_dependent`) filters them at build time;
+  hardened over three passes (dangling nouns, bare "câu N", `(các|những) câu hỏi`, pure-ASCII
+  non-Vietnamese guard).
+- **Clean re-measure — headroom shrinks with each cleaning, as predicted:** dirty 0.740/+0.171 →
+  clean-v1 0.787/+0.163 → **clean-v2 0.802/+0.118**. The residual **+0.118 is real** (> the ~0.05
+  metric-ceiling band); false_abstention went to 0.
+- **HippoRAG-2: SHELVED (gate resolved NO).** On the clean set, **both multi-hop misses failed at
+  generation, not retrieval** (gold_overlap 1.00) — multi-hop retrieval already works, so an
+  entity-graph/PPR traversal targets a non-occurring failure. Spec marked shelved. The real
+  +0.118 splits into single-hop **retrieval coverage** (4/7 misses — high rerank ~0.72 but low
+  gold_overlap ~0.1: the reranker confidently picks wrong chunks on broad "list" clinical Qs →
+  embedding/reranker lever) and **answer generation** (3/7 — gold packed, answer wrong; diagnosed
+  per-row in `generation_miss_diagnostic_2026-07-16.md`: 1 trust-low-rerank-context prompt lever,
+  1 completeness tweak, 1 needs-eyeballing).
+- **Flywheel seeded** — 107 citation triplets accumulated (`data/finetune/citation_pairs.jsonl`);
+  a reranker retrain off this seed is the evidence-backed next lever (hits both residual buckets).
+  Mining now dedups negatives against positives so a duplicate (hybrid+RRF-merged) passage cannot
+  emit a degenerate (q, X, X) training pair. Eval suite 106/106.
+
 ## 📊 Observability + feedback loop (P2)
 - **Langfuse online + per-turn traces** — `observe_chat_turn`/`update_turn_trace` group each
   `/chat` turn into one trace (`session_id=conversation_id`). Self-host on `:3002`.

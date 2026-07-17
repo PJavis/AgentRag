@@ -142,7 +142,11 @@ class Settings(BaseSettings):
     #: raw hybrid = 0.716, agent pool topped at <floor). Injecting the raw hits guarantees
     #: rewrites only ADD, never degrade. Doesn't loosen OOC (raw OOC query still ~0.50).
     RETRIEVAL_INCLUDE_RAW_QUERY: bool = True
-    RETRIEVAL_RAW_QUERY_TOP_K: int = 8
+    #: 2026-07-16: 8→50. Gold ranks deep (fusion rank 8–17) for factual queries;
+    #: the unfiltered raw-query backstop must reach it. Safe now that the pool is
+    #: reranked BEFORE the trim (context.assemble), so extra recall doesn't flood
+    #: the packed answer context — low-rerank distractors are trimmed.
+    RETRIEVAL_RAW_QUERY_TOP_K: int = 50
     #: When best rerank score is in [floor, floor+GRAY_MARGIN), treat the
     #: context as uncertain and force the strong-abstain prompt (out-of-corpus
     #: distractors that score just over the floor → confident-hallucination fix).
@@ -170,7 +174,7 @@ class Settings(BaseSettings):
     #: 503 storm the total can exceed 120s (2026-06-26). On exceeding this budget the
     #: chat returns a graceful "busy, retry" response (timed_out=True) instead of hanging.
     AGENT_TOTAL_TIMEOUT_S: float = 90.0
-    AGENT_TOOL_TOP_K: int = 5
+    AGENT_TOOL_TOP_K: int = 30  # 2026-07-16: 5→30, deep gold needs a wide pool (rerank-before-trim keeps precision)
     AGENT_MAX_CONTEXT_CHUNKS: int = 8
     CHAT_HISTORY_WINDOW: int = 10
     CHAT_REDIS_TTL_SECONDS: int = 300
@@ -295,7 +299,7 @@ class Settings(BaseSettings):
     # sql:      sheet → SQLite, query trực tiếp qua structured pipeline
 
     # Query Rewriting — HyDE + decomposition (requires one extra LLM call per query)
-    QUERY_REWRITE_ENABLED: bool = False
+    QUERY_REWRITE_ENABLED: bool = True   # 2026-07-17: HyDE A/B on clean_v2 — on 0.904 vs off 0.864 (−0.039, 2 regressions); ship on (matches validated eval; OOC 15/15 safe)
     # HyDE: generate hypothetical answer and augment query for better kNN match
     QUERY_REWRITE_HYDE: bool = True
     # Decompose: split complex questions into sub-queries for multi-hop retrieval

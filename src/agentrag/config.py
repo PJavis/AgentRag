@@ -299,7 +299,7 @@ class Settings(BaseSettings):
     # sql:      sheet → SQLite, query trực tiếp qua structured pipeline
 
     # Query Rewriting — HyDE + decomposition (requires one extra LLM call per query)
-    QUERY_REWRITE_ENABLED: bool = False
+    QUERY_REWRITE_ENABLED: bool = True   # 2026-07-17: HyDE A/B on clean_v2 — on 0.904 vs off 0.864 (−0.039, 2 regressions); ship on (matches validated eval; OOC 15/15 safe)
     # HyDE: generate hypothetical answer and augment query for better kNN match
     QUERY_REWRITE_HYDE: bool = True
     # Decompose: split complex questions into sub-queries for multi-hop retrieval

@@ -2,6 +2,12 @@
 
 P2.8 "live trace per /chat" — enabled and verified.
 
+> ⚠️ **Superseded on PHI safety (2026-07-18):** this verification checked TRACE-LEVEL fields
+> only. Later live testing found the per-LLM **generation** observations leak question/answer/
+> passage content regardless of `OBSERVABILITY_CAPTURE_CONTENT`, and the mask hook doesn't
+> reliably apply in langfuse v2. Do NOT treat this doc as clearance to enable Langfuse on PHI
+> data — see `docs/ops/langfuse-observability.md`.
+
 ## Setup
 - `docker compose up -d langfuse langfuse-db` → `agentrag-langfuse` on host **:3002**
   (auto-provisioned org/project + dev keys), `/api/public/health` → 200.

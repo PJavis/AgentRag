@@ -47,7 +47,7 @@ Migrations are the schema source of truth (never rely on the `create_all` startu
 | **Auth** (token + signup) | `AUTH_ENABLED=true`, `AUTH_ALLOW_SIGNUP` | `adapter/auth.py`, `adapter/auth_service.py` | a request without a valid Bearer token → `401` |
 | **Rate limit** (per-user/min) | `RATE_LIMIT_ENABLED=true`, `RATE_LIMIT_PER_MIN_DEFAULT=120`, `RATE_LIMIT_UPLOAD_PER_MIN=120` | `adapter/rate_limit.py` | exceed 120 chat calls/min → `429` |
 | Doc-scope filter | `DOMAIN_FILTER_ENABLED` | retrieval | answers stay within allowed docs |
-| **PHI trace gate** | `OBSERVABILITY_CAPTURE_CONTENT=false` (default) | `common/langfuse_client.py` | with it off, Langfuse traces carry structure/latency only — no question/answer text |
+| **PHI trace gate** | `OBSERVABILITY_CAPTURE_CONTENT=false` (default) | `common/langfuse_client.py` | ⚠️ INCOMPLETE — gates the trace span only; langfuse v2 still captures question/answer/passage text in per-LLM **generations**. Do NOT enable Langfuse on PHI data — see `docs/ops/langfuse-observability.md` |
 | **Prompt-injection defense** | (always on) | `ANTI_INJECTION_RULE` in `agent/service.py` | retrieved doc content is treated as data, not instructions |
 | **Right-to-delete** | (always on, auth-gated) | `DELETE /chat/account` → `adapter/account_deletion.py` | authed user wipes all their data; anonymous/legacy → `403` |
 
@@ -90,10 +90,18 @@ job (~2h/100 docs of graph extraction) — size the ceiling for ingest bursts.
 
 ## 6. Observability (optional)
 
+> ⚠️ **PHI WARNING (2026-07-18):** do NOT enable Langfuse on a corpus containing PHI.
+> `OBSERVABILITY_CAPTURE_CONTENT=false` does NOT stop content capture — langfuse v2's OpenAI
+> integration records the full question text + retrieved passages in per-LLM **generation**
+> observations regardless of the flag (verified live; the `langfuse_mask` hook doesn't reliably
+> apply). Keep `LANGFUSE_ENABLED=false` until this is fixed. Full detail, bring-up, and the
+> failing verification: **`docs/ops/langfuse-observability.md`**.
+
 `docker compose --profile observability up -d` → Langfuse at `:3002`, Phoenix at its port.
 Set in `.env`: `LANGFUSE_ENABLED=true`, `LANGFUSE_HOST=http://localhost:3002`, the project
 keys. Each `/chat` turn becomes one trace (grouped by conversation); thumbs feedback lands
-as a `user_feedback` score on the turn's trace. See `docs/eval/langfuse-online-2026-06-25.md`.
+as a `user_feedback` score on the turn's trace. See `docs/ops/langfuse-observability.md`
+(status/PHI) and `docs/eval/langfuse-online-2026-06-25.md` (original trace-level verification).
 
 ## 7. Verify a deploy works
 

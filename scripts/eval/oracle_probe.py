@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from src.agentrag.eval.benchmark_datasets import load_suite
 from src.agentrag.eval.correctness_judge import score_correctness
+from src.agentrag.eval.probe_rows import build_probe_row
 
 
 _ORACLE_SYSTEM = (
@@ -46,6 +47,7 @@ class ProbeRow:
     system_mean: float
     oracle_mean: float
     judge2_mean: float
+    detail: dict | None = None
 
 
 def pearson(xs: list[float], ys: list[float]) -> float:
@@ -103,6 +105,19 @@ async def main(args: argparse.Namespace) -> None:
     agent = get_agent_service()
     if args.eval_set:
         from src.agentrag.eval.benchmark_datasets import load_local_jsonl
+        from src.agentrag.eval.corpus_fingerprint import (
+            check_fingerprint, compute_corpus_fingerprint, read_evalset_fingerprint,
+        )
+        evalset_fp = read_evalset_fingerprint(args.eval_set)
+        live_fp = await compute_corpus_fingerprint()
+        ok, msg = check_fingerprint(
+            evalset_fp=evalset_fp, live_fp=live_fp,
+            allow_mismatch=args.allow_corpus_mismatch,
+        )
+        if msg:
+            print(f"[probe] ⚠️  {msg}")
+        if not ok:
+            raise SystemExit(2)
         examples = load_local_jsonl(args.eval_set, n=args.n)
         print(f"[probe] {len(examples)} examples (eval-set={args.eval_set}, n={args.n})")
     else:
@@ -123,7 +138,13 @@ async def main(args: argparse.Namespace) -> None:
         # to a DIFFERENT model to get a real cross-model noise floor; if it is unmapped,
         # judge2 falls back to the same model and the pearson is ~1.0 (self-consistency only).
         j2_e = await score_correctness(ex.question, system_ans, ex.reference_answer, gold_ctx, gateway, task="eval_judge2")
-        return ProbeRow(ex.id, sys_e.mean, ora_e.mean, j2_e.mean)
+        detail = build_probe_row(
+            qid=ex.id, question=ex.question, chat_out=out,
+            oracle_answer=oracle_ans,
+            system_mean=sys_e.mean, oracle_mean=ora_e.mean, judge2_mean=j2_e.mean,
+            gold_contexts=ex.gold_contexts,
+        )
+        return ProbeRow(ex.id, sys_e.mean, ora_e.mean, j2_e.mean, detail)
 
     rows: list[ProbeRow] = []
     failures = 0
@@ -156,6 +177,15 @@ async def main(args: argparse.Namespace) -> None:
     label = args.eval_set if args.eval_set else args.suite
     out_path.write_text(_render(summary, label, args.n), encoding="utf-8")
     print(f"[probe] wrote {out_path}")
+    if args.rows_out:
+        import json
+        rows_path = Path(args.rows_out)
+        rows_path.parent.mkdir(parents=True, exist_ok=True)
+        with rows_path.open("w", encoding="utf-8") as f:
+            for r in rows:
+                if r.detail:
+                    f.write(json.dumps(r.detail, ensure_ascii=False) + "\n")
+        print(f"[probe] wrote {len([r for r in rows if r.detail])} rows → {rows_path}")
     print(f"[probe] oracle−system = {summary['oracle_minus_system']:+.3f}, "
           f"judge-noise = {summary['judge_noise_pearson']:.3f}")
 
@@ -171,6 +201,10 @@ def parse_args() -> argparse.Namespace:
                    help="retries per question on transient provider error / agent timeout")
     p.add_argument("--retry-sleep", type=float, default=8.0,
                    help="base backoff seconds between retries (exponential)")
+    p.add_argument("--rows-out", default=None,
+                   help="ALSO dump one JSON row per scored question (miss bucketing / citation mining input)")
+    p.add_argument("--allow-corpus-mismatch", action="store_true",
+                   help="run even when the eval set's corpus_fp does not match the live corpus (numbers may be garbage)")
     return p.parse_args()
 
 

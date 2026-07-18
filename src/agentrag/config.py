@@ -208,6 +208,12 @@ class Settings(BaseSettings):
     # async: skip describe; queue ARQ vision_extract job → text retrieval ready ngay.
     VISION_INGEST_MODE: Literal["sync", "async"] = "async"
 
+    #: Vision-capable model for ANSWER-TIME multimodal grounding (reads the retrieved
+    #: image's pixels). Independent of the text `answer` model. gemini-* → Gemini via
+    #: GEMINI_API_KEY. Empty string disables answer-time vision (turns answer text-only).
+    #: Only image-bearing turns use it — inert until images are ingested (vision slices B/C).
+    VISION_ANSWER_MODEL: str = "gemini-2.5-flash"
+
     # Auto-route to large-context model khi prompt > threshold tokens.
     # Inspired by open-notebook provision_langchain_model.
     # None = disabled (use default model regardless of size).

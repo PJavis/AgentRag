@@ -51,6 +51,10 @@ def _price_for(model: str) -> tuple[float, float]:
     return _PRICE_PER_1M["gemini-2.5-flash"]
 
 
+class VisionDisabledError(RuntimeError):
+    """Raised when answer-time multimodal is requested but VISION_ANSWER_MODEL is empty."""
+
+
 class LLMGateway:
     """
     LLM routing + cost tracking (Phase C).
@@ -86,10 +90,16 @@ class LLMGateway:
         image_urls: list[str],
         task: str = "general",
     ) -> tuple[dict[str, Any], float]:
-        """Route a multimodal (text + images) JSON call through the per-task
-        client. Use when packed_context has image segments and the chosen
-        answer model supports vision (Gemini 2.5 Flash, GPT-4o, etc.)."""
-        client = self._resolve_client(task, content=system_prompt + user_text)
+        """Route a multimodal (text + images) JSON call to VISION_ANSWER_MODEL
+        (independent of the text `answer` model routing). Use when
+        packed_context has image segments and answer-time vision is enabled.
+
+        Raises VisionDisabledError if VISION_ANSWER_MODEL is empty (caller
+        falls back to text-only)."""
+        model = settings.VISION_ANSWER_MODEL
+        if not model:
+            raise VisionDisabledError("VISION_ANSWER_MODEL is empty; answer-time vision disabled")
+        client = self._client_for_model(model)
         started = time.perf_counter()
         payload = await client.json_response_multimodal(
             system_prompt, user_text, image_urls, task=task
@@ -125,11 +135,7 @@ class LLMGateway:
         if large_model and content:
             tokens = _estimate_tokens(content)
             if tokens > settings.LLM_LARGE_CONTEXT_THRESHOLD:
-                if large_model not in self._routed_clients:
-                    self._routed_clients[large_model] = AgentLLM(
-                        model_override=large_model
-                    )
-                return self._routed_clients[large_model]
+                return self._client_for_model(large_model)
 
         # 2. Task-based routing.
         if not settings.LLM_ROUTING_ENABLED:
@@ -140,9 +146,13 @@ class LLMGateway:
         if not override_model:
             return self._default_client
 
-        if override_model not in self._routed_clients:
-            self._routed_clients[override_model] = AgentLLM(model_override=override_model)
-        return self._routed_clients[override_model]
+        return self._client_for_model(override_model)
+
+    def _client_for_model(self, model: str) -> AgentLLM:
+        """Cached AgentLLM for an explicit model name (provider derived from prefix)."""
+        if model not in self._routed_clients:
+            self._routed_clients[model] = AgentLLM(model_override=model)
+        return self._routed_clients[model]
 
     @staticmethod
     def _load_task_map() -> dict[str, str]:

@@ -14,10 +14,10 @@ async def main():
     # Hard guards — refuse to run against prod DB/index/image dir.
     assert settings.POSTGRES_DB == "rag_scratch", f"NOT scratch DB: {settings.POSTGRES_DB}"
     assert settings.ELASTICSEARCH_INDEX_NAME == "agentrag_segments_scratch", settings.ELASTICSEARCH_INDEX_NAME
-    assert settings.VISION_PROVIDER == "ollama" and settings.VISION_INGEST_MODE == "sync", \
+    assert settings.VISION_PROVIDER in ("ollama", "gemini") and settings.VISION_INGEST_MODE == "sync", \
         (settings.VISION_PROVIDER, settings.VISION_INGEST_MODE)
     assert settings.IMAGE_STORAGE_DIR == "/tmp/vis_images", settings.IMAGE_STORAGE_DIR
-    assert settings.VISION_MODEL == "qwen2.5vl:7b", settings.VISION_MODEL
+    assert settings.VISION_PROVIDER in ("ollama", "gemini"), settings.VISION_PROVIDER
     print("GUARDS OK | vision_model=%s provider=%s ingest_mode=%s img_dir=%s db=%s index=%s" % (
         settings.VISION_MODEL, settings.VISION_PROVIDER, settings.VISION_INGEST_MODE,
         settings.IMAGE_STORAGE_DIR, settings.POSTGRES_DB, settings.ELASTICSEARCH_INDEX_NAME))

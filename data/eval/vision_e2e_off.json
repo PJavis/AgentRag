@@ -1,0 +1,288 @@
+{
+  "vision_answer_model": "",
+  "n": 40,
+  "scored": 40,
+  "mean_correctness": 0.4104,
+  "rows": [
+    {
+      "id": "vis-0",
+      "question": "How many letters are circled in red?",
+      "answer": "5 letters are circled in red: N, S, A, I, D.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-1",
+      "question": "According to the labels in the image, what is the name of the inflamed tissue structure that is shown destroying cartilage and bone?",
+      "answer": "The inflamed tissue structure that is shown destroying cartilage and bone is the **pannus** [25][27][24][26].",
+      "score": 0.5714285714285714,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-2",
+      "question": "How many conditions are listed under 'Trường hợp không áp dụng'?",
+      "answer": "Dưới tiêu đề **'Trường hợp không áp dụng'** có **4** điều kiện được liệt kê [1][2][3][4][5]:\n- **Viêm cấp ở niệu đạo** (acute urethritis)\n- **Hẹp niệu đạo** (urethral stricture)\n- **Chấn thương niệu đạo** (urethral trauma: contusion, crush, rupture)\n- **Tổn thương tiền liệt tuyến, tinh hoàn** (prostate and testicular injury)",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-3",
+      "question": "What is the predominant color of the thick, matted crusts covering the scalp?",
+      "answer": "The thick, matted crusts covering the scalp are predominantly **yellowish-brown** in color [1][3][5][2][7].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-4",
+      "question": "In what anatomical compartment are the dark purple-stained cells predominantly located?",
+      "answer": "The dark purple-stained cells (predominantly **lymphocytes**) are primarily located in the **dermis**, especially in perivascular and periadnexal regions [1][19][57][10]. In multiple histology slides of skin, these inflammatory cells form dense infiltrates within the superficial and deep dermis, surrounding blood vessels, hair follicles, and eccrine glands [19][57][10]. Some images also show exten",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-5",
+      "question": "What spinal condition is depicted in this image?",
+      "answer": "The image depicts **scoliosis**, a condition characterized by a significant **lateral curvature** of the vertebral column. The illustrations show an S-shaped spinal deviation, often involving both **thoracic** and **lumbar** regions, with associated asymmetry of the shoulders and waist [1][2][3].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-6",
+      "question": "How many distinct pictorial representations of vitamin D sources are shown in the image?",
+      "answer": "The image contains **6** distinct pictorial representations of vitamin D sources: a stylized sun (Sunlight), a wedge of Cheese, a bottle and glass of Milk, three Eggs, a whole fish and fillets (Salmon), and a bowl of Yogurt [13][12].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-7",
+      "question": "What spinal condition is depicted in this illustration?",
+      "answer": "The illustration depicts **scoliosis**, characterized by a significant S-shaped lateral curvature of the vertebral column, affecting both the thoracic and lumbar regions [1][2][3][4].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-8",
+      "question": "What color are the crusts visible at the corners of the patient's mouth?",
+      "answer": "The crusts at the corners of the patient's mouth are **yellowish-brown** (or **yellow**), as seen in **angular cheilitis** [19][20][21][22].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-9",
+      "question": "How many structures are marked with black asterisks in the image?",
+      "answer": "Which specific image are you referring to? The context contains multiple images with black asterisks (e.g., from documents \"1af5d256-153b-4775-b62a-0dbe2bcd8a35\", \"874adf51-6c40-479e-ad79-53857da1d4db\", \"a74497e6-fda3-417e-99ae-efca6610dc7d\", and \"1617bcff-9bf1-41de-aa8d-9b5fcfc5f78e\"). Please specify the document or image so I can count the structures.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-10",
+      "question": "What specific anatomical structure of the C1 vertebra is fractured in the axial CT image?",
+      "answer": "The axial CT image reveals a comminuted fracture of the **anterior arch** of the C1 vertebra (atlas), consistent with a Jefferson fracture. [23]",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-11",
+      "question": "What specific hand deformity is depicted in this image?",
+      "answer": "The image depicts a **claw hand** deformity, characterized by hyperextension of the metacarpophalangeal joints and flexion of the interphalangeal joints, most prominently in the fourth and fifth digits [3][4]. This posture is a classic sign of **ulnar nerve palsy** [3][4].",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-12",
+      "question": "What is the dosage strength of the Fentanyl Transdermal System shown in the image?",
+      "answer": "The dosage strength of the **Fentanyl Transdermal System** shown in the image is **100 mcg/hr** (micrograms per hour) [2][3].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-13",
+      "question": "What is the primary finding visible in this image?",
+      "answer": "Could you please specify which image you are referring to? The context contains multiple images with various findings.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-14",
+      "question": "Based on the image, what is the primary visual difference in the internal structure between the bone labeled 'Xương khỏe mạnh' and the bone labeled 'Loãng xương'?",
+      "answer": "**Xương khỏe mạnh** (healthy bone) có cấu trúc bên trong với các **bè xương** (trabeculae) **dày đặc, liên kết tốt**, tạo thành một mạng lưới chắc chắn. Ngược lại, **Loãng xương** (osteoporosis) biểu hiện **mật độ xương giảm rõ rệt** với các bè xương **mảnh, thưa thớt và đứt gãy**, kèm theo **khoang tủy mở rộng** [19][20].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-15",
+      "question": "How many distinct anatomical structures are visible in this medical image?",
+      "answer": "Which specific medical image from the provided context are you asking about? Please provide the document title or page number so I can count the distinct anatomical structures visible.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-16",
+      "question": "What is the total BMD (g/cm²) reported in the DXA scan summary?",
+      "answer": "The provided context does not contain the numeric value of the total **BMD (g/cm²)** from any DXA scan summary. While several excerpts mention that a table includes BMD data for the total lumbar spine or total hip, the actual BMD values are not stated in the text. Only **T-scores** and **Z-scores** are explicitly reported (e.g., total lumbar T-score of 0.6, -3.2, or -3.0). Therefore, the total BMD",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-17",
+      "question": "What object is affixed to the right knee in the central image showing legs?",
+      "answer": "A large, golden, circular object embossed with **COX-2** (symbolizing a COX-2 inhibitor medication) is affixed to the right knee [20].",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-18",
+      "question": "What does the letter 'S' stand for in the acronym shown?",
+      "answer": "The letter **S** stands for **Steroidal**, as part of the acronym NSAID meaning \"Non Steroidal Anti Inflammatory Drugs\" [1][2].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-19",
+      "question": "What letter is visible in the bottom right portion of the lowest ultrasound image?",
+      "answer": "The letter **S** is visible in the bottom right portion of the lowest ultrasound image, denoting the humeral head [10][19][22][23].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-20",
+      "question": "What type of fracture is visible in the mid-diaphysis of the femur?",
+      "answer": "The mid-diaphysis of the femur shows **oblique**, **transverse**, and **comminuted** fracture types across different radiographs:\n\n- **Oblique fracture**: seen in Source 1 (complete, displaced, oblique) [1], Source 2 (complete, displaced, oblique) [2], and Source 3 (complete, displaced, comminuted oblique) [3].\n- **Transverse fracture**: seen in Source 5 (complete, displaced, transverse) [5].\n- **",
+      "score": 0.2,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-21",
+      "question": "How many conditions are listed under 'Trường hợp không áp dụng'?",
+      "answer": "Có **4** tình trạng được liệt kê dưới mục \"Trường hợp không áp dụng\" [1][2][3][4][5]:\n- Viêm cấp ở niệu đạo (acute urethritis)\n- Hẹp niệu đạo (urethral stricture)\n- Chấn thương niệu đạo: giập, nát, đứt... (urethral trauma: contusion, crush, rupture)\n- Tổn thương tiền liệt tuyến, tinh hoàn (prostate and testicular injury)",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-22",
+      "question": "What type of vascular structures are clearly visible on the forearm in this image?",
+      "answer": "The clearly visible vascular structures are **superficial veins**, specifically the **median cubital vein** and **cephalic vein**, located in the antecubital fossa and proximal forearm [33][43].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-23",
+      "question": "What is the name of the hand deformity depicted in the image?",
+      "answer": "Which hand image are you referring to? The context contains multiple images of hand deformities, such as 'claw hand', 'wrist drop', 'opera glass hand', etc.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-24",
+      "question": "How many distinct lettered sub-points are listed directly under \"2. Sờ\" (Palpation) on the slide?",
+      "answer": "There are **2** distinct lettered sub-points listed directly under \"2. Sờ\" (Palpation): **a. Nhiệt độ** (Temperature) and **b. Điểm đau** (Pain points) [17][19][20][16][18].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-25",
+      "question": "What type of blood vessels are clearly visible on the anterior aspect of the forearm?",
+      "answer": "On the anterior aspect of the forearm, **superficial veins** are clearly visible, specifically the **median cubital vein** and **cephalic vein** [17][19][20][18]. These veins are prominently seen in the antecubital fossa and extending distally, serving as common venipuncture sites.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-26",
+      "question": "What year is prominently displayed on the logo?",
+      "answer": "The year **1902** is prominently displayed on the logo.",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-27",
+      "question": "What imaging modality is represented by this image?",
+      "answer": "The context contains multiple image descriptions but does not specify which image is being referred to. Please provide a description or identifier for the image in question.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-28",
+      "question": "How many distinct colored rectangular blocks are visible in the graphic in the top left corner of the image?",
+      "answer": "The provided context does not contain enough detail about the graphic in the top left corner to determine the number of distinct colored rectangular blocks.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-29",
+      "question": "What color is the undershirt visible on the baby?",
+      "answer": "The provided context does not contain any information about the color of the undershirt visible on the baby.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-30",
+      "question": "Are germinal centers visible within the lymphoid follicles in this image?",
+      "answer": "Which specific image are you referring to? The context includes multiple histology images, some with germinal centers visible and some without.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-31",
+      "question": "According to the central diagram, how many distinct effects of Vitamin D are illustrated?",
+      "answer": "The central diagram illustrates **7 distinct effects** of Vitamin D. These effects are: **calcium transport**, **bone health**, **immune regulation**, **hormone secretion**, **cellular metabolism** (including proliferation, differentiation, and programmed cell death), **brain and nervous system function**, and **skin and hair health** [9][14].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-32",
+      "question": "What specific type of inflammatory tissue is seen proliferating over the articular surface in this image?",
+      "answer": "The specific type of inflammatory tissue seen proliferating over the articular surface is **pannus** [17][19][20][18]. Pannus is a hyperplastic, inflamed synovial tissue composed of granulation tissue that invades the joint space and erodes articular cartilage and bone. It contains inflammatory cells such as **lymphocytes**, **macrophages**, and **neutrophils** [17][20].",
+      "score": 0.14285714285714285,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-33",
+      "question": "What instruction is provided in the text overlay at the bottom of the image?",
+      "answer": "Which image are you referring to? Please specify the document title or a description of the image (e.g., the X-ray slide, the ultrasound slide, the safety warning label, etc.).",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-34",
+      "question": "How many 'Ca' particles are contained within the bottom bone structure shown in the image?",
+      "answer": "The context does not provide a specific numerical count of 'Ca' (calcium) particles in the bottom bone structure. The description from source 22 and source 23 only indicates that the **lower bone** (bottom) contains a **higher concentration** of calcium ions compared to the upper bone, without quantifying the exact number.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-35",
+      "question": "How many distinct rows of nails are visible across the width of the wooden floor?",
+      "answer": "The provided context does not specify the number of distinct rows of nails across the width of the wooden floor.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-36",
+      "question": "What accessory is worn on the left wrist in the image labeled \"Hạt bouchard, heberden\"?",
+      "answer": "Dựa trên nội dung được cung cấp, không có mô tả nào về phụ kiện đeo trên cổ tay trái trong hình ảnh được gắn nhãn \"Hạt bouchard, heberden\". Hình ảnh này chỉ hiển thị mặt lưng của cả hai bàn tay với các phì đại xương tại khớp liên đốt xa (Heberden) và khớp liên đốt gần (Bouchard), đặc trưng của thoái hóa khớp, nhưng không đề cập đến bất kỳ phụ kiện nào [9][10][21][22][23].",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-37",
+      "question": "What year is prominently displayed on the logo?",
+      "answer": "The year **1902** is prominently displayed on the logo [1][3][9].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-38",
+      "question": "What university's logo is displayed in the top right corner of the slide?",
+      "answer": "The university logo displayed in the top right corner of the slide is that of **Hanoi Medical University** [11][13][25].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-39",
+      "question": "How many distinct medical signs are illustrated in the images on this slide?",
+      "answer": "Based on the image from the slide titled \"II. Clinical Symptoms and Examination of Peripheral Joints\" (subsection \"3. Other signs\"), there are **2 distinct medical signs** illustrated: **crepitus during movement** (palpating the knee) and **trigger finger** (flexed ring finger indicating stenosing tenosynovitis).",
+      "score": 1.0,
+      "low_confidence": false
+    }
+  ]
+}

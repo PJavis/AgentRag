@@ -1,0 +1,288 @@
+{
+  "vision_answer_model": "gemini-2.5-flash",
+  "n": 40,
+  "scored": 40,
+  "mean_correctness": 0.3868,
+  "rows": [
+    {
+      "id": "vis-0",
+      "question": "How many letters are circled in red?",
+      "answer": "5 letters are circled in red.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-1",
+      "question": "According to the labels in the image, what is the name of the inflamed tissue structure that is shown destroying cartilage and bone?",
+      "answer": "The inflamed tissue structure that destroys cartilage and bone is the **pannus**. It is an abnormal layer of granulation tissue that invades the joint space and erodes articular cartilage and subchondral bone [1][22][24][25]. The pannus is composed of inflammatory cells including **lymphocytes**, **macrophages**, and **neutrophils** [1][22][24][25].",
+      "score": 0.75,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-2",
+      "question": "How many conditions are listed under 'Trường hợp không áp dụng'?",
+      "answer": "Có 4 điều kiện được liệt kê trong phần \"Trường hợp không áp dụng\": viêm niệu đạo cấp, hẹp niệu đạo, chấn thương niệu đạo (giập, nát, đứt), và tổn thương tuyến tiền liệt/tinh hoàn [1][2][3][4][5].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-3",
+      "question": "What is the predominant color of the thick, matted crusts covering the scalp?",
+      "answer": "The thick, matted crusts covering the scalp are predominantly **yellowish-brown** in color [1][5]. Some descriptions also note a **yellowish-green** hue [2][3], but the most common descriptor across the relevant images is yellowish-brown.",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-4",
+      "question": "In what anatomical compartment are the dark purple-stained cells predominantly located?",
+      "answer": "Could you please specify which histological slide or image you are referring to? The context contains multiple slides with dark purple-stained cells located in different compartments such as dermis, perimysial connective tissue, or lamina propria.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-5",
+      "question": "What spinal condition is depicted in this image?",
+      "answer": "The spinal condition depicted is **scoliosis**, characterized by a significant **S-shaped lateral curvature** of the vertebral column affecting both the thoracic and lumbar regions, along with associated asymmetry of the shoulders and waist [1][2][3][11].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-6",
+      "question": "How many distinct pictorial representations of vitamin D sources are shown in the image?",
+      "answer": "6",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-7",
+      "question": "What spinal condition is depicted in this illustration?",
+      "answer": "**Scoliosis** [1][2][3][4] — an **S-shaped lateral curvature** of the vertebral column affecting the thoracic and lumbar regions.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-8",
+      "question": "What color are the crusts visible at the corners of the patient's mouth?",
+      "answer": "The crusts visible at the corners of the patient's mouth (labial commissures) are **yellowish-brown** (or **yellowish**) in color, consistent with **angular cheilitis** [19][20][21][22].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-9",
+      "question": "How many structures are marked with black asterisks in the image?",
+      "answer": "The provided context does not specify the exact number of structures marked with black asterisks. It only states that black asterisks highlight lacunae or specific regions within bone trabeculae or marrow spaces [1][16][17][18], but no count is given.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-10",
+      "question": "What specific anatomical structure of the C1 vertebra is fractured in the axial CT image?",
+      "answer": "The axial CT image reveals a comminuted fracture of the **anterior arch** of the C1 vertebra, consistent with a Jefferson fracture. [22]",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-11",
+      "question": "What specific hand deformity is depicted in this image?",
+      "answer": "Which specific image are you referring to? Please provide more details or identify the source document and page number so I can accurately describe the hand deformity depicted.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-12",
+      "question": "What is the dosage strength of the Fentanyl Transdermal System shown in the image?",
+      "answer": "The dosage strength of the **Fentanyl Transdermal System** shown in the image is **100 mcg/hr** [2][3].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-13",
+      "question": "What is the primary finding visible in this image?",
+      "answer": "Which specific image are you referring to? The context contains multiple images with various findings. Please specify the image by description or source.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-14",
+      "question": "Based on the image, what is the primary visual difference in the internal structure between the bone labeled 'Xương khỏe mạnh' and the bone labeled 'Loãng xương'?",
+      "answer": "Trong hình ảnh so sánh, sự khác biệt chính về cấu trúc bên trong giữa **xương khỏe mạnh** và **loãng xương** là: xương khỏe mạnh có các bè xương (trabeculae) dày đặc, liên kết tốt và vỏ xương chắc khỏe; trong khi xương loãng xương có mật độ xương giảm đáng kể, các bè xương mỏng, thưa thớt và đứt gãy, cùng với các hốc xương (marrow spaces) mở rộng [25][24].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-15",
+      "question": "How many distinct anatomical structures are visible in this medical image?",
+      "answer": "Which specific medical image are you referring to? Please provide the source or description.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-16",
+      "question": "What is the total BMD (g/cm²) reported in the DXA scan summary?",
+      "answer": "The provided DXA scan summaries do not include the total BMD (g/cm²) value. They report T-scores, Z-scores, and other metrics, but the numeric BMD in g/cm² is not explicitly stated.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-17",
+      "question": "What object is affixed to the right knee in the central image showing legs?",
+      "answer": "A large, golden, circular object embossed with **\"COX-2\"** (symbolizing a COX-2 inhibitor medication).",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-18",
+      "question": "What does the letter 'S' stand for in the acronym shown?",
+      "answer": "The letter 'S' stands for **Steroidal** in the acronym **NSAID**, which expands to **N**on-**S**teroidal **A**nti-**I**nflammatory **D**rugs [1][2].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-19",
+      "question": "What letter is visible in the bottom right portion of the lowest ultrasound image?",
+      "answer": "The letter **S** is visible in the bottom right portion of the lowest ultrasound image [19][23].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-20",
+      "question": "What type of fracture is visible in the mid-diaphysis of the femur?",
+      "answer": "The mid-diaphysis of the femur exhibits a variety of fracture types across different educational and clinical imaging studies:\n\n- **Oblique fractures** are identified as complete, displaced oblique fractures [1][2].\n- **Comminuted oblique fractures** are also present [3].\n- **Comminuted, displaced fractures** (without specified orientation) are seen [4].\n- **Transverse fractures** appear as comple",
+      "score": 0.2222222222222222,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-21",
+      "question": "How many conditions are listed under 'Trường hợp không áp dụng'?",
+      "answer": "The slide lists **4** main conditions under 'Trường hợp không áp dụng' (Cases Not Applicable/Contraindications):\n- **Viêm cấp ở niệu đạo** (acute urethritis)\n- **Hẹp niệu đạo** (urethral stricture)\n- **Chấn thương niệu đạo** (urethral trauma: contusion, crush, rupture)\n- **Tổn thương tiền liệt tuyến, tinh hoàn** (prostate and testicular injuries)\n\nThese are explicitly listed as bullet points on th",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-22",
+      "question": "What type of vascular structures are clearly visible on the forearm in this image?",
+      "answer": "The clearly visible vascular structures on the forearm are **superficial veins**, specifically the **median cubital vein** and its tributaries, as well as the **cephalic** and **basilic veins** [31][33][40].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-23",
+      "question": "What is the name of the hand deformity depicted in the image?",
+      "answer": "Could you please specify which image or deformity you are referring to? The context includes several hand deformities such as 'claw hand', 'wrist drop', and 'opera glass hand'.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-24",
+      "question": "How many distinct lettered sub-points are listed directly under \"2. Sờ\" (Palpation) on the slide?",
+      "answer": "2",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-25",
+      "question": "What type of blood vessels are clearly visible on the anterior aspect of the forearm?",
+      "answer": "## Type of Blood Vessels Visible\n- The anterior aspect of the forearm clearly shows prominent **superficial veins**, including the **median cubital vein**, **cephalic vein**, and **basilic vein** [17][18][19][20].\n- The median cubital vein connects the cephalic and basilic veins in the antecubital fossa [20].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-26",
+      "question": "What year is prominently displayed on the logo?",
+      "answer": "The year **1902** is prominently displayed on the logo [1][2][3][10].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-27",
+      "question": "What imaging modality is represented by this image?",
+      "answer": "The image is a **multi-modality composite** that includes **X-ray (radiograph)**, **CT scan**, and **MRI** (both T2-weighted fat-saturated and post-contrast T1-weighted sequences) of the distal femur [1][27]. This combination is used to evaluate an expansile bone lesion, such as a giant cell tumor or aneurysmal bone cyst.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-28",
+      "question": "How many distinct colored rectangular blocks are visible in the graphic in the top left corner of the image?",
+      "answer": "The provided context does not contain a description of a graphic in the top left corner with colored rectangular blocks. Therefore, the number cannot be determined.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-29",
+      "question": "What color is the undershirt visible on the baby?",
+      "answer": "The context does not contain any description of an undershirt visible on the baby, so the color cannot be determined from the provided information.",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-30",
+      "question": "Are germinal centers visible within the lymphoid follicles in this image?",
+      "answer": "The question does not specify which image is being referred to. Please provide the document title or a description of the image so I can determine whether germinal centers are visible.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-31",
+      "question": "According to the central diagram, how many distinct effects of Vitamin D are illustrated?",
+      "answer": "The central diagram illustrates **7 distinct effects** of Vitamin D [5][7][9][10][12][13]. These are:\n- **Calcium transport**\n- **Brain and nervous system function**\n- **Skin and hair health**\n- **Bone health**\n- **Immune regulation**\n- **Hormone secretion**\n- **Cellular metabolism** (including proliferation, differentiation, and programmed cell death)",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-32",
+      "question": "What specific type of inflammatory tissue is seen proliferating over the articular surface in this image?",
+      "answer": "**Pannus** (inflamed, hyperplastic synovial granulation tissue) is seen proliferating over the articular surface [19][21][20][18].",
+      "score": 0.5,
+      "low_confidence": true
+    },
+    {
+      "id": "vis-33",
+      "question": "What instruction is provided in the text overlay at the bottom of the image?",
+      "answer": "Which image are you referring to? Please specify the document title or provide more details.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-34",
+      "question": "How many 'Ca' particles are contained within the bottom bone structure shown in the image?",
+      "answer": "The provided context describes an image with two stylized bone structures and blue spheres labeled 'Ca', but **does not specify the exact number** of 'Ca' particles in the bottom bone structure [23]. Therefore, the exact count cannot be determined from the given information.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-35",
+      "question": "How many distinct rows of nails are visible across the width of the wooden floor?",
+      "answer": "The provided context does not specify the number of distinct rows of nails visible across the width of the wooden floor.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-36",
+      "question": "What accessory is worn on the left wrist in the image labeled \"Hạt bouchard, heberden\"?",
+      "answer": "The provided context does not mention any accessory worn on the left wrist in the image labeled \"Hạt bouchard, heberden.\" The descriptions of that image focus solely on bony enlargements (Bouchard's and Heberden's nodes) characteristic of osteoarthritis, with no reference to wrist accessories.",
+      "score": 0.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-37",
+      "question": "What year is prominently displayed on the logo?",
+      "answer": "The year **1902** is prominently displayed on the logo [1][2][3][10].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-38",
+      "question": "What university's logo is displayed in the top right corner of the slide?",
+      "answer": "The logo displayed in the top right corner of the slide is that of **Hanoi Medical University** (Trường Đại học Y Hà Nội) [9][11][23][24].",
+      "score": 1.0,
+      "low_confidence": false
+    },
+    {
+      "id": "vis-39",
+      "question": "How many distinct medical signs are illustrated in the images on this slide?",
+      "answer": "The slide illustrates **4 distinct medical signs**: **urate crystals**, **calcium pyrophosphate crystals**, **bacteria**, and **polymorphonuclear leukocytes** [9].",
+      "score": 0.0,
+      "low_confidence": false
+    }
+  ]
+}

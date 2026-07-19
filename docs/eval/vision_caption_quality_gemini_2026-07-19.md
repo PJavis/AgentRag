@@ -139,3 +139,36 @@ consistent with the corpus's non-PHI determination that superseded Slice A/B's l
 constraint. Sandbox only (`rag_scratch` DB / `agentrag_segments_scratch` ES index /
 `/tmp/vis_images`) — no prod data touched; prod `agentrag_segments` (3359 docs) verified
 unaffected before and after this run.
+
+---
+
+## Phase 2 — full-corpus prod augmentation (executed 2026-07-19)
+
+The gemini gate (Phase 1) passed, so the entire corpus was augmented with gemini image
+captions via `scripts/eval/vision_prod_augment.py` (drives the `vision_extract` worker; adds
+`segment_type=image` segments only, never re-ingests text).
+
+**Run config:** `VISION_PROVIDER=gemini VISION_MODEL=gemini-2.5-flash`,
+`VISION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/` (explicit — the home
+`.env` Ollama URL + `env_ignore_empty=True` make an empty override a no-op),
+`VISION_MAX_RPM=60 VISION_MAX_CONCURRENCY=8 VISION_DESCRIBE_BATCH=1 VISUAL_EMBEDDING_ENABLED=false`.
+
+**Result:** 115 docs processed, **1334 images extracted → 1330 image segments indexed**
+(4 dropped as empty/`[image` placeholder), **refused=0, failed=0, 0 errors**. 76/115 docs got
+captions. Captions are genuine gemini medical text (no Ollama garbage, no soft-refusals).
+
+**Prod state:** live `agentrag_segments` = 3359 text/table (unchanged) + 1330 image segments;
+Postgres `segments` matches (text 3359, image 1330). Additive verified — no text segment touched.
+
+**Safety / rollback:**
+- Pre-run snapshot: `agentrag_segments_backup_20260719` (3359 docs, 0 image segments — clean
+  pre-augment restore point; verified). Keep until the augmentation is accepted, then
+  `curl -X DELETE localhost:9200/agentrag_segments_backup_20260719`.
+- Rollback (revert Slice C image augmentation):
+  ```
+  curl -X POST "localhost:9200/agentrag_segments/_delete_by_query?conflicts=proceed&refresh=true" \
+    -H 'Content-Type: application/json' -d '{"query":{"term":{"segment_type":"image"}}}'
+  docker exec agentrag-postgres psql -U postgres -d rag -c "DELETE FROM segments WHERE segment_type='image';"
+  ```
+- Re-run safety: the augment script is delete-first idempotent per doc, so it can be re-run to
+  resume/repair without duplicating.

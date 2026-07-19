@@ -19,7 +19,7 @@
 - **Pre-registered caption gate (Phase 1, fixed):** GO iff mean ≥ 3.5 AND hallucinated-finding rate < 0.15.
 - **Vision worker env knobs** (`config.py`): `VISION_PROVIDER` (gate), `VISION_MODEL` (read inside `ImageParser`/`LLMGateway`, not the worker), `VISION_MAX_RPM` (default 10 = gemini free tier; token-bucket cap), `VISION_MAX_CONCURRENCY` (4), `VISION_DESCRIBE_BATCH` (default 4; **set to 1 for per-image transient-retry/backoff on 429/RESOURCE_EXHAUSTED**), `VISION_PER_IMAGE_RETRIES` (3), `VISUAL_EMBEDDING_ENABLED` (default True — **set false**: CLIP visual retrieval is a non-goal, avoids the VisualEmbedder model load).
 - **Postgres CLI** = `docker exec agentrag-postgres psql -U postgres` (no host `psql`).
-- **FOOTGUN (found in Task 1):** the home `.env` sets `VISION_BASE_URL=http://127.0.0.1:11434/v1/` (Ollama) alongside `VISION_PROVIDER=gemini`. The ingest/caption path (`_get_vision_client`) uses `VISION_BASE_URL` when non-empty, so gemini calls silently misroute to Ollama (→ wrong/garbage captions, no error). EVERY gemini-captioning command in this plan MUST export `VISION_BASE_URL=` (empty) to override it and use gemini's default endpoint.
+- **FOOTGUN (found in Tasks 1–2):** the home `.env` sets `VISION_BASE_URL=http://127.0.0.1:11434/v1/` (Ollama) alongside `VISION_PROVIDER=gemini`. The caption path (`_get_vision_client`) uses `VISION_BASE_URL` when non-empty, so gemini calls silently misroute to Ollama (→ garbage captions from the text-model fallback, no error). **`config.py` sets `env_ignore_empty=True`, so `VISION_BASE_URL=` (empty) is a NO-OP** — it does NOT override the `.env`. EVERY gemini-captioning command MUST export the explicit endpoint `VISION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`. The augment script also fail-fast asserts if `VISION_BASE_URL` still points at Ollama. (Systemic footgun — `env_ignore_empty=True` no-ops any `VAR=` empty override repo-wide; noted for a follow-up, not fixed in this slice.)
 - Requires a working `GEMINI_API_KEY` with enough quota for ~1,334 captions; at `VISION_MAX_RPM=10` the full run is ~2–2.5h. Confirm the key before Phase 2.
 
 ---
@@ -232,7 +232,7 @@ DOC=$(docker exec agentrag-postgres psql -U postgres -d rag -tAc "SELECT id FROM
 echo "smoke doc=$DOC"
 source .env
 for run in 1 2; do
-  VISION_PROVIDER=gemini VISION_MODEL=gemini-2.5-flash VISION_BASE_URL= VISION_MAX_RPM=10 VISION_DESCRIBE_BATCH=1 VISUAL_EMBEDDING_ENABLED=false \
+  VISION_PROVIDER=gemini VISION_MODEL=gemini-2.5-flash VISION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ VISION_MAX_RPM=10 VISION_DESCRIBE_BATCH=1 VISUAL_EMBEDDING_ENABLED=false \
     GEMINI_API_KEY="$GEMINI_API_KEY" PYTHONPATH=. uv run python scripts/eval/vision_prod_augment.py --doc-id "$DOC" 2>&1 | tail -2
   docker exec agentrag-postgres psql -U postgres -d rag -tAc "SELECT count(*) FROM segments WHERE document_id='$DOC' AND segment_type='image';"
 done
@@ -288,7 +288,7 @@ Expected: `image segments BEFORE: 0`.
 
 ```bash
 source .env
-VISION_PROVIDER=gemini VISION_MODEL=gemini-2.5-flash VISION_BASE_URL= VISION_MAX_RPM=10 VISION_MAX_CONCURRENCY=4 \
+VISION_PROVIDER=gemini VISION_MODEL=gemini-2.5-flash VISION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ VISION_MAX_RPM=10 VISION_MAX_CONCURRENCY=4 \
 VISION_DESCRIBE_BATCH=1 VISION_PER_IMAGE_RETRIES=3 VISUAL_EMBEDDING_ENABLED=false \
 GEMINI_API_KEY="$GEMINI_API_KEY" PYTHONPATH=. \
   nohup uv run python scripts/eval/vision_prod_augment.py > /tmp/vis_augment.log 2>&1 &

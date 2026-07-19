@@ -970,7 +970,7 @@ class AgentService:
                     system_prompt=system_prompt,
                     user_text=user_prompt,
                     image_urls=image_urls,
-                    task="answer",
+                    task="answer_vision",
                 )
             except Exception:
                 _ctx_log.exception("_answer: multimodal call failed, falling back to text-only")

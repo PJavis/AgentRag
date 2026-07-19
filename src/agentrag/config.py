@@ -208,6 +208,15 @@ class Settings(BaseSettings):
     # async: skip describe; queue ARQ vision_extract job → text retrieval ready ngay.
     VISION_INGEST_MODE: Literal["sync", "async"] = "async"
 
+    #: Vision-capable model for ANSWER-TIME multimodal grounding (reads the retrieved
+    #: image's pixels). Independent of the text `answer` model. gemini-* → Gemini via
+    #: GEMINI_API_KEY. **Default empty = answer-time vision OFF (PHI-safe opt-in)** — a
+    #: deployment must set it in .env (e.g. gemini-2.5-flash) to send retrieved image
+    #: pixels to a cloud vision model. Only image-bearing turns use it — inert until
+    #: images are ingested (vision slices B/C). Mirrors the LANGFUSE_ENABLED ship-OFF
+    #: posture so a medical-PHI deployment doesn't leak image content to cloud by default.
+    VISION_ANSWER_MODEL: str = ""
+
     # Auto-route to large-context model khi prompt > threshold tokens.
     # Inspired by open-notebook provision_langchain_model.
     # None = disabled (use default model regardless of size).

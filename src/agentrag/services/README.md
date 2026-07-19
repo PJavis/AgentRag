@@ -58,7 +58,7 @@ Container properties (lazy): `.llm` → `LLMGateway`, `.embedding` → `Embeddin
 | Method | Mô tả |
 |---|---|
 | `json_response(system, user, task="general") -> (dict, latency_ms)` | LLM → parse JSON; đo latency. |
-| `json_response_multimodal(system, user_text, image_urls, task) -> (dict, latency_ms)` | Text + image URLs cho vision-capable answer model. |
+| `json_response_multimodal(system, user_text, image_urls, task) -> (dict, latency_ms)` | Text + image URLs → routes to `settings.VISION_ANSWER_MODEL` (NOT the text answer model). Empty VISION_ANSWER_MODEL → raises `VisionDisabledError` (caller falls back to text). |
 | `text_response(system, user, task="general") -> str` | Plain-text completion (dùng bởi `contextualizer`, `raptor`, fast-path `graph_service`). |
 | `vision_response(system, text, image_bytes, mime, task="vision") -> (str, latency_ms)` | Single-image vision (dùng bởi `ImageParser`). |
 | `vision_response_batch(system, text, images, task="vision") -> list[str]` | N ảnh trong 1 call → tiết kiệm RPM. |

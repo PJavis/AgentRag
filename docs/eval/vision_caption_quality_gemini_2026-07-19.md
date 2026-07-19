@@ -172,3 +172,30 @@ Postgres `segments` matches (text 3359, image 1330). Additive verified — no te
   ```
 - Re-run safety: the augment script is delete-first idempotent per doc, so it can be re-run to
   resume/repair without duplicating.
+
+---
+
+## Phase 2 — full-corpus prod augmentation (executed 2026-07-19)
+
+Ran `scripts/eval/vision_prod_augment.py` over all prod docs with cloud gemini captioning
+(`VISION_PROVIDER=gemini`, `VISION_MODEL=gemini-2.5-flash`,
+`VISION_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`,
+`VISUAL_EMBEDDING_ENABLED=false`). Additive: only `segment_type=image` segments added; text
+untouched.
+
+**Result:** `TOTAL images=1334 indexed=1330 refused=0 failed=0` over 115 docs (76 have images).
+
+**Verification (controller):**
+- Postgres image segments = 1330; Elasticsearch image segments = 1330 (consistent).
+- Duplicate check: 1330 total / 1330 distinct `content_hash` → zero duplicates (delete-first idempotency held).
+- Text segments = 3359, unchanged from baseline (additive-only confirmed).
+- Refusal/garbage scan = 0; caption length min=282 / median=664 / max=1068 chars (all substantial genuine captions).
+- CLIP `image_embedding` absent (VISUAL_EMBEDDING_ENABLED=false, per scope).
+
+**Process note:** this full run executed during Task 2's fix round before the intended Task-3
+controller checkpoint + snapshot (a subagent HARD-STOP breach; the outcome was verified genuine
+gemini and accepted rather than re-run). A clean pre-augment snapshot was taken afterward.
+
+**Rollback (reversible):**
+- Primary: `curl -X POST "localhost:9200/agentrag_segments/_delete_by_query?conflicts=proceed&refresh=true" -d '{"query":{"term":{"segment_type":"image"}}}'` + `psql -d rag -c "DELETE FROM segments WHERE segment_type='image';"` — removes exactly the 1330 added, restoring the pre-Slice-C state (prod had 0 image segments before).
+- Secondary: clean text-only snapshot `agentrag_segments_backup_20260719` (3359 docs, 0 image) as a full restore point.

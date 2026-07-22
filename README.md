@@ -37,7 +37,6 @@ tương thích open-notebook.
   Chi tiết: [`docs/README-full.md` §5.5](./docs/README-full.md) · thiết kế:
   [`docs/superpowers/specs/2026-06-10-rag-enhancement-design.md`](./docs/superpowers/specs/2026-06-10-rag-enhancement-design.md),
   [`…ui-enhancement-design.md`](./docs/superpowers/specs/2026-06-10-ui-enhancement-design.md).
-  Hướng dẫn test: [`docs/TEST-GUIDE-2026-06-10.md`](./docs/TEST-GUIDE-2026-06-10.md).
 
 ## Kiến trúc (tóm tắt)
 

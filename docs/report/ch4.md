@@ -15,7 +15,7 @@ Cầu nối giữa hai mặt phẳng là **ServiceContainer** — một singleto
 
 ### 4.1.2. Các thành phần và vai trò
 
-Sơ đồ kiến trúc tổng thể (Hình 1 trong tài liệu `docs/kien-truc-vital.md`) được mô tả lại bằng bảng sau:
+Sơ đồ kiến trúc tổng thể được mô tả lại bằng bảng sau:
 
 | Thành phần | Tầng | Công nghệ | Vai trò |
 |---|---|---|---|

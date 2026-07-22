@@ -286,7 +286,7 @@ Diễn giải: phân bố **vẫn hai đỉnh sạch**, khớp thời bge-m3 —
 
 ## 5.9. Chiến dịch phân loại lỗi (miss-bucketing) — đang triển khai
 
-Kết quả mục 5.5 (dư địa +0.088 tập trung ở ~5/40 câu hỏng) đặt ra câu hỏi kế tiếp: **5 câu đó hỏng vì lý do gì?** Câu trả lời quyết định hướng đầu tư của giai đoạn tiếp theo — xây đồ thị tri thức đa bước (HippoRAG-2), tinh chỉnh cổng an toàn, hay sửa prompt trả lời. Chiến dịch miss-bucketing (nhánh `feat/miss-buckets-crag-flywheel`, kế hoạch trong `docs/HOME-RUN-miss-buckets-2026-07-14.md`) được xây dựng để trả lời câu hỏi đó một cách có kỷ luật. Bộ công cụ đã hoàn thành và kiểm thử (suite eval 84/84, sau bổ sung 97/97); các lần chạy sống đang trong kế hoạch thực thi.
+Kết quả mục 5.5 (dư địa +0.088 tập trung ở ~5/40 câu hỏng) đặt ra câu hỏi kế tiếp: **5 câu đó hỏng vì lý do gì?** Câu trả lời quyết định hướng đầu tư của giai đoạn tiếp theo — xây đồ thị tri thức đa bước (HippoRAG-2), tinh chỉnh cổng an toàn, hay sửa prompt trả lời. Chiến dịch miss-bucketing (nhánh `feat/miss-buckets-crag-flywheel`) được xây dựng để trả lời câu hỏi đó một cách có kỷ luật. Bộ công cụ đã hoàn thành và kiểm thử (suite eval 84/84, sau bổ sung 97/97); các lần chạy sống đang trong kế hoạch thực thi.
 
 **Công cụ mới:**
 

@@ -106,8 +106,7 @@ have no per-user ownership check. Fine for **single-user/on-prem**; a launch blo
 The 0.74 `answer_correctness` plateau was the OLD RAGAS claim-F1 metric, not a system limit. A new
 **ensemble correctness judge** (nugget-recall + reference-guided rubric) over a **prod-corpus eval
 set** measures correctness honestly. Background: `docs/eval/eval_fidelity_probe_prod_2026-06-26.md`
-(+ `_v2_` post-fix). This also surfaced + fixed a flaky false-abstention
-(`docs/INSTRUCTION-abstain-thin-context-2026-06-16.md` → 2026-06-26 update).
+(+ `_v2_` post-fix). This also surfaced + fixed a flaky false-abstention (2026-06-26 update).
 
 **Relevant `.env` (independent-judge path — needs a PAID gemini key):**
 ```bash

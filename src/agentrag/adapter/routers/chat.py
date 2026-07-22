@@ -893,6 +893,8 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             _ov = _ov.split("::")[-1] if _ov and "::" in _ov else _ov
             collected: list[str] = []
             stream_citations: list[dict] = []
+            stream_tool_trace: list[dict] = []
+            stream_timings: dict = {}
             async for chunk in agent.chat_stream(
                 question=body.message,
                 document_title=document_title,
@@ -918,6 +920,10 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                         _done = _json.loads(data_line)
                         if isinstance(_done.get("citations"), list):
                             stream_citations = _done["citations"]
+                        if isinstance(_done.get("tool_trace"), list):
+                            stream_tool_trace = _done["tool_trace"]
+                        if isinstance(_done.get("timings_ms"), dict):
+                            stream_timings = _done["timings_ms"]
                     except Exception:
                         pass
                 yield chunk
@@ -941,6 +947,8 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                     await store.append_message(
                         body.session_id, role="assistant", content=full_answer,
                         citations=stream_citations,
+                        tool_trace=stream_tool_trace,
+                        timings_ms=stream_timings,
                         extra_metadata={
                             "reasoning_path": "semantic",
                             "follow_ups": follow_ups,

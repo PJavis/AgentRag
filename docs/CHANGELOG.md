@@ -1,8 +1,7 @@
 # VITAL — Changelog (improvement effort 2026-06)
 
 Canonical record of the P0-P4 improvement effort on `feat/ragas-langfuse-reranker`
-(merged to `master`). Dated detail lives in `CHANGELOG-2026-06-24.md`,
-`CHANGELOG-2026-06-25.md` (T6 ablation), and the `docs/eval/` + `docs/security/` reports.
+(merged to `master`). Dated detail lives in the `docs/eval/` + `docs/security/` reports.
 Roadmap: `docs/superpowers/specs/2026-06-24-vital-improvement-roadmap-design.md` (P0-P8).
 
 > **Status:** P0 + P1 + P2 complete; P3 tooled (train at home); P4 in progress; P5-P8 roadmapped.
@@ -34,7 +33,7 @@ The `e4eb895` "checkpoint" commit shipped two breakages; unit tests masked both 
   confirmation (80 q/config) did NOT hold it** — precision +0.014 (noise), faithfulness −0.039,
   for a heavy ingest cost (`benchmark_ablation_2026-06-25-n40-gs8.md`). All on the synthetic
   `vn_bkai`/`vn_legal` sets, so **CR+RAPTOR is kept ON in `.env` pending a prod-corpus A/B**
-  (synthetic Q-gen over `data/originals`, **deferred**). `docs/CHANGELOG-2026-06-25.md`.
+  (synthetic Q-gen over `data/originals`, **deferred**).
 
 ## 🧭 Key finding — the correctness ceiling is the EVAL, not the system (2026-06-26)
 - **answer-model A/B** (`benchmark_answer_model_ab_2026-06-26.md`): same index + same vn n=40,
@@ -95,8 +94,7 @@ NOT generation:
 ## 🔬 Miss-bucketing + CRAG A/B tooling (2026-07-14, `feat/miss-buckets-crag-flywheel`)
 Follow-up to the 2026-07-13 real-corpus read (oracle−system **+0.088** → system-bound, loss in
 ~5/40 misses): tooling to name those failures and act on them. Plan:
-`docs/superpowers/plans/2026-07-14-miss-buckets-crag-flywheel.md`; home-run instructions:
-`docs/HOME-RUN-miss-buckets-2026-07-14.md`.
+`docs/superpowers/plans/2026-07-14-miss-buckets-crag-flywheel.md`.
 - **Per-row probe capture** — `oracle_probe.py --rows-out x.jsonl` dumps per question: system/
   oracle answers, judge1/judge2 scores, packed passages + rerank scores, inline `[n]` citations,
   `classify_refusal` class, tool queries (`src/agentrag/eval/probe_rows.py`).

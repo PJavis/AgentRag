@@ -166,6 +166,11 @@ services:
       - "8000:8000"
     volumes:
       - images_data:/app/data/images
+      # Shared with worker: async graph_ingest/vision jobs run in the worker
+      # container and must read the same files the api wrote. Originals (bind
+      # mount → host, also feeds re-ingest of legacy docs) + parsed-content cache.
+      - ./data/originals:/app/data/originals
+      - structmem_cache:/app/.cache
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health 2>/dev/null || curl -f http://localhost:8000/on/health || exit 1"]
       interval: 10s
@@ -196,6 +201,9 @@ services:
         condition: service_healthy
     volumes:
       - images_data:/app/data/images
+      # MUST match the api mounts — worker reads originals + parsed cache the api wrote.
+      - ./data/originals:/app/data/originals
+      - structmem_cache:/app/.cache
     command: ["arq", "src.agentrag.worker.settings.WorkerSettings"]
 
   frontend:
@@ -305,5 +313,6 @@ volumes:
   tei_hf_cache:
   ollama_data:
   images_data:
+  structmem_cache:
   langfuse_db_data:
   phoenix_data:

@@ -640,6 +640,7 @@ class GraphAgentService:
                     {"tool_name": s.get("tool_name"), "tool_input": s.get("tool_input")}
                     for s in (state.get("tool_trace") or [])
                 ],
+                "timings_ms": state.get("timings_ms", {}),
                 **_message_signals(state.get("tool_trace")),
             })
         except Exception as exc:

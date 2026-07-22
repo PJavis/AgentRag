@@ -242,8 +242,8 @@ export default function CostDashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      r.map((e) => (
-                        <tr key={e.id} className="border-t">
+                      r.map((e, i) => (
+                        <tr key={`${e.id}-${i}`} className="border-t">
                           <td className="px-4 py-1.5 text-xs tabular-nums">{fmtTs(e.timestamp)}</td>
                           <td className="px-4 py-1.5 font-mono text-xs">{e.task}</td>
                           <td className="px-4 py-1.5 font-mono text-xs">{e.model}</td>

@@ -41,7 +41,17 @@ def _is_chitchat(question: str) -> bool:
                             "khi nào", "ở đâu", "what is", "là gì", "định nghĩa",
                             "ví dụ", "example")):
         return False
-    return any(tok in q for tok in _CHITCHAT_TOKENS)
+    # Whole-word match — short tokens ("hi", "yo", "ok") must not substring-match
+    # inside Vietnamese words ("hi" in "hiếm", "khi"; "yo" in ...). Multi-word
+    # tokens ("xin chào", "how are you") are still matched as phrases.
+    words = set(re.findall(r"[^\W_]+", q, re.UNICODE))
+    for tok in _CHITCHAT_TOKENS:
+        if " " in tok:
+            if tok in q:
+                return True
+        elif tok in words:
+            return True
+    return False
 
 
 def _lang_instruction(question: str) -> str:

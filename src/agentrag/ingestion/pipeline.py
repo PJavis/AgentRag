@@ -270,7 +270,10 @@ async def ingest_folder(
                 from src.agentrag.ingestion.contextualizer import Contextualizer
                 from src.agentrag.services.llm_gateway import LLMGateway
                 chunks_search = await Contextualizer(LLMGateway()).contextualize_chunks(
-                    doc_text=content, chunks=chunks_search, document_title=doc["title"]
+                    doc_text=content,
+                    chunks=chunks_search,
+                    document_title=doc["title"],
+                    doc_key=doc.get("source_bytes_sha"),
                 )
                 timings["contextualize_ms"] = (time.perf_counter() - t0) * 1000
 

@@ -18,3 +18,7 @@ docs/eval/rows_*.jsonl
 
 # Retrained reranker candidates (large; keep out of git)
 models/agentrag-rerank-*/
+
+# Local-dev compose override (see docker-compose.override.yml.example).
+# Must never be committed: it is auto-merged into bare `docker compose` runs.
+docker-compose.override.yml

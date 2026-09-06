@@ -119,10 +119,24 @@ def summarize_by_arm(records: list[dict]) -> dict:
     out: dict[str, dict] = {}
     for arm, rows in grouped.items():
         latencies = [r["latency_ms"] for r in rows if r.get("latency_ms") is not None]
+        # Overrun is only defined for answers that cite a table, so the
+        # denominator is those answers — not every answer. Dividing by all of
+        # them would dilute the rate with answers that could not overrun, and
+        # would not match the sample floor in the rollout doc, which is stated
+        # in table-citing answers.
+        table_rows = [r for r in rows if r.get("cited_a_table")]
         out[arm] = {
             "answers": len(rows),
+            "table_citing_answers": len(table_rows),
             "abstention_rate": sum(1 for r in rows if r.get("abstained")) / len(rows),
-            "overrun_rate": sum(1 for r in rows if r.get("overrun")) / len(rows),
+            "abstention_rate_table_citing": (
+                sum(1 for r in table_rows if r.get("abstained")) / len(table_rows)
+                if table_rows else None
+            ),
+            "overrun_rate": (
+                sum(1 for r in table_rows if r.get("overrun")) / len(table_rows)
+                if table_rows else None
+            ),
             "median_latency_ms": statistics.median(latencies) if latencies else None,
         }
     return out
@@ -133,7 +147,8 @@ def summarize_by_arm(records: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def load_from_db(since: str | None = None) -> tuple[list[dict], dict]:
+def load_from_db(since: str | None = None,
+                 conversation_title: str | None = None) -> tuple[list[dict], dict]:
     """Assistant answers + the segment stamps their citations resolve to.
 
     The app's session factory is async (`AsyncSessionLocal`), so this drives it
@@ -144,13 +159,23 @@ def load_from_db(since: str | None = None) -> tuple[list[dict], dict]:
     from sqlalchemy import select
 
     from src.agentrag.database import AsyncSessionLocal
-    from src.agentrag.database.models import ChatMessage, Segment
+    from src.agentrag.database.models import ChatMessage, Conversation, Segment
 
     async def go():
         async with AsyncSessionLocal() as session:
             stmt = select(ChatMessage).where(ChatMessage.role == "assistant")
             if since:
                 stmt = stmt.where(ChatMessage.created_at >= since)
+            if conversation_title:
+                # Baseline runs live in their own titled conversation, so a
+                # snapshot can be read without real traffic mixed into it.
+                stmt = stmt.where(
+                    ChatMessage.conversation_id.in_(
+                        select(Conversation.id).where(
+                            Conversation.title == conversation_title
+                        )
+                    )
+                )
             rows = (await session.execute(stmt)).scalars().all()
             messages = [
                 {
@@ -314,17 +339,23 @@ def format_report(summary: dict, table_citing: int, total: int) -> str:
         f"Answers examined: **{total}**, of which **{table_citing}** cite a page that",
         "carries a detected table (the only ones the overrun metric applies to).",
         "",
-        "| arm | answers | abstention rate | lookup-overrun rate | median latency |",
-        "|---|---|---|---|---|",
+        "| arm | answers | table-citing | abstention (all / table-citing) | "
+        "lookup-overrun (of table-citing) | median latency |",
+        "|---|---|---|---|---|---|",
     ]
     for arm in ("A", "B", "mixed", "unknown"):
         row = summary.get(arm)
         if not row:
             continue
         latency = "—" if row["median_latency_ms"] is None else f"{row['median_latency_ms']:.0f} ms"
+        overrun = "—" if row["overrun_rate"] is None else f"{row['overrun_rate']:.2f}"
+        abstain_t = (
+            "—" if row["abstention_rate_table_citing"] is None
+            else f"{row['abstention_rate_table_citing']:.2f}"
+        )
         lines.append(
-            f"| {arm} | {row['answers']} | {row['abstention_rate']:.2f} | "
-            f"{row['overrun_rate']:.2f} | {latency} |"
+            f"| {arm} | {row['answers']} | {row['table_citing_answers']} | "
+            f"{row['abstention_rate']:.2f} / {abstain_t} | {overrun} | {latency} |"
         )
     lines += [
         "",
@@ -348,6 +379,8 @@ def main() -> None:
     src.add_argument("--from-db", action="store_true")
     src.add_argument("--from-json", help="dump of {messages: [...], segments: {...}}")
     ap.add_argument("--since", help="ISO date; only answers at or after it")
+    ap.add_argument("--conversation-title",
+                    help="only answers from the conversation with this exact title")
     ap.add_argument("--tables", help="JSON map of table cells by 'title|page'")
     ap.add_argument("--build-tables", metavar="CORPUS_DIR",
                     help="derive the table map from the cited pages of this corpus")
@@ -356,7 +389,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.from_db:
-        messages, segments = load_from_db(args.since)
+        messages, segments = load_from_db(args.since, args.conversation_title)
     else:
         blob = json.loads(Path(args.from_json).read_text(encoding="utf-8"))
         messages, segments = blob["messages"], blob.get("segments", {})

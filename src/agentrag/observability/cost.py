@@ -54,7 +54,31 @@ _PRICE_PER_1M = {
     "gemini-1.5-flash":        (0.075, 0.30),
     "gpt-4o":                  (2.50, 10.00),
     "gpt-4o-mini":             (0.15, 0.60),
+    # DeepSeek: (uncached input, output). Cached input is priced separately in
+    # _CACHE_HIT_PRICE_PER_1M. VERIFY against current published pricing — these
+    # are a local estimate. Only the token COUNTS recorded below are provider facts.
+    "deepseek-chat":           (0.27, 1.10),
+    "deepseek-v4-flash":       (0.27, 1.10),
+    "deepseek-v4-pro":         (0.55, 2.19),
 }
+
+#: Input price for tokens the provider served from its own prefix cache. Roughly
+#: an order of magnitude below the uncached rate, which is why a workload with a
+#: large stable prefix (ingest contextualisation) costs far less than its raw
+#: token count suggests.
+_CACHE_HIT_PRICE_PER_1M = {
+    "deepseek-chat":           0.027,
+    "deepseek-v4-flash":       0.027,
+    "deepseek-v4-pro":         0.055,
+}
+
+
+def _cache_hit_price_for(model: str) -> float:
+    """Price for cached input tokens; falls back to the uncached input price."""
+    for key, price in _CACHE_HIT_PRICE_PER_1M.items():
+        if model == key or key in model:
+            return price
+    return _price_for(model)[0]
 
 
 def _estimate_tokens(text: str) -> int:
@@ -120,6 +144,8 @@ def _coerce_entry(fields: dict[str, str], entry_id: str | None = None) -> dict[s
         "out_tokens": int(fields.get("out_tokens", 0) or 0),
         "usd": float(fields.get("usd", 0.0) or 0.0),
         "usage_source": fields.get("usage_source", "estimate"),
+        "cache_hit_tokens": int(fields.get("cache_hit_tokens", 0) or 0),
+        "cache_miss_tokens": int(fields.get("cache_miss_tokens", 0) or 0),
     }
 
 
@@ -174,16 +200,27 @@ def record_llm_call(
 
     in_tokens: int | None = None
     out_tokens: int | None = None
+    hit_tokens = 0
+    miss_tokens: int | None = None
     if usage is not None:
         in_tokens = getattr(usage, "prompt_tokens", None)
         out_tokens = getattr(usage, "completion_tokens", None)
+        # DeepSeek reports these; most providers do not. Absent → all misses.
+        hit_tokens = int(getattr(usage, "prompt_cache_hit_tokens", 0) or 0)
+        raw_miss = getattr(usage, "prompt_cache_miss_tokens", None)
+        miss_tokens = int(raw_miss) if raw_miss is not None else None
     if in_tokens is None:
         in_tokens = _estimate_tokens(in_text)
     if out_tokens is None:
         out_tokens = _estimate_tokens(out_text)
+    if miss_tokens is None:
+        miss_tokens = max(int(in_tokens) - hit_tokens, 0)
 
     in_price, out_price = _price_for(model)
-    usd = (in_tokens * in_price + out_tokens * out_price) / 1_000_000.0
+    hit_price = _cache_hit_price_for(model)
+    usd = (
+        miss_tokens * in_price + hit_tokens * hit_price + out_tokens * out_price
+    ) / 1_000_000.0
 
     with _LOCK:
         entry_id = next(_ID_SEQ)
@@ -197,6 +234,8 @@ def record_llm_call(
         "out_tokens": int(out_tokens),
         "usd": usd,
         "usage_source": "provider" if usage is not None else "estimate",
+        "cache_hit_tokens": int(hit_tokens),
+        "cache_miss_tokens": int(miss_tokens),
     }
     with _LOCK:
         _LEDGER.append(entry)
@@ -238,6 +277,17 @@ def _percentile(values: list[float], p: float) -> float:
     return s[lo] + (s[hi] - s[lo]) * frac
 
 
+def recent(n: int = 20) -> list[dict[str, Any]]:
+    """Last n ledger entries, oldest first. Test/debug introspection."""
+    return _read_entries()[-n:]
+
+
+def reset_ledger() -> None:
+    """Clear the in-process ledger. Tests only — never called by the app."""
+    with _LOCK:
+        _LEDGER.clear()
+
+
 def cost_summary() -> dict[str, Any]:
     entries = _read_entries()
     per_task: dict[str, dict[str, Any]] = {}
@@ -273,11 +323,20 @@ def cost_summary() -> dict[str, Any]:
             s["p50_latency_ms"] = round(_percentile(samples, 50), 1)
             s["p95_latency_ms"] = round(_percentile(samples, 95), 1)
     backend = "valkey" if (_sync_client() is not None and not _VALKEY_DISABLED) else "in-process"
+    # Provider-side prefix cache accounting. These are counts the provider
+    # reported, not estimates — a low hit rate on a workload with a large stable
+    # prefix means the prompt is shaped wrong, not that caching is unavailable.
+    cache_hit = sum(e.get("cache_hit_tokens", 0) for e in entries)
+    cache_miss = sum(e.get("cache_miss_tokens", 0) for e in entries)
+    prompt_total = cache_hit + cache_miss
     return {
         "total_calls": len(entries),
         "total_in_tokens": total_in,
         "total_out_tokens": total_out,
         "total_usd": round(total_usd, 6),
+        "cache_hit_tokens": cache_hit,
+        "cache_miss_tokens": cache_miss,
+        "cache_hit_rate": (cache_hit / prompt_total) if prompt_total else None,
         "per_task": per_task,
         "per_model": per_model,
         "backend": backend,

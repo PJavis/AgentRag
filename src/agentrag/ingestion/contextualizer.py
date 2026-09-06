@@ -40,12 +40,20 @@ class Contextualizer:
         ).hexdigest()[:12]
 
     async def contextualize_chunks(
-        self, doc_text: str, chunks: list[dict[str, Any]], document_title: str
+        self,
+        doc_text: str,
+        chunks: list[dict[str, Any]],
+        document_title: str,
+        doc_key: str | None = None,
     ) -> list[dict[str, Any]]:
         if not chunks:
             return chunks
         doc_clip = doc_text[: settings.CONTEXTUAL_MAX_DOC_CHARS]
-        doc_hash = sha256(doc_clip.encode("utf-8")).hexdigest()
+        # Cache identity: the SOURCE when the caller supplies one, else the
+        # parsed text. The blurb says what a passage is about, which a
+        # parser-config change does not alter — keying it on the parse made
+        # every such change regenerate the whole corpus.
+        doc_hash = doc_key or sha256(doc_clip.encode("utf-8")).hexdigest()
         system = f"{_SYSTEM_PROMPT}\n\n<document title=\"{document_title}\">\n{doc_clip}\n</document>"
 
         sem = asyncio.Semaphore(max(settings.EMBEDDING_BATCH_SIZE // 4, 4))

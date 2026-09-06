@@ -1,6 +1,6 @@
 # Table Probe — Unblock Plan (2026-09-06)
 
-**Status:** decision plan. Nothing here is executed yet.
+**Status:** Road 0 EXECUTED 2026-09-06 — results in §7. Roads 1 and 2 remain open.
 **Blocks on:** `docs/eval/table_probe_power_analysis_2026-09-06.md` §5 — the probe as
 designed is a confirmatory GO/NO-GO, and this corpus cannot support one.
 **Scope note:** `PDF_PRESERVE_TABLES` stays default-`False` through every road below.
@@ -127,3 +127,102 @@ task with its own scope, cost and PHI review, not something the probe can do to 
 Option 4 is a legitimate outcome. The probe's purpose was to stop the table question
 being re-argued from intuition; a written "we measured what we could measure and the
 corpus cannot answer it" achieves that, and costs nothing more.
+
+
+---
+
+## 7. Results — Road 0 executed (2026-09-06)
+
+Road 0 ran, plus a step it did not anticipate. Reports:
+`docs/eval/table_probe_structure_delta_2026-09-06.md`,
+`table_probe_retrieval_ab_2026-09-06.md`,
+`table_probe_comprehension_ab_2026-09-06.md`.
+
+### 0a — structure delta: the premise holds
+
+Same 27-table / 7-document pool the power analysis reasoned about.
+
+| quantity | value |
+|---|---|
+| median arm-A row adjacency | **17%** |
+| mean (mean of per-document means) | 29% (30%) |
+| tables fully intact under arm A | **0 of 27** |
+| tables fully destroyed | 12 of 27 |
+
+79 of 101 failed rows are `cell_fragmented_across_columns` — the cell's own words
+cut apart and interleaved with the neighbouring column. 16 are wrapped cells, 6 are
+reading-order scrambling proper, 0 are missing text. **Continue.**
+
+### 0b — retrieval: not where tables hurt
+
+19 askable rows, mechanical queries, both arms through the production parse+chunk
+path, ranked corpus-wide.
+
+| retriever | MRR A | MRR B | mean ΔRR | 95% CI (doc-clustered) |
+|---|---|---|---|---|
+| bm25 | 0.869 | 0.921 | +0.052 | [0.000, +0.211] |
+| dense | 0.401 | 0.354 | −0.046 | [−0.110, +0.006] |
+| rrf | 0.730 | 0.715 | −0.015 | [−0.048, +0.042] |
+
+No retriever shows arm B raising the gold row — **and the kill condition still does
+not fire**, because its premise is false: arm A already retrieves the gold row at
+recall@10 = 0.95. The row reaches the model under both arms. 0a's adjacency collapse
+does not propagate here because lexical retrieval is bag-of-words: a shredded row
+still matches all its own terms. So retrieval is removed as the mechanism, and arm B
+has no retrieval benefit to offer.
+
+### 0c — comprehension: this is where tables hurt (a step Road 0 did not plan)
+
+0b left exactly one hypothesis: once the row is in context, can the model bind a cell
+to its column? Ground truth is `extract()`, so there is no judge and no authored
+reference answer — a few LLM calls per table.
+
+| quantity | arm A (flat) | arm B (+markdown) | arm C (flat ×2) |
+|---|---|---|---|
+| cells read correctly | 0.72 | **0.84** | 0.68 |
+| mean token-F1 | 0.695 | **0.843** | 0.619 |
+| abstained | 5 | 2 | 6 |
+| surplus tokens beyond the gold cell | 52 | 3 | — |
+| — borrowed from OTHER cells of the table | **47 (90%)** | 0 (0%) | — |
+
+Paired B vs A: **3 better / 0 worse / 16 same**, mean ΔF1 +0.148, doc-clustered 95% CI
+[+0.000, +0.269], sign test p = 0.250 → the shipped rule says INCONCLUSIVE, exactly as
+the power analysis predicted it would (3W/0L cannot clear a bar needing 6 discordant).
+
+**The mechanism is the last row.** Under arm A the model usually finds the value and
+cannot see where it *stops* — 90% of its surplus tokens are borrowed from other cells
+of the same table. A containment-style correctness check scores "right cell with the
+next row glued on" as correct; as an answer to a real question it is not.
+
+**Duplication is ruled out.** Arm B's context is a superset of arm A's, so the win
+could have been the second copy. Arm C is the page text twice with no structure added:
+it scores 0.68 — *no better than arm A* — while B beats C 3/0/16 at ΔF1 +0.224. The
+gain is the structure.
+
+### What the chain now says
+
+1. Flattening genuinely destroys table structure (0a).
+2. That damage does **not** cost retrieval (0b) — so any table feature justified as a
+   recall fix is justified on a false premise.
+3. It **does** cost comprehension, by a measured mechanism — cell-boundary bleed (0c),
+   and the fix is structure, not repetition.
+4. The effect is directionally consistent and never once negative across 19 paired
+   comparisons in 7 documents, and still **cannot clear the shipped confirmatory bar**.
+   That is the corpus limit the power analysis described, arriving exactly as predicted.
+
+### Recommended next step
+
+Road 0 has bought more than Road 1 would have: a mechanism, a control, and zero losses,
+for a few hundred LLM calls. Two honest options remain, and the choice is a human's:
+
+- **Ship arm B behind `PDF_PRESERVE_TABLES` and measure on production traffic.** The
+  change is additive and gated, it never lost here, and production is the only place
+  the corpus is big enough to settle it. This treats 0c as sufficient evidence to try,
+  not as proof.
+- **Run Road 1 as estimation** (Tasks 4/7/8/9 — Task 5 is now done) with real authored
+  questions. It tests user-shaped questions rather than cell lookup, but it remains
+  underpowered by exactly the margin the power analysis computed and will most likely
+  return another INCONCLUSIVE.
+
+What is no longer worth doing: arguing the table question from intuition. The mechanism
+is measured, the retrieval claim is falsified, and the confound is controlled.

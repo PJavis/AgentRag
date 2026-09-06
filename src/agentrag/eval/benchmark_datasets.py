@@ -10,8 +10,11 @@ fed to DeepEval as the recall/precision reference.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,6 +25,13 @@ class EvalExample:
     gold_contexts: list[str] = field(default_factory=list)
     lang: str = "en"
     source: str = ""
+    #: Provenance for locally authored eval sets. Gold that must be matched on
+    #: (document, page) rather than on chunk text — as in the table probe, where
+    #: the two arms produce different chunk text for the same table — is
+    #: unusable if the loader drops these on the way in. HF datasets leave them
+    #: unset.
+    source_doc: str = ""
+    source_page: int | None = None
 
 
 # Registry: name → (hf_path, config, lang, field-mapping kind)
@@ -122,10 +132,18 @@ def load_local_jsonl(path: str, n: int | None = None) -> list[EvalExample]:
 
     Each line is a JSON object with at least `question` and `gold_contexts`.
     Rows missing either are skipped (they can't be scored). `n` caps the count.
+
+    `source_doc` / `source_page` are carried through when present so callers can
+    match gold on provenance instead of chunk text.
+
+    Skipped rows are logged with their line number. Silently shrinking an eval
+    set is how a run reports a confident result over fewer questions than the
+    author wrote, and n is usually the binding constraint on these sets.
     """
     import json as _json
 
     out: list[EvalExample] = []
+    skipped: list[str] = []
     with open(path, encoding="utf-8") as f:
         for idx, line in enumerate(f):
             line = line.strip()
@@ -134,11 +152,23 @@ def load_local_jsonl(path: str, n: int | None = None) -> list[EvalExample]:
             try:
                 row = _json.loads(line)
             except _json.JSONDecodeError:
+                skipped.append(f"line {idx + 1}: invalid JSON")
                 continue
             question = str(row.get("question", "")).strip()
             contexts = _as_context_list(row.get("gold_contexts"))
             if not question or not contexts:
+                missing = "question" if not question else "gold_contexts"
+                skipped.append(f"line {idx + 1}: empty {missing}")
                 continue
+            page = row.get("source_page")
+            if page is not None and (isinstance(page, bool) or not isinstance(page, int)):
+                # Silently coercing this to None loses provenance the caller may
+                # be matching gold on, and the row still scores — so it fails as
+                # a mismatch later rather than as a bad row here.
+                skipped.append(
+                    f"line {idx + 1}: source_page {page!r} is not an int — dropped"
+                )
+                page = None
             out.append(EvalExample(
                 id=str(row.get("id") or f"local-{idx}"),
                 question=question,
@@ -146,7 +176,14 @@ def load_local_jsonl(path: str, n: int | None = None) -> list[EvalExample]:
                 gold_contexts=contexts,
                 lang=str(row.get("lang", "en")),
                 source=str(row.get("source", "local")),
+                source_doc=str(row.get("source_doc", "")),
+                source_page=page if isinstance(page, int) and not isinstance(page, bool) else None,
             ))
             if n is not None and len(out) >= n:
                 break
+    if skipped:
+        logger.warning(
+            "load_local_jsonl(%s): skipped %d unscoreable row(s): %s",
+            path, len(skipped), "; ".join(skipped[:10]),
+        )
     return out

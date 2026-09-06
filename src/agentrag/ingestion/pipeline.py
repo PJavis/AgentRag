@@ -270,7 +270,10 @@ async def ingest_folder(
                 from src.agentrag.ingestion.contextualizer import Contextualizer
                 from src.agentrag.services.llm_gateway import LLMGateway
                 chunks_search = await Contextualizer(LLMGateway()).contextualize_chunks(
-                    doc_text=content, chunks=chunks_search, document_title=doc["title"]
+                    doc_text=content,
+                    chunks=chunks_search,
+                    document_title=doc["title"],
+                    doc_key=doc.get("source_bytes_sha"),
                 )
                 timings["contextualize_ms"] = (time.perf_counter() - t0) * 1000
 
@@ -446,10 +449,22 @@ async def ingest_folder(
                 totals_ms[k] = totals_ms.get(k, 0.0) + v
             doc_reports.append(report)
 
+    # A new corpus generation now exists — publish it so anything caching an
+    # answer derived from the old one stops matching. Best-effort: a failure
+    # here must not fail an otherwise successful ingest.
+    corpus_version = None
+    try:
+        from src.agentrag.common.corpus_version import bump_corpus_version
+
+        corpus_version = bump_corpus_version()
+    except Exception:
+        logger.exception("corpus version bump failed")
+
     return {
         "status": "success",
         "ingested": ingested_count,
         "total": len(documents),
+        "corpus_version": corpus_version,
         "graph_ingest_mode": mode,
         "chunking": {
             "search_max_tokens": settings.SEARCH_CHUNK_MAX_TOKENS,

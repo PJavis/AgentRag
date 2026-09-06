@@ -73,6 +73,7 @@ class FolderConnector:
             if not path.is_file():
                 continue
             file_path = path.resolve()
+            raw_sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
             content_hash = _document_cache_key(file_path, path.suffix.lower())
             documents.append(
                 {
@@ -80,6 +81,11 @@ class FolderConnector:
                     "title": path.stem,
                     "file_path": str(file_path),
                     "content_hash": content_hash,
+                    # Identity of the FILE, independent of parser settings.
+                    # Derived artefacts that do NOT depend on the parse (the
+                    # contextualizer's per-chunk blurb) key on this instead, so
+                    # a parser-flag flip does not discard them.
+                    "source_bytes_sha": raw_sha,
                     "source_type": _EXT_TO_SOURCE_TYPE.get(path.suffix.lower(), "unknown"),
                 }
             )

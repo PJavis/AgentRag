@@ -5,6 +5,12 @@
 #   docker exec agentrag-ollama ollama pull llama3.2:3b   # decide/classify/router/followup
 # Base compose stays host-GPU mode (`make docker-up-app` reaches TEI/ollama on the host).
 # This override points the app at the in-network tei + ollama services instead.
+#
+# NOTE: passing -f disables auto-merge of docker-compose.override.yml, so the
+# optional ./src live-edit bind mount (see docker-compose.override.yml.example)
+# is NOT applied on this path. `--build` above bakes current source into the
+# image, so this only matters if you want edits to apply without a rebuild — in
+# that case append `-f docker-compose.override.yml` to the command.
 services:
   api:
     environment:

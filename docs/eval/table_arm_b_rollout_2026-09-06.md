@@ -113,8 +113,34 @@ written before this stamp report as `unknown` and are never folded into A or B.
 | metric | how | pre-flip value |
 |---|---|---|
 | segments per corpus | re-chunk both arms offline | 1115 → 1161 (**+4.1%**) |
-| answers, abstention, latency baseline | `table_arm_b_monitor.py --from-db` | 12 answers, abstention **0.33**, median latency **42.4 s** |
+| historical traffic snapshot | `table_arm_b_monitor.py --from-db` | 12 answers, **0 table-citing** — the metric had never once fired |
 | ingest failures | worker error rate | must not rise |
+
+**Arm-A baseline, measured 2026-09-06** (`docs/eval/arm_a_baseline_2026-09-06.md`).
+The historical snapshot was useless as a baseline — 12 answers, none citing a table —
+so `scripts/eval/table_arm_baseline_run.py` drove the live `/chat` endpoint with the
+same 19 row lookups 0c used, phrased as a user would. Re-run it after the flip with
+`--tag armB-<date>` for the comparable other side.
+
+| metric | arm A |
+|---|---|
+| answers / of which cite a table | 19 / **16** |
+| abstention rate (all / table-citing) | 0.11 / **0.06** |
+| **lookup-overrun rate** (of table-citing) | **0.25** |
+| median latency | **37.1 s** |
+
+Two things this baseline settles, neither of which was known before it ran:
+
+- **The overrun metric fires on real answers** — 0.25, not 0. A metric that only
+  ever reads zero would have made every rollback trigger vacuous.
+- **The observed 0.25 sits next to the 0.30 the floor table assumed**, so the 62-per-arm
+  figure for a 0.30 → 0.10 drop is the right order and does not need restating.
+
+**Read the arm label honestly.** Every answer above reports arm `unknown`, because the
+corpus was ingested before the provenance stamp existed. After the flip and re-ingest,
+answers report `B`. The trial comparison is therefore *this snapshot* against a post-flip
+`B` snapshot — the same questions and the same script, but not a randomised A/B, and
+between the two snapshots the corpus is re-ingested, which changes more than the flag.
 
 ### 3.2 Tier 1 — from `chat_messages`, via `scripts/eval/table_arm_b_monitor.py`
 
@@ -161,7 +187,10 @@ mix — so no Tier-1 comparison is causal. Calling it an A/B would be false.
 ## 4. Rollback triggers (any one, immediately)
 
 - median answer latency on table-citing answers rises > 20% against the §3.1 baseline
-- abstention rate on table-citing answers **rises** at all (the predicted direction is down)
+  (**37.1 s → 44.5 s**)
+- abstention rate on table-citing answers rises above **0.06** (the predicted
+  direction is down; 0c measured 5 → 2 abstentions in the same 19 lookups)
+- lookup-overrun rate on table-citing answers does not fall below **0.25**, or rises
 - ingest failure rate rises, or segment count per document grows > 15% (expected +4.1%)
 - any reported answer that attributes one table row's content to another
 

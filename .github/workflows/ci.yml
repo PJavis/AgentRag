@@ -80,6 +80,12 @@ jobs:
       - name: Fast test gate
         run: uv run pytest -q --ignore=tests/ontology --ignore=tests/ingestion
 
+      # tests/ingestion is skipped above (a few of its tests need ontology data).
+      # These are pure and gate arm B of the table probe, so they run separately;
+      # an --ignore'd directory cannot be re-included in the same command.
+      - name: Table-quality gate tests
+        run: uv run pytest -q tests/ingestion/test_table_quality.py
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

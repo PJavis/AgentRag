@@ -373,6 +373,11 @@ test:
 .PHONY: test-fast
 test-fast:
 	uv run pytest -q --ignore=tests/ontology --ignore=tests/ingestion
+	# tests/ingestion is skipped wholesale above because a few of its tests need
+	# ontology data. These have no infra dependency and gate the table-probe
+	# arm-B safety check, so they run as their own invocation — an --ignore'd
+	# directory cannot be re-included within the same pytest command.
+	uv run pytest -q tests/ingestion/test_table_quality.py
 
 # ── S1: Cost dashboard helpers ────────────────────────────────────────────────
 .PHONY: cost-reset

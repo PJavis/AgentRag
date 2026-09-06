@@ -296,6 +296,17 @@ async def ingest_folder(
 
             if status != "retry":
                 t0 = time.perf_counter()
+                # index_segments assigns a fresh uuid4 _id per chunk, so it
+                # APPENDS — re-ingesting a document leaves its previous chunks in
+                # place and retrieval then serves both generations at once. Purge
+                # the document's ES docs first so a re-ingest replaces rather
+                # than accumulates.
+                try:
+                    await es_store.delete_document(doc["title"])
+                except Exception:
+                    logger.exception(
+                        "ES purge before re-index failed for %r", doc["title"]
+                    )
                 await es_store.index_segments(chunks_search, doc["title"])
                 timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
                 if settings.RAPTOR_ENABLED:

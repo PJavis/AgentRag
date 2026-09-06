@@ -27,10 +27,15 @@ from src.agentrag.services.llm_gateway import LLMGateway
 from src.agentrag.adapter.db import create_adapter_tables
 from src.agentrag.adapter.app import adapter
 from src.agentrag.adapter import admin as adapter_admin
+from src.agentrag.common.build_info import log_build_banner
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # First line in the log: which code is actually running. A stale image on a
+    # `-f` compose path (deploy, fullstack) produces plausible results with no
+    # error, so provenance has to be visible without anyone opening a doc.
+    log_build_banner("api")
     validate_settings(settings)
     init_langfuse()
     init_phoenix()

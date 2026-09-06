@@ -1,0 +1,35 @@
+# Local dev override — OPTIONAL, and never part of a deploy.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# Docker Compose auto-merges `docker-compose.override.yml` into any *bare*
+# `docker compose ...` invocation (make docker-up-app, docker-up-edge, ...).
+# It is NOT merged when files are passed explicitly with `-f`, which is exactly
+# what `make docker-deploy` does:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml ...
+#
+# The same applies to docker-compose.fullstack.yml, which is also invoked with
+# -f. That path uses `--build`, so current source is baked into the image and the
+# mount is only needed for rebuild-free edits; append `-f docker-compose.override.yml`
+# there if you want it.
+#
+# So anything in here reaches your laptop and never the deploy box. That
+# separation is the point: docker-compose.deploy.yml only sets `pull_policy:
+# always` — it does NOT clear `volumes`, so a bind mount written into the
+# tracked docker-compose.yml WOULD ship to deploy and shadow the pinned image.
+#
+# Why the src mount below: the published image has no installed `agentrag`
+# package — the app exists only as /app/src, and both entrypoints import
+# `src.agentrag.*`. Mounting the repo's ./src runs your committed source
+# against the published image without a ~9GB rebuild. On a host without this
+# repo checked out at ./src, Docker would create an EMPTY ./src, mount it over
+# /app/src, and api + worker would crash-loop with the healthcheck never
+# passing — which is why this must stay out of the tracked compose file.
+services:
+  api:
+    volumes:
+      - ./src:/app/src
+  worker:
+    volumes:
+      - ./src:/app/src

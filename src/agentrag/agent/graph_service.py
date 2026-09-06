@@ -508,6 +508,32 @@ class GraphAgentService:
         verbosity: str | None = None,
     ) -> dict[str, Any]:
         update_turn_trace(name=(question or "")[:80], session_id=conversation_id)
+
+        # Exact-match answer cache (default off). Only stateless first turns are
+        # eligible; a follow-up is rewritten from history below, so an identical
+        # question string can legitimately need a different answer.
+        from src.agentrag.services.answer_cache import (
+            AnswerCache,
+            cacheable_result,
+            cacheable_turn,
+            current_corpus_version,
+        )
+
+        _cache = AnswerCache()
+        _cache_key = None
+        if settings.ANSWER_CACHE_ENABLED and cacheable_turn(chat_history):
+            _cache_key = _cache.key(
+                question=question,
+                corpus_version=current_corpus_version(),
+                document_title=document_title,
+                domain_filter=domain_filter,
+                verbosity=verbosity,
+                model=settings.AGENT_MODEL or "",
+            )
+            _cached = _cache.get(_cache_key)
+            if _cached is not None:
+                _cached["cache_hit"] = True
+                return _cached
         # Verbose / summary follow-ups like "viết dài hơn được không?" have no
         # domain terms → retrieval misses everything. Rewrite the question by
         # prepending the most recent prior user question so the retriever
@@ -569,7 +595,7 @@ class GraphAgentService:
                 "context": [],
                 "timed_out": True,
             }
-        return {
+        result = {
             "question": question,
             "document_title": document_title,
             "answer": state.get("answer", ""),
@@ -584,6 +610,11 @@ class GraphAgentService:
             "context": state.get("packed_context", []),
             **_message_signals(state.get("tool_trace")),
         }
+        # The timeout path above returns before here, so a load message can
+        # never be cached; cacheable_result guards the empty-answer case too.
+        if _cache_key and cacheable_result(result):
+            _cache.put(_cache_key, result)
+        return result
 
     async def chat_stream(
         self,

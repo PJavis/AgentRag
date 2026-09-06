@@ -45,6 +45,48 @@ def _ocr_tesseract(image_bytes: bytes, lang: str) -> str:
         return ""
 
 
+def _append_table_markdown(page, text: str) -> str:
+    """Probe arm B: append *structurally sound* tables as GFM markdown.
+
+    Additive — flat text is preserved and the markdown is appended, so retrieval
+    sees both. Tables failing `is_safe_to_markdown` are skipped: on this corpus
+    77% of find_tables() detections are layout boxes whose markdown (mirrored
+    cells, invented headers, one row per visual line) is worse than the flat text
+    it would replace. Converting them would make arm B lose for reasons unrelated
+    to tables. Any detection error leaves the text unchanged.
+
+    Rendering goes through `render_markdown`, never `table.to_markdown()`: the
+    gate judges the `extract()` cells, so the emitted text must come from those
+    same cells. `to_markdown()` invents `ColN` headers and mirrors a single
+    populated cell across columns — corruption the gate cannot see because it
+    does not exist until that renderer runs. Blocks are packed to
+    `SEARCH_CHUNK_MAX_TOKENS` and each repeats the header, so the chunker never
+    has to cut inside a row.
+    """
+    from src.agentrag.config import settings
+    from src.agentrag.ingestion.parsers.table_quality import render_markdown
+
+    try:
+        tables = list(page.find_tables().tables)
+    except Exception:  # noqa: BLE001 — no table layer on this page
+        return text
+
+    blocks = []
+    for table in tables:
+        try:
+            md = render_markdown(
+                table.extract(), max_tokens=settings.SEARCH_CHUNK_MAX_TOKENS
+            )
+        except Exception:  # noqa: BLE001 — a table PyMuPDF cannot read
+            continue
+        if md.strip():
+            blocks.append(md.strip())
+
+    if not blocks:
+        return text
+    return text + "\n\n" + "\n\n".join(blocks)
+
+
 class PDFParser:
     """Page-aware PDF parser with hybrid Tesseract + Vision LLM OCR fallback."""
 
@@ -110,6 +152,13 @@ class PDFParser:
                         text = ocr_text
                         source = "ocr"
                     stripped = text.strip()
+
+            # Arm B, AFTER the OCR block on purpose: appending pipes and a
+            # header to a thin page would push it past PDF_OCR_MIN_TEXT_CHARS and
+            # skip the OCR fallback arm A takes — arm B would then lose content
+            # for reasons unrelated to tables.
+            if settings.PDF_PRESERVE_TABLES:
+                text = _append_table_markdown(page, text)
 
             if not stripped:
                 continue

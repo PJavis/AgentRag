@@ -5,6 +5,8 @@ Trả về cùng format dict như MarkdownConnector để pipeline không cần 
 from __future__ import annotations
 
 import hashlib
+
+from src.agentrag.config import settings
 from pathlib import Path
 from typing import Dict, List
 
@@ -37,6 +39,25 @@ _EXT_TO_SOURCE_TYPE: dict[str, str] = {
 SUPPORTED_EXTENSIONS = set(_EXT_TO_SOURCE_TYPE.keys())
 
 
+def _document_cache_key(file_path: Path, suffix: str) -> str:
+    """Hash identifying a document's *stored representation*, not just its bytes.
+
+    `save_document_and_segments` skips a document whose `content_hash` already
+    matches, so this value is the re-ingest cache key. Hashing the file alone is
+    wrong whenever a setting changes how the file is PARSED: the bytes are
+    identical, every document reports "skipped", and the new setting silently
+    never takes effect — a flag flip that looks successful and changes nothing.
+
+    So a non-default parser setting is mixed in. Only non-default ones, so that
+    existing corpora keep their current hashes and are not re-ingested for no
+    reason; turning the setting back off restores the original key.
+    """
+    digest = hashlib.sha256(file_path.read_bytes())
+    if suffix == ".pdf" and settings.PDF_PRESERVE_TABLES:
+        digest.update(b"|pdf_preserve_tables=1")
+    return digest.hexdigest()
+
+
 class FolderConnector:
     """Scan thư mục đệ quy cho tất cả định dạng được hỗ trợ."""
 
@@ -52,7 +73,7 @@ class FolderConnector:
             if not path.is_file():
                 continue
             file_path = path.resolve()
-            content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+            content_hash = _document_cache_key(file_path, path.suffix.lower())
             documents.append(
                 {
                     "source_id": str(path.relative_to(self.folder_path)),

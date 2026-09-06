@@ -73,10 +73,14 @@ def test_an_answer_with_no_stamped_citation_is_unknown():
 
 def test_summarize_reports_rates_per_arm_and_never_divides_by_zero():
     recs = [
-        {"arm": "A", "abstained": True, "overrun": False, "latency_ms": 100},
-        {"arm": "A", "abstained": False, "overrun": True, "latency_ms": 300},
-        {"arm": "B", "abstained": False, "overrun": False, "latency_ms": 200},
-        {"arm": "mixed", "abstained": True, "overrun": True, "latency_ms": 999},
+        {"arm": "A", "abstained": True, "overrun": False, "latency_ms": 100,
+         "cited_a_table": True},
+        {"arm": "A", "abstained": False, "overrun": True, "latency_ms": 300,
+         "cited_a_table": True},
+        {"arm": "B", "abstained": False, "overrun": False, "latency_ms": 200,
+         "cited_a_table": True},
+        {"arm": "mixed", "abstained": True, "overrun": True, "latency_ms": 999,
+         "cited_a_table": True},
     ]
     out = summarize_by_arm(recs)
     assert out["A"]["answers"] == 2
@@ -86,6 +90,28 @@ def test_summarize_reports_rates_per_arm_and_never_divides_by_zero():
     # mixed is reported, never folded into A or B
     assert "mixed" in out and out["mixed"]["answers"] == 1
     assert summarize_by_arm([]) == {}
+
+
+def test_overrun_rate_is_per_table_citing_answer_not_per_answer():
+    """The sample floor in the rollout doc is stated in table-citing answers.
+    Dividing by every answer would dilute the rate with answers that could not
+    overrun, and the floor would no longer mean what it says."""
+    recs = [
+        {"arm": "A", "abstained": False, "overrun": True, "cited_a_table": True},
+        {"arm": "A", "abstained": False, "overrun": False, "cited_a_table": True},
+        {"arm": "A", "abstained": False, "overrun": False, "cited_a_table": False},
+    ]
+    out = summarize_by_arm(recs)["A"]
+    assert out["answers"] == 3
+    assert out["table_citing_answers"] == 2
+    assert out["overrun_rate"] == 0.5          # 1 of 2, not 1 of 3
+
+
+def test_overrun_rate_is_undefined_when_nothing_cited_a_table():
+    recs = [{"arm": "A", "abstained": False, "overrun": False, "cited_a_table": False}]
+    out = summarize_by_arm(recs)["A"]
+    assert out["overrun_rate"] is None
+    assert out["abstention_rate"] == 0.0
 
 
 def test_resolve_pdf_maps_a_cited_title_to_the_corpus_file(tmp_path):

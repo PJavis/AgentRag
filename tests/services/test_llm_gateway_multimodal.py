@@ -3,6 +3,20 @@ from src.agentrag.services.llm_gateway import LLMGateway, VisionDisabledError
 from src.agentrag.config import settings
 
 
+@pytest.fixture(autouse=True)
+def _routed_provider_keys(monkeypatch):
+    """Pin provider keys so routing resolves the same way everywhere.
+
+    `AgentLLM._resolve_backend_for` raises when a routed provider has no key, so
+    without this these tests pass only on a machine whose `.env` happens to carry
+    real keys and fail in CI (which copies `.env.example`). They assert model
+    resolution, never authentication, so a placeholder is the correct input.
+    """
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "test-key")
+
+
 def test_multimodal_routes_to_vision_answer_model(monkeypatch):
     """Answer-time multimodal must resolve the VISION_ANSWER_MODEL client, not the
     text `answer` model."""

@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     RETRIEVAL_NUM_CANDIDATES: int = 50
     RETRIEVAL_RRF_K: int = 60
     RETRIEVAL_RERANK_ENABLED: bool = False
+
+    #: PROBE-ONLY (throwaway, 2026-07-24). When True, PDFParser appends each page's
+    #: detected tables as GFM markdown, gated on table_quality.is_safe_to_markdown.
+    #: Arm B of the table-data probe. Delete with table_quality.py. Default OFF.
+    PDF_PRESERVE_TABLES: bool = False
     RETRIEVAL_RERANK_TOP_N: int = 20
     # local_cross_encoder: bge-reranker-v2-m3 on CPU/GPU (free, no API). Default.
     # llm_chat: rank via OpenAI-compat chat (slow, any provider).

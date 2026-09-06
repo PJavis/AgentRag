@@ -138,6 +138,12 @@ services:
     image: licht693/agentrag-api:latest
     build:
       context: .
+      args:
+        # Provenance stamped into the image. Empty is fine — the Dockerfile
+        # still bakes a source hash, which is what detects a shadowed /app/src.
+        GIT_SHA: ${GIT_SHA:-}
+        BUILD_ID: ${BUILD_ID:-}
+        BUILT_AT: ${BUILT_AT:-}
     container_name: agentrag-api
     profiles: ["app"]
     restart: unless-stopped
@@ -182,6 +188,12 @@ services:
     image: licht693/agentrag-api:latest
     build:
       context: .
+      args:
+        # Provenance stamped into the image. Empty is fine — the Dockerfile
+        # still bakes a source hash, which is what detects a shadowed /app/src.
+        GIT_SHA: ${GIT_SHA:-}
+        BUILD_ID: ${BUILD_ID:-}
+        BUILT_AT: ${BUILT_AT:-}
     container_name: agentrag-worker
     profiles: ["app"]
     restart: unless-stopped

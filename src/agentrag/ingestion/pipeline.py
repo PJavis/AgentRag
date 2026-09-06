@@ -28,6 +28,20 @@ from src.agentrag.worker.pool import get_pool
 
 # Định dạng parse qua PyMuPDF (page-aware, trả về page_data cho image extraction)
 _PYMUPDF_SOURCE_TYPES = {"pdf"}
+
+
+def build_chunk_metadata(source_type: str, document_title: str) -> dict:
+    """Metadata stamped onto every search segment.
+
+    PDFs carry which probe arm produced their text. Without that stamp an answer
+    cannot be attributed to an arm after the fact, and "measure it on production
+    traffic" is not measurable — only assertable. Cheap, and it costs nothing
+    while `PDF_PRESERVE_TABLES` stays off (the flag is simply recorded as False).
+    """
+    meta: dict = {"document_title": document_title}
+    if source_type in _PYMUPDF_SOURCE_TYPES:
+        meta["pdf_preserve_tables"] = bool(settings.PDF_PRESERVE_TABLES)
+    return meta
 # Định dạng parse qua MarkItDown (Word, PPTX, HTML)
 _MARKITDOWN_SOURCE_TYPES = {"word"}
 # Định dạng Excel/CSV
@@ -169,7 +183,7 @@ async def ingest_folder(
 
             t0 = time.perf_counter()
             chunks_search = search_chunker.chunk(
-                content, metadata={"document_title": doc["title"]}
+                content, metadata=build_chunk_metadata(source_type, doc["title"])
             )
             # Bỏ các chunk chỉ có heading hoặc quá ngắn để tránh nhiễu retrieval.
             # Threshold 80 chars loại bỏ "## API", "## Overview" nhưng giữ lại nội dung thực.

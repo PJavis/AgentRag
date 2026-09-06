@@ -354,6 +354,14 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_TTL_SECONDS: int = 120
     SEMANTIC_CACHE_MAX_ITEMS: int = 256
 
+    #: Exact-match answer cache (valkey). EXACT match only — never semantic: at
+    #: a 0.97 similarity threshold "liều cho người lớn" and "liều cho trẻ em"
+    #: are neighbours, and serving one for the other is a clinical failure, not
+    #: a cache miss. Keyed on the corpus version, so a re-ingest invalidates
+    #: every entry rather than leaving answers that cite deleted segments.
+    ANSWER_CACHE_ENABLED: bool = False
+    ANSWER_CACHE_TTL_SECONDS: int = 86400
+
     # Observability (ADR 0001 Phase B)
     OBSERVABILITY_TRACE_ENABLED: bool = True
 

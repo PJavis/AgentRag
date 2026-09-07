@@ -205,3 +205,80 @@ Rollback is `PDF_PRESERVE_TABLES=false` plus re-ingest of anything ingested whil
 - Anything that repairs the clustering bound. 52% of the table pool is one document.
 - That the sign test was wrong. It was not — it was pessimistic for a stated,
   inspectable reason (§1), and it still says INCONCLUSIVE.
+
+
+---
+
+## 6. Trial result (2026-09-07) — and why it cannot answer the question
+
+The flag was flipped, the corpus re-ingested, and the same 19 lookups re-run.
+**The instrumentation works. The comparison does not.**
+
+### What the numbers say
+
+| metric | arm A (2026-09-06) | arm B (2026-09-07) |
+|---|---|---|
+| answers / of which cite a table | 19 / 16 | 19 / **18** |
+| arm attributed from the ingest stamp | `unknown` (pre-stamp) | **`B` (18), `unknown` (1)** |
+| abstention (all / table-citing) | 0.11 / 0.06 | 0.06 / 0.06 |
+| **lookup-overrun** (of table-citing) | **0.25** | **0.33** |
+| median latency | 37.1 s | 44.5 s |
+
+Read naively that is a bad result for arm B: overrun *up*, latency *up 20%* —
+which by itself reaches the §4 rollback trigger.
+
+### Why none of it is attributable to arm B
+
+Between the two snapshots the corpus was rebuilt, twice, and it is **not the same
+corpus**:
+
+- Measured by characters, the arm-B corpus is **−14.9%** against arm A, with 24
+  documents still losing >30% of their text.
+- The OCR configuration changed underneath the experiment. Arm A's corpus was
+  built with a vision path that no longer exists in reproducible form; the
+  arm-B corpus was built with `VISION_BASE_URL` corrected to Gemini and
+  `PDF_OCR_VISION_THRESHOLD` raised 30 → 250. Both were repairs to defects found
+  during the flip, and both change what the retriever sees.
+- Chunking therefore differs: arm A averaged 762 chars/segment, arm B far more.
+
+So the flag is not the only thing that changed, and it is not even the largest
+thing that changed. Every number in the table above has a confound larger than
+the effect 0c measured. **Reporting this as an arm-B result would be false.**
+
+The sample floor was never met either: 18 table-citing answers against the 62
+per arm §3.2 fixed in advance.
+
+### What the trial DID establish
+
+The rollout instrumentation is real and end-to-end:
+
+- the ingest-time provenance stamp attributes live answers to an arm (18 `B`, 1
+  `unknown` for an answer whose citations predate the stamp),
+- the overrun metric fires on production answers rather than reading zero,
+- the monitor runs against the live database and scores real traffic.
+
+That is worth keeping. The measurement instrument is sound; the experimental
+conditions were not.
+
+### Recommendation
+
+**Stop the production A/B.** Two independent reasons, either sufficient:
+
+1. It is underpowered by design — n=19, n_eff≈7 — and §3.4 already named it a
+   trial rather than a measurement.
+2. Its two snapshots are separated by a corpus rebuild that changed more than
+   the flag, and arm A's ingestion environment cannot be reconstructed to fix
+   that without guess-and-re-ingest cycles costing hours and real money each.
+
+The offline chain (0a/0b/0c) answered the mechanism question with better
+instruments, a duplication control, and no corpus drift. That remains the basis
+for the ship decision recorded in §1. Nothing here overturns it, and nothing
+here supports it either — it is simply silent.
+
+### Live state as of 2026-09-07
+
+`PDF_PRESERVE_TABLES=true` and the corpus is arm B: 116 stamped documents, 245
+segments carrying rendered markdown tables, 2.99M characters against arm A's
+3.52M. Chat is working. Reverting means setting the flag back to `false` and
+re-ingesting, which costs another full pass — the same price as any other
+re-ingest, and the reason §4's rollback line says so.

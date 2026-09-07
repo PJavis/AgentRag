@@ -27,8 +27,17 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
 
 # Runtime libs only: curl for compose healthchecks, libpq5 for psycopg,
 # jpeg/zlib for pillow. No compilers, no headers, no uv.
+#
+# tesseract is NOT optional: PDFParser sends any page whose text layer is thin
+# to OCR, and ~25% of the medical corpus is scanned. Without the binary the OCR
+# call raises, the page yields nothing, chunks under 80 chars are filtered, and
+# the page disappears from the corpus — an ingest that reports success while
+# silently dropping a quarter of the pages. Measured 2026-09-07: a 20-page
+# scanned document produced 1 segment in-container versus 29 on a host that had
+# tesseract. vie+eng matches PDF_OCR_LANG.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates libpq5 libjpeg62-turbo zlib1g \
+    tesseract-ocr tesseract-ocr-vie tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -62,5 +71,12 @@ from src.agentrag.common.build_info import source_sha; \
 open('/app/.build-source-sha', 'w').write(source_sha())"
 
 EXPOSE 8000
+# --timeout 600, not 120: /ingest/folder parses a whole corpus in-request, and
+# PDF parsing is CPU-bound, so it blocks the event loop long enough for gunicorn
+# to kill the worker mid-ingest. Observed 2026-09-07 as
+# "WORKER TIMEOUT (pid:10)" after 23 minutes, leaving the corpus half-migrated.
+# 600 covers a large document; a whole-corpus ingest should still be run
+# out-of-band (see docs/eval/table_arm_b_rollout_2026-09-06.md) rather than
+# over HTTP.
 CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", \
-     "-w", "4", "-b", "0.0.0.0:8000", "main:app", "--timeout", "120"]
+     "-w", "4", "-b", "0.0.0.0:8000", "main:app", "--timeout", "600"]

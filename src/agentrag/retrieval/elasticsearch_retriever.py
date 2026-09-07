@@ -24,8 +24,20 @@ _RESULT_CACHE: TTLCache[str, dict] = TTLCache(maxsize=512, ttl=60)
 
 
 def _cache_key(query: str, mode: str, top_k: int | None, document_title: str | None, rerank: bool | None, extra: dict | None = None, dense_query: str | None = None) -> str:
+    """Key for the 60s retrieval cache, scoped to the current corpus generation.
+
+    Without the corpus version a cached payload can outlive the segments it
+    references: a re-ingest deletes and recreates every segment, and the old
+    entry would go on serving ids that no longer exist. It also means the TTL
+    can be raised safely, which it could not be before.
+    """
+    from src.agentrag.common.corpus_version import get_corpus_version
+
     h = hashlib.sha256()
-    h.update(json.dumps([query, mode, top_k, document_title, rerank, extra, dense_query], ensure_ascii=False, sort_keys=True).encode())
+    h.update(json.dumps(
+        [query, mode, top_k, document_title, rerank, extra, dense_query,
+         get_corpus_version()],
+        ensure_ascii=False, sort_keys=True).encode())
     return h.hexdigest()
 
 

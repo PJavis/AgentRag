@@ -43,3 +43,24 @@ def test_ingest_folder_accepts_the_only_parameter():
     from src.agentrag.ingestion.pipeline import ingest_folder
 
     assert "only" in inspect.signature(ingest_folder).parameters
+
+
+def test_the_pipeline_module_actually_has_a_logger():
+    """Three `logger.` calls were added to pipeline.py while the module had no
+    logger. Two sat inside `except` blocks, so they were latent NameErrors that
+    would fire only on the error path they were meant to report."""
+    import logging
+
+    from src.agentrag.ingestion import pipeline
+
+    assert isinstance(getattr(pipeline, "logger", None), logging.Logger)
+
+
+def test_every_logger_call_in_the_pipeline_resolves():
+    import inspect
+
+    from src.agentrag.ingestion import pipeline
+
+    source = inspect.getsource(pipeline)
+    assert "logger = logging.getLogger" in source
+    assert source.count("logger.") >= 3

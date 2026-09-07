@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 import time
 from typing import Any, Literal
@@ -22,6 +23,8 @@ from .embedders.factory import build_embedding_provider
 from .stores.postgres_store import PostgresStore
 from .stores.elasticsearch_store import ElasticsearchStore
 from src.agentrag.graph.structmem_service import StructMemService
+
+logger = logging.getLogger(__name__)
 from src.agentrag.graph.structmem_sync import index_structmem_views
 from src.agentrag.graph.graph_jobs import GraphIngestJob
 from src.agentrag.worker.pool import get_pool

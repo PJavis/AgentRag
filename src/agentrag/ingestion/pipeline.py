@@ -74,6 +74,7 @@ async def ingest_folder(
     folder_path: str,
     graph_ingest_mode: Literal["sync", "async"] | None = None,
     user_id: str | None = None,
+    only: set[str] | None = None,
 ) -> dict[str, Any]:
     """
     Ingest thư mục: hỗ trợ .md, .pdf, .docx, .xlsx, .xls, .csv
@@ -83,6 +84,16 @@ async def ingest_folder(
 
     connector = FolderConnector(folder_path)
     documents = connector.list_documents()
+    if only:
+        # Targeted re-ingest. Repairing a handful of damaged documents should
+        # not cost a whole-corpus pass — contextualisation alone is ~1 LLM call
+        # per chunk, so a full run is thousands of calls and real money. Filter
+        # by source_id so the folder root (and therefore every source_id) stays
+        # identical; ingesting a subset from a different directory would mint
+        # new source_ids and duplicate the documents instead of replacing them.
+        documents = [d for d in documents if d["source_id"] in only]
+        logger.info("ingest_folder: restricted to %d of the scanned documents",
+                    len(documents))
 
     pdf_parser = PDFParser()
     markitdown_parser = MarkItDownParser()

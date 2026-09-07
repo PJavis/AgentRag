@@ -286,7 +286,11 @@ class Settings(BaseSettings):
     PDF_OCR_MIN_TEXT_CHARS: int = 50
     PDF_OCR_DPI: int = 300
     PDF_OCR_VISION_FALLBACK: bool = True
-    PDF_OCR_VISION_THRESHOLD: int = 30
+    #: Chars of OCR text below which a page is sent to the vision model. 30 is
+    #: indefensible for a full page: garbage tesseract output clears that bar
+    #: and blocks the far better vision path. A correctly-read scanned A4
+    #: medical page yields ~1500-2000 chars.
+    PDF_OCR_VISION_THRESHOLD: int = 250
     # PDF parser backend escalation when PyMuPDF text-layer is thin:
     #   hybrid (default) → Tesseract → vision LLM
     PDF_PARSER_BACKEND: str = "hybrid"

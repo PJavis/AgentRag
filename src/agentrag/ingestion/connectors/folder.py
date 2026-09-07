@@ -5,6 +5,7 @@ Trả về cùng format dict như MarkdownConnector để pipeline không cần 
 from __future__ import annotations
 
 import hashlib
+import json
 
 from src.agentrag.config import settings
 from pathlib import Path
@@ -39,6 +40,48 @@ _EXT_TO_SOURCE_TYPE: dict[str, str] = {
 SUPPORTED_EXTENSIONS = set(_EXT_TO_SOURCE_TYPE.keys())
 
 
+#: Settings that change what a PDF parse PRODUCES. Any of these differing from
+#: its shipped default changes the stored representation, so it belongs in the
+#: re-ingest cache key. Discovered the hard way: pointing VISION_BASE_URL at a
+#: host without the configured vision model silently degraded every scanned page
+#: to ~40 characters, and a re-ingest would have reported "skipped" for all of
+#: them because the file bytes had not changed.
+_PARSE_AFFECTING_SETTINGS = (
+    "PDF_PRESERVE_TABLES",
+    "PDF_OCR_FALLBACK_ENABLED",
+    "PDF_OCR_LANG",
+    "PDF_OCR_DPI",
+    "PDF_OCR_MIN_TEXT_CHARS",
+    "PDF_OCR_VISION_FALLBACK",
+    "PDF_OCR_VISION_THRESHOLD",
+    "VISION_PROVIDER",
+    "VISION_MODEL",
+    "VISION_BASE_URL",
+)
+
+
+def _parse_config_fingerprint() -> str:
+    """Canonical string for parse-affecting settings that differ from default.
+
+    Only non-default values are included, so an untouched deployment keeps the
+    plain file hash and is never re-ingested merely because this function was
+    added. Flipping a setting back to its default restores the original key.
+    """
+    from src.agentrag.config import Settings
+
+    changed = {}
+    for name in _PARSE_AFFECTING_SETTINGS:
+        field = Settings.model_fields.get(name)
+        if field is None:
+            continue
+        current = getattr(settings, name, None)
+        if current != field.default:
+            changed[name] = current
+    if not changed:
+        return ""
+    return json.dumps(changed, sort_keys=True, default=str)
+
+
 def _document_cache_key(file_path: Path, suffix: str) -> str:
     """Hash identifying a document's *stored representation*, not just its bytes.
 
@@ -46,15 +89,17 @@ def _document_cache_key(file_path: Path, suffix: str) -> str:
     matches, so this value is the re-ingest cache key. Hashing the file alone is
     wrong whenever a setting changes how the file is PARSED: the bytes are
     identical, every document reports "skipped", and the new setting silently
-    never takes effect — a flag flip that looks successful and changes nothing.
+    never takes effect — a change that looks successful and does nothing.
 
-    So a non-default parser setting is mixed in. Only non-default ones, so that
-    existing corpora keep their current hashes and are not re-ingested for no
-    reason; turning the setting back off restores the original key.
+    Only PDFs carry the fingerprint: every setting in
+    `_PARSE_AFFECTING_SETTINGS` governs the PDF path, so mixing it into other
+    source types would invalidate them for a change that cannot reach them.
     """
     digest = hashlib.sha256(file_path.read_bytes())
-    if suffix == ".pdf" and settings.PDF_PRESERVE_TABLES:
-        digest.update(b"|pdf_preserve_tables=1")
+    if suffix == ".pdf":
+        fingerprint = _parse_config_fingerprint()
+        if fingerprint:
+            digest.update(b"|parse:" + fingerprint.encode("utf-8"))
     return digest.hexdigest()
 
 

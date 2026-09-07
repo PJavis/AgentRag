@@ -3,6 +3,7 @@
 Per page:
   1. PyMuPDF.get_text("text", sort=True). If ≥ PDF_OCR_MIN_TEXT_CHARS → use as-is.
   2. Else render page → Tesseract (lang=PDF_OCR_LANG). If ≥ PDF_OCR_VISION_THRESHOLD → use.
+     Otherwise try the vision model and keep whichever read MORE of the page.
   3. Else, if PDF_OCR_VISION_FALLBACK on, send page image through VISION_PROVIDER.
   4. Marker `\x00P{N}\x00` survives the chunker and is resolved into
      page_start / page_end during chunking (NotebookLM-style citations).
@@ -142,7 +143,17 @@ class PDFParser:
                         source = "ocr"
                     elif vision_fallback:
                         vision_text = _ocr_via_vision_llm(img_bytes)
-                        if len(vision_text) >= vision_threshold:
+                        # Accept vision when it read MORE than tesseract did.
+                        # Comparing against vision_threshold here conflated two
+                        # decisions: that value exists to say "tesseract is
+                        # inadequate, try vision", and reusing it as the
+                        # acceptance bar means raising the trigger to send more
+                        # pages to vision simultaneously raises what vision must
+                        # produce — so better vision text was discarded in favour
+                        # of the tesseract output just judged inadequate. Once
+                        # the vision call is paid for, the only question left is
+                        # which of the two read the page better.
+                        if len(vision_text) > len(ocr_text):
                             text = vision_text
                             source = "vision"
                         elif ocr_text:

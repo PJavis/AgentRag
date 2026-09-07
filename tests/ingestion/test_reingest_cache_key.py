@@ -31,15 +31,25 @@ def test_the_cache_key_changes_when_the_parser_arm_changes(tmp_path, monkeypatch
     assert off != on, "same hash → every document is skipped → the flip is a no-op"
 
 
-def test_the_default_arm_keeps_the_plain_file_hash(tmp_path, monkeypatch):
-    """Existing corpora must not be re-ingested just because this key gained a
-    new input. Only a non-default setting is mixed in."""
-    import hashlib
+def test_turning_the_arm_off_again_restores_the_previous_key(tmp_path, monkeypatch):
+    """Flipping back must not strand the corpus on a third key.
 
-    path = _pdf(tmp_path)
+    (The stronger claim — that an all-default deployment keeps the plain file
+    hash, so it is never re-ingested merely because parse config joined the key —
+    is asserted by test_returning_every_setting_to_default_restores_the_plain_hash.)
+    """
+    _pdf(tmp_path)
+    connector = FolderConnector(str(tmp_path))
+
     monkeypatch.setattr(settings, "PDF_PRESERVE_TABLES", False)
-    got = FolderConnector(str(tmp_path)).list_documents()[0]["content_hash"]
-    assert got == hashlib.sha256(path.read_bytes()).hexdigest()
+    before = connector.list_documents()[0]["content_hash"]
+    monkeypatch.setattr(settings, "PDF_PRESERVE_TABLES", True)
+    flipped = connector.list_documents()[0]["content_hash"]
+    monkeypatch.setattr(settings, "PDF_PRESERVE_TABLES", False)
+    restored = connector.list_documents()[0]["content_hash"]
+
+    assert flipped != before
+    assert restored == before
 
 
 def test_a_non_pdf_is_unaffected_by_the_pdf_parser_flag(tmp_path, monkeypatch):
@@ -69,3 +79,40 @@ def test_the_pipeline_purges_a_document_before_re_indexing_it():
     purge = source.index('es_store.delete_document(doc["title"])')
     index = source.index('es_store.index_segments(chunks_search, doc["title"])')
     assert purge < index
+
+
+def test_an_ocr_setting_change_also_forces_a_reingest(tmp_path, monkeypatch):
+    """PDF_PRESERVE_TABLES was never the only parse-affecting setting.
+
+    Pointing VISION_BASE_URL at a host without the configured vision model
+    silently degraded scanned pages to ~40 characters. A re-ingest to repair
+    that must not report "skipped" just because the file bytes are unchanged.
+    """
+    _pdf(tmp_path)
+    connector = FolderConnector(str(tmp_path))
+    monkeypatch.setattr(settings, "PDF_PRESERVE_TABLES", False)
+
+    monkeypatch.setattr(settings, "VISION_BASE_URL", "http://127.0.0.1:11434/v1/")
+    before = connector.list_documents()[0]["content_hash"]
+    monkeypatch.setattr(settings, "VISION_BASE_URL",
+                        "https://generativelanguage.googleapis.com/v1beta/openai/")
+    assert connector.list_documents()[0]["content_hash"] != before
+
+    monkeypatch.setattr(settings, "PDF_OCR_VISION_THRESHOLD", 250)
+    assert connector.list_documents()[0]["content_hash"] != before
+
+
+def test_returning_every_setting_to_default_restores_the_plain_hash(tmp_path, monkeypatch):
+    """So a deployment that never touched these is never re-ingested for nothing."""
+    import hashlib
+
+    from src.agentrag.config import Settings
+
+    path = _pdf(tmp_path)
+    for name in ("PDF_PRESERVE_TABLES", "PDF_OCR_VISION_THRESHOLD", "VISION_BASE_URL",
+                 "VISION_PROVIDER", "VISION_MODEL", "PDF_OCR_LANG", "PDF_OCR_DPI",
+                 "PDF_OCR_FALLBACK_ENABLED", "PDF_OCR_MIN_TEXT_CHARS",
+                 "PDF_OCR_VISION_FALLBACK"):
+        monkeypatch.setattr(settings, name, Settings.model_fields[name].default)
+    got = FolderConnector(str(tmp_path)).list_documents()[0]["content_hash"]
+    assert got == hashlib.sha256(path.read_bytes()).hexdigest()

@@ -8,6 +8,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_extraction_settings(settings)
     _validate_agent_settings(settings)
     _validate_retrieval_reranker_settings(settings)
+    _validate_relevance_scale_settings(settings)
     _validate_general_settings(settings)
 
 
@@ -91,6 +92,43 @@ def _looks_like_api_model(model: str) -> bool:
     HuggingFace cross-encoder repo id (which is always 'org/name')."""
     m = (model or "").lower()
     return any(marker in m for marker in _API_MODEL_MARKERS)
+
+
+def _logit(p: float) -> float:
+    import math
+
+    return math.log(p / (1.0 - p))
+
+
+def _validate_relevance_scale_settings(settings: Settings) -> None:
+    """rerank_score became a plain probability on 2026-10-04 (it was
+    sigmoid(probability), range 0.5–0.731). The thresholds were renamed so an old
+    .env value can't silently keep its number with a new meaning — fail with the
+    exact converted value instead."""
+    old_floor = settings.RETRIEVAL_RELEVANCE_FLOOR
+    old_margin = settings.ANSWERABILITY_GRAY_MARGIN
+    problems = []
+    if old_floor is not None:
+        problems.append(
+            f"RETRIEVAL_RELEVANCE_FLOOR={old_floor} → RETRIEVAL_RELEVANCE_MIN_PROB="
+            f"{_logit(old_floor):.4f}" if 0.5 < old_floor < 1.0 else
+            f"RETRIEVAL_RELEVANCE_FLOOR={old_floor} (old scale only spanned 0.5–0.731; "
+            "choose RETRIEVAL_RELEVANCE_MIN_PROB as a probability)"
+        )
+    if old_margin is not None:
+        base = old_floor if old_floor is not None else 0.55
+        if 0.5 < base + old_margin < 1.0 and 0.5 < base < 1.0:
+            problems.append(
+                f"ANSWERABILITY_GRAY_MARGIN={old_margin} → ANSWERABILITY_GRAY_MARGIN_PROB="
+                f"{_logit(base + old_margin) - _logit(base):.4f}"
+            )
+        else:
+            problems.append(f"ANSWERABILITY_GRAY_MARGIN={old_margin} → set ANSWERABILITY_GRAY_MARGIN_PROB")
+    if problems:
+        raise ValueError(
+            "Relevance thresholds moved to a probability scale (2026-10-04). Replace: "
+            + "; ".join(problems)
+        )
 
 
 def _validate_retrieval_reranker_settings(settings: Settings) -> None:

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import math
-
 import pytest
 
 from src.agentrag.config import settings
@@ -46,9 +44,8 @@ def test_tei_backend_has_no_api_client(monkeypatch):
 
 
 def test_tei_orders_by_score_and_matches_local_rerank_score(monkeypatch):
-    # TEI (raw_scores=false) returns sigmoid(logit), the same value
-    # CrossEncoder.predict returns; the reranker then applies _sigmoid exactly as
-    # the local path does, so rerank_score — and the relevance floor — match.
+    # TEI (raw_scores=false) returns sigmoid(logit), the same probability
+    # CrossEncoder.predict returns; it is stored as rerank_score unchanged.
     r, _ = _tei_reranker(
         monkeypatch,
         [{"index": 1, "score": 0.9}, {"index": 2, "score": 0.5}, {"index": 0, "score": 0.1}],
@@ -56,9 +53,7 @@ def test_tei_orders_by_score_and_matches_local_rerank_score(monkeypatch):
     out, ok, reason = asyncio.run(r.maybe_rerank("q", _cands(), top_k=3, force=True))
     assert ok and reason == "ok_tei"
     assert [c["id"] for c in out] == ["b", "c", "a"]
-    assert out[0]["rerank_score"] == pytest.approx(1 / (1 + math.exp(-0.9)))
-    assert out[1]["rerank_score"] == pytest.approx(1 / (1 + math.exp(-0.5)))
-    assert out[2]["rerank_score"] == pytest.approx(1 / (1 + math.exp(-0.1)))
+    assert [c["rerank_score"] for c in out] == pytest.approx([0.9, 0.5, 0.1])
 
 
 def test_tei_request_matches_local_cross_encoder_inputs(monkeypatch):
@@ -106,3 +101,24 @@ def test_tei_validation_passes_with_tei_url():
     s.RETRIEVAL_RERANK_BACKEND = "tei"
     s.RETRIEVAL_RERANK_TEI_URL = "http://127.0.0.1:8081"
     _validate_retrieval_reranker_settings(s)  # no raise
+
+
+def test_old_floor_setting_fails_with_converted_value():
+    s = copy.copy(settings)
+    s.RETRIEVAL_RELEVANCE_FLOOR = 0.55
+    s.ANSWERABILITY_GRAY_MARGIN = 0.13
+    from src.agentrag.config_validation import _validate_relevance_scale_settings
+
+    with pytest.raises(ValueError) as exc:
+        _validate_relevance_scale_settings(s)
+    assert "RETRIEVAL_RELEVANCE_MIN_PROB=0.2007" in str(exc.value)
+    assert "ANSWERABILITY_GRAY_MARGIN_PROB=0.5531" in str(exc.value)
+
+
+def test_new_scale_settings_pass_validation():
+    s = copy.copy(settings)
+    s.RETRIEVAL_RELEVANCE_FLOOR = None
+    s.ANSWERABILITY_GRAY_MARGIN = None
+    from src.agentrag.config_validation import _validate_relevance_scale_settings
+
+    _validate_relevance_scale_settings(s)  # no raise

@@ -114,7 +114,7 @@ def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str
         return False
     thin = _is_thin_context(packed_context, floor)
     gray = (settings.ANSWERABILITY_GATE_ENABLED
-            and _in_gray_band(packed_context, floor, settings.ANSWERABILITY_GRAY_MARGIN))
+            and _in_gray_band(packed_context, floor, settings.ANSWERABILITY_GRAY_MARGIN_PROB))
     return thin or gray
 
 
@@ -222,10 +222,10 @@ def _answer_system_prompt(
     multi-document COMPARE mode (table + relations) when the packed context spans
     ≥2 documents.
     """
-    thin = _is_thin_context(packed_context, settings.RETRIEVAL_RELEVANCE_FLOOR)
+    thin = _is_thin_context(packed_context, settings.RETRIEVAL_RELEVANCE_MIN_PROB)
     gray = (settings.ANSWERABILITY_GATE_ENABLED
-            and _in_gray_band(packed_context, settings.RETRIEVAL_RELEVANCE_FLOOR,
-                              settings.ANSWERABILITY_GRAY_MARGIN))
+            and _in_gray_band(packed_context, settings.RETRIEVAL_RELEVANCE_MIN_PROB,
+                              settings.ANSWERABILITY_GRAY_MARGIN_PROB))
     if settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT and (thin or gray):
         return (
             f"{_lang_instruction(question)} "

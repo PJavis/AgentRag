@@ -72,8 +72,8 @@ def _md(off: dict, on: dict) -> str:
     L = []
     L.append("# Answerability-gate A/B — out-of-corpus refusal set (2026-06-24)\n")
     L.append(f"- Set: `data/eval/refusal_set.json` · n={off['n']} · corpus reused (no re-ingest)")
-    L.append(f"- Gate: `ANSWERABILITY_GATE_ENABLED` · margin `ANSWERABILITY_GRAY_MARGIN={settings.ANSWERABILITY_GRAY_MARGIN}`")
-    L.append(f"- Floor `RETRIEVAL_RELEVANCE_FLOOR={settings.RETRIEVAL_RELEVANCE_FLOOR}` · rerank `{settings.RETRIEVAL_RERANK_BACKEND}`\n")
+    L.append(f"- Gate: `ANSWERABILITY_GATE_ENABLED` · margin `ANSWERABILITY_GRAY_MARGIN_PROB={settings.ANSWERABILITY_GRAY_MARGIN_PROB}`")
+    L.append(f"- Floor `RETRIEVAL_RELEVANCE_MIN_PROB={settings.RETRIEVAL_RELEVANCE_MIN_PROB}` · rerank `{settings.RETRIEVAL_RERANK_BACKEND}`\n")
     L.append("| Metric | OFF (baseline) | ON (gate) |")
     L.append("|---|---|---|")
     L.append(f"| refusal_rate (clean abstain, ideal ↑) | {off['refusal_rate']:.3f} | {on['refusal_rate']:.3f} |")
@@ -91,8 +91,8 @@ def _md(off: dict, on: dict) -> str:
 
 
 async def main():
-    print(f"abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_FLOOR} "
-          f"margin={settings.ANSWERABILITY_GRAY_MARGIN} rerank={settings.RETRIEVAL_RERANK_BACKEND}")
+    print(f"abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_MIN_PROB} "
+          f"margin={settings.ANSWERABILITY_GRAY_MARGIN_PROB} rerank={settings.RETRIEVAL_RERANK_BACKEND}")
     cases = json.loads(Path("data/eval/refusal_set.json").read_text(encoding="utf-8"))
     if os.environ.get("REFUSAL_SINGLE_ARM"):
         gate = settings.ANSWERABILITY_GATE_ENABLED

@@ -95,7 +95,7 @@ class ContextAssembler:
         # floor BEFORE the answer node sees them. No-op unless a cross-encoder
         # rerank_score is present, so it only bites with local_cross_encoder on.
         if settings.RETRIEVAL_RELEVANCE_GATE_ENABLED:
-            ranked = apply_relevance_floor(ranked, settings.RETRIEVAL_RELEVANCE_FLOOR)
+            ranked = apply_relevance_floor(ranked, settings.RETRIEVAL_RELEVANCE_MIN_PROB)
         packed = self._stage_citation_pack(ranked)
         return {
             "retrieved": retrieved,

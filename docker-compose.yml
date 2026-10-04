@@ -83,6 +83,32 @@ services:
     # lacks bash /dev/tcp, so any in-container probe false-fails. Readiness is
     # verified externally via GET :8080/health.
 
+  # Cross-encoder reranker on the GPU (RETRIEVAL_RERANK_BACKEND=tei). Same
+  # bge-reranker-v2-m3 the local_cross_encoder backend loads on CPU, served once
+  # instead of once per gunicorn worker: ~45s → ~0.3s for a 60-chunk pool.
+  # max-client-batch-size: TEI's default 32 rejects the 50+ chunk rerank pool.
+  # .env (host runs): RETRIEVAL_RERANK_TEI_URL=http://127.0.0.1:8081
+  tei-rerank:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+    container_name: agentrag-tei-rerank
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - tei_hf_cache:/data
+    command:
+      - --model-id=BAAI/bge-reranker-v2-m3
+      - --max-client-batch-size=128
+      - --max-batch-tokens=16384
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # No healthcheck, same reason as tei. Verify via GET :8081/health.
+
   # ── Ollama (profile: local-llm) ───────────────────────────────────────────
   # Yêu cầu: NVIDIA GPU + NVIDIA Container Toolkit
   # Cài toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
@@ -157,6 +183,7 @@ services:
       # them via the docker host gateway, not the .env 127.0.0.1 values.
       EMBEDDING_BASE_URL: http://host.docker.internal:8080/v1/
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1/
+      RETRIEVAL_RERANK_TEI_URL: http://host.docker.internal:8081
       # Self-hosted Langfuse is on the compose network (observability profile).
       LANGFUSE_HOST: http://langfuse:3000
     extra_hosts:
@@ -205,6 +232,7 @@ services:
       REDIS_URL: redis://valkey:6379/0
       EMBEDDING_BASE_URL: http://host.docker.internal:8080/v1/
       OLLAMA_BASE_URL: http://host.docker.internal:11434/v1/
+      RETRIEVAL_RERANK_TEI_URL: http://host.docker.internal:8081
       LANGFUSE_HOST: http://langfuse:3000
     extra_hosts:
       - "host.docker.internal:host-gateway"

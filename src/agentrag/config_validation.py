@@ -111,6 +111,14 @@ def _validate_retrieval_reranker_settings(settings: Settings) -> None:
             )
         return
 
+    if settings.RETRIEVAL_RERANK_BACKEND == "tei":
+        if not settings.RETRIEVAL_RERANK_TEI_URL:
+            raise ValueError(
+                "RETRIEVAL_RERANK_BACKEND=tei needs RETRIEVAL_RERANK_TEI_URL pointing at the "
+                "TEI reranker (e.g. http://tei-rerank:80 in compose, http://127.0.0.1:8081 on the host)."
+            )
+        return
+
     provider = (
         settings.RETRIEVAL_RERANK_PROVIDER
         or settings.AGENT_PROVIDER

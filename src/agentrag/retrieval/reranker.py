@@ -38,6 +38,14 @@ class LLMReranker:
             self.client = None
             return
 
+        if self.backend == "tei":
+            # TEI serves its own model (--model-id); RETRIEVAL_RERANK_MODEL is a label only.
+            self.provider = "tei"
+            self.model = settings.RETRIEVAL_RERANK_MODEL or "BAAI/bge-reranker-v2-m3"
+            self.base_url = (settings.RETRIEVAL_RERANK_TEI_URL or "").rstrip("/") or None
+            self.client = None
+            return
+
         self.provider, self.model, base_url, api_key = self._resolve_backend()
         self.base_url = base_url
         self.client = make_async_openai(api_key=api_key, base_url=base_url)
@@ -58,7 +66,7 @@ class LLMReranker:
             return candidates[:top_k], False, "disabled_by_config"
         if self.model is None:
             return candidates[:top_k], False, "reranker_model_not_initialized"
-        if self.backend != "local_cross_encoder" and self.client is None:
+        if self.backend not in ("local_cross_encoder", "tei") and self.client is None:
             return candidates[:top_k], False, "reranker_client_not_initialized"
         if len(candidates) <= 1:
             return candidates[:top_k], False, "not_enough_candidates"
@@ -101,6 +109,16 @@ class LLMReranker:
                     "ok_local_cross_encoder",
                 )
             return candidates[:top_k], False, local_reason
+
+        if self.backend == "tei":
+            ordered_ids, tei_reason = await self._try_tei_rerank(query=query, scoped=scoped)
+            if ordered_ids:
+                return (
+                    self._apply_ordered_ids(candidates, scoped, ordered_ids, top_k),
+                    True,
+                    "ok_tei",
+                )
+            return candidates[:top_k], False, tei_reason
 
         native_reason = ""
         if self.provider == "ollama":
@@ -240,17 +258,71 @@ class LLMReranker:
         except Exception as exc:
             return [], f"local_cross_encoder_exception:{type(exc).__name__}"
 
+        return self._order_by_logits(scoped, scores, "local_cross_encoder")
+
+    async def _tei_post(self, url: str, payload: dict[str, Any]) -> Any:
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload) as response:
+                response.raise_for_status()
+                return await response.json()
+
+    async def _try_tei_rerank(
+        self,
+        query: str,
+        scoped: list[dict[str, Any]],
+    ) -> tuple[list[str], str]:
+        if not self.base_url:
+            return [], "tei_no_url"
+        # Same inputs as the local cross-encoder path. raw_scores=False makes TEI
+        # return sigmoid(logit) — exactly what CrossEncoder.predict returns — so
+        # _order_by_logits yields the same rerank_score as local_cross_encoder and
+        # RETRIEVAL_RELEVANCE_FLOOR keeps its calibrated scale.
+        payload = {
+            "query": query,
+            "texts": [(item.get("content") or "")[:1600] for item in scoped],
+            "raw_scores": False,
+            "truncate": True,
+        }
         try:
-            indexed = list(enumerate(scores))
+            data = await self._tei_post(f"{self.base_url}/rerank", payload)
+        except Exception as exc:
+            return [], f"tei_exception:{type(exc).__name__}"
+
+        scores: dict[int, float] = {}
+        if isinstance(data, list):
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                idx, score = entry.get("index"), entry.get("score")
+                if isinstance(idx, int) and isinstance(score, (int, float)):
+                    scores[idx] = float(score)
+        return self._order_by_logits(scoped, list(scores.items()), "tei")
+
+    @staticmethod
+    def _order_by_logits(
+        scoped: list[dict[str, Any]],
+        scores: Any,
+        label: str,
+    ) -> tuple[list[str], str]:
+        """Order `scoped` by cross-encoder logits and attach rerank_score.
+
+        `scores` is either one logit per scoped item, or (index, logit) pairs.
+        """
+        try:
+            if len(scores) and isinstance(scores[0], tuple):
+                indexed = [(int(i), float(v)) for i, v in scores]
+            else:
+                indexed = list(enumerate(scores))
             indexed.sort(key=lambda item: float(item[1]), reverse=True)
         except Exception as exc:
-            return [], f"local_cross_encoder_invalid_scores:{type(exc).__name__}"
+            return [], f"{label}_invalid_scores:{type(exc).__name__}"
 
         ordered_ids: list[str] = []
         for idx, score in indexed:
             if not (0 <= idx < len(scoped)):
                 continue
-            # pairs[idx] was built from scoped[idx]; attach the normalized
+            # The score at idx was computed for scoped[idx]; attach the normalized
             # relevance (sigmoid → [0,1]) onto that SAME dict. _apply_ordered_ids
             # reorders these same dict objects, so rerank_score rides through to
             # the returned hits and the relevance-floor gate downstream.
@@ -260,7 +332,7 @@ class LLMReranker:
                 ordered_ids.append(str(item_id))
 
         if not ordered_ids:
-            return [], "local_cross_encoder_no_rankable_candidates"
+            return [], f"{label}_no_rankable_candidates"
         return ordered_ids, "ok"
 
     @staticmethod

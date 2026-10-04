@@ -50,3 +50,26 @@ def test_local_backend_disabled_short_circuits():
     s = copy.copy(settings)
     s.RETRIEVAL_RERANK_ENABLED = False
     _validate_retrieval_reranker_settings(s)  # no raise
+
+
+def test_local_backend_scores_numpy_array(monkeypatch):
+    # CrossEncoder.predict returns a numpy array; the shared scoring helper must
+    # not test it for truthiness ("truth value of an array is ambiguous").
+    import asyncio
+
+    import numpy as np
+
+    monkeypatch.setattr(settings, "RETRIEVAL_RERANK_BACKEND", "local_cross_encoder")
+    monkeypatch.setattr(settings, "RETRIEVAL_RERANK_TOP_N", 20)
+    r = LLMReranker()
+
+    class _Model:
+        def predict(self, pairs):
+            return np.array([-1.0, 2.0], dtype=np.float32)
+
+    monkeypatch.setattr(r, "_get_local_cross_encoder", lambda: _Model())
+    out, ok, reason = asyncio.run(
+        r.maybe_rerank("q", [{"id": "a", "content": "x"}, {"id": "b", "content": "y"}], top_k=2, force=True)
+    )
+    assert ok and reason == "ok_local_cross_encoder"
+    assert [c["id"] for c in out] == ["b", "a"]

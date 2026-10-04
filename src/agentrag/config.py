@@ -118,18 +118,24 @@ class Settings(BaseSettings):
     PDF_PRESERVE_TABLES: bool = False
     RETRIEVAL_RERANK_TOP_N: int = 20
     # local_cross_encoder: bge-reranker-v2-m3 on CPU/GPU (free, no API). Default.
+    # tei: same bge cross-encoder served by a TEI container (GPU) at
+    #   RETRIEVAL_RERANK_TEI_URL — one shared model instead of one per gunicorn worker.
     # llm_chat: rank via OpenAI-compat chat (slow, any provider).
-    RETRIEVAL_RERANK_BACKEND: Literal["llm_chat", "local_cross_encoder"] = "local_cross_encoder"
+    RETRIEVAL_RERANK_BACKEND: Literal["llm_chat", "local_cross_encoder", "tei"] = "local_cross_encoder"
     RETRIEVAL_RERANK_PROVIDER: Literal["openai", "gemini", "hf_inference", "ollama"] | None = None
     RETRIEVAL_RERANK_MODEL: str | None = None
     RETRIEVAL_RERANK_BASE_URL: str | None = None
+    #: TEI /rerank server for RETRIEVAL_RERANK_BACKEND=tei (docker-compose service
+    #: tei-rerank, host port 8081). Separate from RETRIEVAL_RERANK_BASE_URL so compose
+    #: can point containers at it without touching the llm_chat backend's URL.
+    RETRIEVAL_RERANK_TEI_URL: str | None = None
     RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
     #: Relevance-floor gate — drop retrieved candidates whose reranker relevance
     #: (sigmoid of the bge cross-encoder score, 0–1) is below the floor BEFORE the
     #: answer sees them. Prunes distractors; an out-of-corpus query whose top hit
     #: is below floor → empty context → clean abstain (no distractor citations).
-    #: Only effective with RETRIEVAL_RERANK_BACKEND=local_cross_encoder (the only
-    #: backend that emits a score). Default OFF (changes answer behavior).
+    #: Only effective with RETRIEVAL_RERANK_BACKEND=local_cross_encoder or tei (the
+    #: backends that emit a score). Default OFF (changes answer behavior).
     RETRIEVAL_RELEVANCE_GATE_ENABLED: bool = False
     #: bge-reranker-v2-m3 (sigmoid) scores off-corpus content ~0.50 (logit≈0). 2026-06-19
     #: calibration put relevant top-chunks ~0.73 and set the floor at 0.6; the 2026-06-26

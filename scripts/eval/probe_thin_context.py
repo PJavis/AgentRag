@@ -34,7 +34,7 @@ svc._is_thin_context = _spy
 
 
 async def main():
-    print(f"abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_FLOOR} "
+    print(f"abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_MIN_PROB} "
           f"rerank={settings.RETRIEVAL_RERANK_ENABLED}/{settings.RETRIEVAL_RERANK_BACKEND}")
     cases = json.loads(Path("data/eval/refusal_set.json").read_text(encoding="utf-8"))
     agent = get_agent_service()

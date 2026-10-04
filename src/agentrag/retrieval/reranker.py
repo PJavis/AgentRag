@@ -14,12 +14,6 @@ from src.agentrag.config import settings
 logger = logging.getLogger(__name__)
 
 
-def _sigmoid(x: float) -> float:
-    import math
-
-    return 1.0 / (1.0 + math.exp(-x)) if x >= 0 else math.exp(x) / (1.0 + math.exp(x))
-
-
 class LLMReranker:
     def __init__(self):
         self.enabled = settings.RETRIEVAL_RERANK_ENABLED
@@ -258,7 +252,7 @@ class LLMReranker:
         except Exception as exc:
             return [], f"local_cross_encoder_exception:{type(exc).__name__}"
 
-        return self._order_by_logits(scoped, scores, "local_cross_encoder")
+        return self._order_by_scores(scoped, scores, "local_cross_encoder")
 
     async def _tei_post(self, url: str, payload: dict[str, Any]) -> Any:
         timeout = aiohttp.ClientTimeout(total=20)
@@ -275,9 +269,8 @@ class LLMReranker:
         if not self.base_url:
             return [], "tei_no_url"
         # Same inputs as the local cross-encoder path. raw_scores=False makes TEI
-        # return sigmoid(logit) — exactly what CrossEncoder.predict returns — so
-        # _order_by_logits yields the same rerank_score as local_cross_encoder and
-        # RETRIEVAL_RELEVANCE_FLOOR keeps its calibrated scale.
+        # return sigmoid(logit) — the probability CrossEncoder.predict returns — so
+        # both backends give the same rerank_score.
         payload = {
             "query": query,
             "texts": [(item.get("content") or "")[:1600] for item in scoped],
@@ -297,17 +290,20 @@ class LLMReranker:
                 idx, score = entry.get("index"), entry.get("score")
                 if isinstance(idx, int) and isinstance(score, (int, float)):
                     scores[idx] = float(score)
-        return self._order_by_logits(scoped, list(scores.items()), "tei")
+        return self._order_by_scores(scoped, list(scores.items()), "tei")
 
     @staticmethod
-    def _order_by_logits(
+    def _order_by_scores(
         scoped: list[dict[str, Any]],
         scores: Any,
         label: str,
     ) -> tuple[list[str], str]:
-        """Order `scoped` by cross-encoder logits and attach rerank_score.
+        """Order `scoped` by cross-encoder relevance and attach rerank_score.
 
-        `scores` is either one logit per scoped item, or (index, logit) pairs.
+        `scores` is either one probability per scoped item, or (index, probability)
+        pairs. Both backends already return sigmoid(logit) — CrossEncoder.predict
+        and TEI raw_scores=false — so it is stored as-is (until 2026-10-04 a second
+        sigmoid squeezed it into 0.5–0.731).
         """
         try:
             if len(scores) and isinstance(scores[0], tuple):
@@ -322,11 +318,11 @@ class LLMReranker:
         for idx, score in indexed:
             if not (0 <= idx < len(scoped)):
                 continue
-            # The score at idx was computed for scoped[idx]; attach the normalized
-            # relevance (sigmoid → [0,1]) onto that SAME dict. _apply_ordered_ids
+            # The score at idx was computed for scoped[idx]; attach the relevance
+            # probability onto that SAME dict. _apply_ordered_ids
             # reorders these same dict objects, so rerank_score rides through to
             # the returned hits and the relevance-floor gate downstream.
-            scoped[idx]["rerank_score"] = _sigmoid(float(score))
+            scoped[idx]["rerank_score"] = float(score)
             item_id = scoped[idx].get("id")
             if item_id is not None:
                 ordered_ids.append(str(item_id))

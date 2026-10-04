@@ -42,7 +42,7 @@ async def test_raw_query_chunk_injected_when_tools_missed_it(monkeypatch):
     hashes = {c.get("content_hash") for c in packed}
     assert "GOLD" in hashes, "raw-question gold chunk not injected into the pool"
     # and it scores above the abstain floor → not thin
-    assert svc._is_thin_context(packed, svc.settings.RETRIEVAL_RELEVANCE_FLOOR) is False
+    assert svc._is_thin_context(packed, svc.settings.RETRIEVAL_RELEVANCE_MIN_PROB) is False
 
 
 @pytest.mark.asyncio

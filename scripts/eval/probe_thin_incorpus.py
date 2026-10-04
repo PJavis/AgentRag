@@ -1,6 +1,6 @@
 """Companion to probe_thin_context: same spy, but on IN-CORPUS (relevant) suite
 questions. Compares relevant max rerank_score vs the ~0.50 floor seen on
-out-of-corpus, to decide whether a recalibrated RETRIEVAL_RELEVANCE_FLOOR can
+out-of-corpus, to decide whether a recalibrated RETRIEVAL_RELEVANCE_MIN_PROB can
 separate them.
 """
 import asyncio
@@ -28,7 +28,7 @@ svc._is_thin_context = _spy
 
 
 async def main():
-    print(f"IN-CORPUS · abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_FLOOR}")
+    print(f"IN-CORPUS · abstain={settings.ANSWER_ABSTAIN_ON_THIN_CONTEXT} floor={settings.RETRIEVAL_RELEVANCE_MIN_PROB}")
     # full in-corpus questions from the already-run benchmark report (no HF load)
     pc = json.loads(Path("data/eval/abstain_ab_A_off.json").read_text(encoding="utf-8"))["per_case"]
     qs = [c["question"] for c in pc][:10]

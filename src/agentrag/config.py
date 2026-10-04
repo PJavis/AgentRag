@@ -131,21 +131,23 @@ class Settings(BaseSettings):
     RETRIEVAL_RERANK_TEI_URL: str | None = None
     RETRIEVAL_RERANK_TEMPERATURE: float = 0.0
     #: Relevance-floor gate — drop retrieved candidates whose reranker relevance
-    #: (sigmoid of the bge cross-encoder score, 0–1) is below the floor BEFORE the
+    #: (rerank_score: the cross-encoder's probability, 0–1) is below the floor BEFORE the
     #: answer sees them. Prunes distractors; an out-of-corpus query whose top hit
     #: is below floor → empty context → clean abstain (no distractor citations).
     #: Only effective with RETRIEVAL_RERANK_BACKEND=local_cross_encoder or tei (the
     #: backends that emit a score). Default OFF (changes answer behavior).
     RETRIEVAL_RELEVANCE_GATE_ENABLED: bool = False
-    #: bge-reranker-v2-m3 (sigmoid) scores off-corpus content ~0.50 (logit≈0). 2026-06-19
-    #: calibration put relevant top-chunks ~0.73 and set the floor at 0.6; the 2026-06-26
-    #: prod-corpus probe (docs/eval/eval_fidelity_probe_prod_2026-06-26.md) found that
-    #: PARAPHRASED relevant VN chunks score as low as ~0.61 and jitter under 0.6 across the
-    #: agent's query-rewrites → flaky FALSE-abstention with the gold chunk at rank 0. Lowered
-    #: to 0.55 — mid-band between OOC ~0.50 and low-relevant ~0.61, giving ~0.05 margin both
-    #: sides (this realises the "margin/anti-knife-edge" intent without a separate constant
-    #: that would double-loosen). Re-measure + re-validate OOC abstention per corpus.
-    RETRIEVAL_RELEVANCE_FLOOR: float = 0.55
+    #: Minimum rerank_score (bge-reranker-v2-m3 probability) for "relevant". Off-corpus
+    #: content scores ~0.00, relevant top-chunks ~0.99, paraphrased relevant VN chunks as
+    #: low as ~0.45. 0.2007 is EXACTLY the old RETRIEVAL_RELEVANCE_FLOOR=0.55, which was
+    #: calibrated on a double-sigmoided score (sigmoid(probability), range 0.5–0.731) before
+    #: 2026-10-04: logit(0.55) = 0.2007. History of the old-scale value: 0.6 (2026-06-19)
+    #: → 0.55 (2026-06-26 prod probe: paraphrased gold jittered under 0.6 → false abstain).
+    #: Re-measure + re-validate OOC abstention per corpus.
+    RETRIEVAL_RELEVANCE_MIN_PROB: float = 0.2007
+    #: REMOVED 2026-10-04 (old double-sigmoid scale). Setting it fails startup with the
+    #: converted RETRIEVAL_RELEVANCE_MIN_PROB value, so an old .env can't silently keep 0.55.
+    RETRIEVAL_RELEVANCE_FLOOR: float | None = None
     #: Always merge a plain-hybrid retrieval on the RAW question into the rerank
     #: candidate pool (ContextAssembler). The agent's decide-step rewrites/sub-queries
     #: (hybrid_kg + variants) can retrieve worse chunks than the raw question and drop the
@@ -158,16 +160,20 @@ class Settings(BaseSettings):
     #: reranked BEFORE the trim (context.assemble), so extra recall doesn't flood
     #: the packed answer context — low-rerank distractors are trimmed.
     RETRIEVAL_RAW_QUERY_TOP_K: int = 50
-    #: When best rerank score is in [floor, floor+GRAY_MARGIN), treat the
+    #: When best rerank score is in [min_prob, min_prob+GRAY_MARGIN_PROB), treat the
     #: context as uncertain and force the strong-abstain prompt (out-of-corpus
     #: distractors that score just over the floor → confident-hallucination fix).
-    ANSWERABILITY_GRAY_MARGIN: float = 0.13
+    #: 0.5531 is exactly the old ANSWERABILITY_GRAY_MARGIN=0.13 (band [0.55, 0.68) on the
+    #: double-sigmoid scale = [0.2007, 0.7538) as a probability).
+    ANSWERABILITY_GRAY_MARGIN_PROB: float = 0.5531
+    #: REMOVED 2026-10-04 (old scale); setting it fails startup, see RETRIEVAL_RELEVANCE_FLOOR.
+    ANSWERABILITY_GRAY_MARGIN: float | None = None
     #: Master switch for the gray-band abstain. Default OFF — enable after the
     #: refusal-set re-eval beats baseline (docs/eval/benchmark_abstain_ab_*).
     ANSWERABILITY_GATE_ENABLED: bool = False
     #: Abstain-on-thin-context (answer-layer, the corrected version of the
     #: relevance gate). When the best retrieved chunk's rerank relevance is below
-    #: RETRIEVAL_RELEVANCE_FLOOR, KEEP the context but instruct the model to abstain
+    #: RETRIEVAL_RELEVANCE_MIN_PROB, KEEP the context but instruct the model to abstain
     #: ("no relevant info; don't answer from background knowledge; don't cite") AND
     #: drop distractor citations from the resulting abstention. ON since 2026-06-19 A/B
     #: at floor 0.6: out-of-corpus refusal_rate 0→0.467, hedged_cited 0.533→0, in-corpus flat.

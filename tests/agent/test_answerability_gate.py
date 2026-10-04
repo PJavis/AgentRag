@@ -38,7 +38,7 @@ def test_drop_citations_on_gray_band_abstain_when_gate_on(monkeypatch):
     # scrub distractor citations on the forced refusal.
     monkeypatch.setattr(settings, "ANSWER_ABSTAIN_ON_THIN_CONTEXT", True)
     monkeypatch.setattr(settings, "ANSWERABILITY_GATE_ENABLED", True)
-    monkeypatch.setattr(settings, "ANSWERABILITY_GRAY_MARGIN", 0.13)
+    monkeypatch.setattr(settings, "ANSWERABILITY_GRAY_MARGIN_PROB", 0.13)
     assert _should_drop_abstention_citations(_REFUSAL, _ctx(0.50, 0.64), floor=0.6) is True
 
 

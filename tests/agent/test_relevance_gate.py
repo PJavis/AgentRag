@@ -1,9 +1,8 @@
 """Relevance-floor citation gate — drop low-relevance distractors before the
-answer node sees them. Pure-function unit tests + sigmoid sanity."""
+answer node sees them. Pure-function unit tests."""
 from __future__ import annotations
 
 from src.agentrag.agent.context import apply_relevance_floor
-from src.agentrag.retrieval.reranker import _sigmoid
 
 
 def test_drops_below_floor_keeps_above():
@@ -29,17 +28,3 @@ def test_mixed_missing_score_is_kept():
     out = apply_relevance_floor(items, floor=0.3)
     assert {i["id"] for i in out} == {"a", "b"}
 
-
-def test_sigmoid_midpoint():
-    assert _sigmoid(0.0) == 0.5
-
-
-def test_sigmoid_saturates():
-    assert _sigmoid(1000.0) > 0.999
-    assert _sigmoid(-1000.0) < 0.001
-
-
-def test_sigmoid_no_overflow_on_extremes():
-    # Numerically stable: large magnitudes must not raise OverflowError.
-    assert 0.0 <= _sigmoid(1000.0) <= 1.0
-    assert 0.0 <= _sigmoid(-1000.0) <= 1.0

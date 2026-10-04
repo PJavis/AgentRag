@@ -36,10 +36,12 @@ measured with; 64 was untested.
 - Mean difference −0.018, inside noise: the per-row system difference has
   sd 0.227. The oracle, which gets identical gold context in both arms, still
   moves by −0.010 (sd 0.095).
-- Only 3 rows swing ≥ 0.3. prod_corpus-11 (0 → 1) and prod_corpus-7 (0.88 → 0)
-  flip in opposite directions with gold packed in both arms, which points to
-  answer/judge variance (AGENT_TEMPERATURE=0.3), not retrieval.
-  prod_corpus_multihop-10 drops 1.00 → 0.70.
+- Only 3 rows swing ≥ 0.3, and none show a retrieval effect:
+  - prod_corpus-11 goes 0 → 1 with gold packed in both arms, so answer/judge
+    variance (AGENT_TEMPERATURE=0.3).
+  - prod_corpus-7 goes 0.88 → 0 even though 64 is the only arm that packed the
+    gold chunk (crude substring check). That's the reverse of a retrieval gain.
+  - prod_corpus_multihop-10 drops 1.00 → 0.70 with gold packed in both arms.
 
 ## Cost
 

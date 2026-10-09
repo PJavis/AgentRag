@@ -355,6 +355,11 @@ class Settings(BaseSettings):
     RAPTOR_SUMMARY_TASK: str = "raptor_summary"
     #: Max share of a result set that may be RAPTOR summary nodes.
     RAPTOR_SUMMARY_MAX_RATIO: float = 0.4
+    #: Query-time A/B switch: drop RAPTOR summary nodes (segment_type
+    #: "raptor_summary") from sparse + dense search without a re-ingest.
+    #: Default False = current behaviour (summaries searchable, demoted by
+    #: RAPTOR_SUMMARY_MAX_RATIO).
+    RETRIEVAL_EXCLUDE_RAPTOR_SUMMARIES: bool = False
 
     # ── WS3: CRAG critique + multi-hop ───────────────────────────────────────
     CRAG_ENABLED: bool = False

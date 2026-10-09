@@ -52,6 +52,14 @@ def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
     return clauses
 
 
+def _raptor_exclusion_clauses() -> list[dict[str, Any]]:
+    """Filter clause that hides RAPTOR summary nodes when
+    RETRIEVAL_EXCLUDE_RAPTOR_SUMMARIES is on (query-time A/B, no re-ingest)."""
+    if not settings.RETRIEVAL_EXCLUDE_RAPTOR_SUMMARIES:
+        return []
+    return [{"bool": {"must_not": [{"term": {"segment_type": "raptor_summary"}}]}}]
+
+
 class ElasticsearchStore:
     def __init__(self):
         # Reuse the process-wide client so we don't leak aiohttp connectors
@@ -479,6 +487,7 @@ class ElasticsearchStore:
                 {"term": {"document_title.keyword": document_title}}
             )
         filter_clauses.extend(_tag_filter_clauses(filters))
+        filter_clauses.extend(_raptor_exclusion_clauses())
         if filter_clauses:
             query_body = {
                 "bool": {
@@ -573,6 +582,7 @@ class ElasticsearchStore:
                 {"term": {"document_title.keyword": document_title}}
             )
         knn_filter_clauses.extend(_tag_filter_clauses(filters))
+        knn_filter_clauses.extend(_raptor_exclusion_clauses())
         if knn_filter_clauses:
             # knn.filter accepts single clause or bool wrapper for multiple
             search_body["knn"]["filter"] = (

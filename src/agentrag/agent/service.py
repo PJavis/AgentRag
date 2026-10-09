@@ -430,6 +430,7 @@ class AgentService:
                 async for token in client.stream_text(
                     f"{_lang_instruction(question)} {_CHITCHAT_SYSTEM_PROMPT}",
                     question,
+                    task="classify",
                 ):
                     yield _sse("token", {"text": token})
                 yield _sse("done", {
@@ -520,7 +521,7 @@ class AgentService:
                 client = AgentLLM(model_override=model_override)
             else:
                 client = self.llm_gateway._resolve_client("answer")
-            async for token in client.stream_text(system_prompt, user_prompt):
+            async for token in client.stream_text(system_prompt, user_prompt, task="answer"):
                 yield _sse("token", {"text": token})
 
             packed = assembly["packed_context"]
@@ -597,7 +598,7 @@ class AgentService:
             # Own task key so planning can route to a strong model (e.g. v4-pro)
             # independently of the cheap reactive `decide` step.
             client = self.llm_gateway._resolve_client("plan")
-            result = await client.json_response(system, user)
+            result = await client.json_response(system, user, task="plan")
         except Exception:
             return []
         if not isinstance(result, dict):

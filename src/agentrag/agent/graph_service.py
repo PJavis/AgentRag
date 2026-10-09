@@ -147,6 +147,7 @@ async def chitchat_answer(state: ChatState) -> dict[str, Any]:
     answer = await client.text_response(
         system_prompt=f"{_lang_instruction(state['question'])} {_CHITCHAT_SYSTEM_PROMPT}",
         user_prompt=state["question"],
+        task="classify",
     )
     elapsed = (time.perf_counter() - state["total_started"]) * 1000
     return {

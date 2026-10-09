@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import pytest
 
+from tests.ontology_seed import requires_seeded_ontology
+
 from src.agentrag.ingestion.section_tagger import SectionTagger
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_tagger_uses_section_path():
     tagger = SectionTagger()
@@ -18,6 +21,7 @@ async def test_tagger_uses_section_path():
     assert "Tim" in out["canonical_terms"]
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_tagger_generic_heading_falls_back_to_content():
     tagger = SectionTagger()
@@ -42,6 +46,7 @@ async def test_tagger_no_match_returns_none_tag():
     assert out["canonical_terms"] == []
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_tagger_aggregates_specialties():
     tagger = SectionTagger()

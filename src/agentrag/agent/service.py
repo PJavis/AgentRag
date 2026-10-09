@@ -82,6 +82,14 @@ def _has_uncertainty(answer: str) -> bool:
     return any(m in low for m in _UNCERTAINTY_MARKERS)
 
 
+
+def _prompt_json(payload: Any) -> str:
+    """Serialize an LLM prompt payload with raw UTF-8. ensure_ascii=True escaped
+    every Vietnamese accented character to \\uXXXX: 2.22x the DeepSeek tokens for
+    the same answer context, and the model read escape codes, not Vietnamese."""
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _is_thin_context(packed_context: list[dict[str, Any]] | None, floor: float) -> bool:
     """True when reranking produced scores AND the BEST one is below floor —
     i.e. nothing relevant was retrieved. No-op (False) when no item carries a
@@ -512,7 +520,7 @@ class AgentService:
             }
             if memory_context:
                 user_payload["conversation_memory"] = memory_context
-            user_prompt = json.dumps(user_payload, ensure_ascii=True)
+            user_prompt = _prompt_json(user_payload)
 
             # UI model override (picker) wins for the answer step; else task routing.
             if model_override:
@@ -660,7 +668,7 @@ class AgentService:
         }
         if memory_context:
             decide_payload["conversation_memory"] = memory_context
-        user_prompt = json.dumps(decide_payload, ensure_ascii=True)
+        user_prompt = _prompt_json(decide_payload)
         decision, _latency_ms = await self.llm_gateway.json_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -947,7 +955,7 @@ class AgentService:
         }
         if memory_context:
             answer_payload["conversation_memory"] = memory_context
-        user_prompt = json.dumps(answer_payload, ensure_ascii=True)
+        user_prompt = _prompt_json(answer_payload)
         # Debug: log payload sizes to diagnose summarization failures.
         import logging as _logging
         _ctx_log = _logging.getLogger(__name__)

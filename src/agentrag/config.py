@@ -1,9 +1,13 @@
 # src/pam/config.py
+import re
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote_plus
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Field names whose values are credentials (masked in repr/str).
+_SECRET_FIELD = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD)$", re.I)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -439,6 +443,16 @@ class Settings(BaseSettings):
 
     # Worker concurrency (for uvicorn / gunicorn)
     UVICORN_WORKERS: int = 1
+
+    def __repr_args__(self):
+        # Mask credentials wherever the object is printed (repr/str, pytest and
+        # monkeypatch messages, debuggers, tracebacks that show locals). Values
+        # stay readable as attributes.
+        for name, value in super().__repr_args__():
+            if value and name and _SECRET_FIELD.search(name):
+                yield name, "***"
+            else:
+                yield name, value
 
     @property
     def DATABASE_URL(self) -> str:

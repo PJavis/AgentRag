@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import pytest
 
+from tests.ontology_seed import requires_seeded_ontology
+
 from src.agentrag.ontology.resolver import TermResolver, _norm
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_resolver_exact():
     r = TermResolver()
@@ -20,6 +23,7 @@ async def test_resolver_exact():
     assert out.confidence == 1.0
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_resolver_synonym():
     r = TermResolver()
@@ -29,6 +33,7 @@ async def test_resolver_synonym():
     assert out.confidence == 1.0
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_resolver_norm_diacritic_insensitive():
     r = TermResolver()
@@ -48,6 +53,7 @@ def test_norm_collapse_whitespace():
     assert _norm("  Đau   NGỰC  ") == "dau nguc"
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_resolver_fuzzy_typo():
     r = TermResolver()
@@ -57,6 +63,7 @@ async def test_resolver_fuzzy_typo():
     assert 0.45 < out.confidence < 1.0
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_expand_query_adds_synonyms():
     r = TermResolver()
@@ -65,6 +72,7 @@ async def test_expand_query_adds_synonyms():
     assert "Đau ngực" in expanded
 
 
+@requires_seeded_ontology
 @pytest.mark.asyncio
 async def test_find_in_text_returns_terms():
     r = TermResolver()

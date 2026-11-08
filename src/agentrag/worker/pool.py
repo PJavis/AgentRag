@@ -13,6 +13,12 @@ async def init_pool(redis_url: str) -> ArqRedis:
     return _pool
 
 
+def set_pool(pool: ArqRedis) -> None:
+    """Install an existing pool (the ARQ worker passes its own ctx['redis'])."""
+    global _pool
+    _pool = pool
+
+
 async def close_pool() -> None:
     global _pool
     if _pool is not None:

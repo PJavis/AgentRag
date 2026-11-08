@@ -13,17 +13,27 @@ from arq.connections import RedisSettings
 
 from src.agentrag.common.build_info import log_build_banner
 from src.agentrag.config import settings as app_settings
-from src.agentrag.worker.functions import chat_memory, consolidate, graph_ingest, vision_extract
+from src.agentrag.worker.functions import (
+    chat_memory,
+    consolidate,
+    graph_ingest,
+    upload_ingest,
+    vision_extract,
+)
+from src.agentrag.worker.pool import set_pool
 
 
 async def _on_startup(ctx: dict) -> None:
     """Which code is actually running. The worker ingests documents, so a stale
     image here corrupts a whole corpus silently rather than erroring."""
     log_build_banner("worker")
+    # upload_ingest runs ingest_folder here, which enqueues graph_ingest /
+    # vision_extract through get_pool(). Reuse the worker's own connection.
+    set_pool(ctx["redis"])
 
 
 class WorkerSettings:
-    functions = [graph_ingest, consolidate, chat_memory, vision_extract]
+    functions = [graph_ingest, consolidate, chat_memory, vision_extract, upload_ingest]
     on_startup = _on_startup
     redis_settings = RedisSettings.from_dsn(
         app_settings.REDIS_URL or "redis://127.0.0.1:6379/0"

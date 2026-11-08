@@ -31,6 +31,8 @@ from src.agentrag.adapter.models import (
 )
 from src.agentrag.agent.factory import get_agent_service
 from src.agentrag.chat.history import ConversationStore
+from src.agentrag.chat.turns import attach_follow_ups, load_history, record_turn_memory
+from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Conversation, Document, Segment
 
@@ -360,7 +362,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     history: list[dict] = []
     user_appended_ok = False
     try:
-        history = await store.list_messages(body.session_id, limit=20)
+        history = await load_history(store, body.session_id)
     except Exception:
         _log.exception("execute_chat: list_messages(history) failed")
 
@@ -413,6 +415,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
             _log.exception("execute_chat: notebook scope resolution failed")
 
     result: dict
+    agent_failed = False
     agent = get_agent_service()
     try:
         result = await agent.chat(
@@ -425,6 +428,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         )
     except Exception as exc:
         _log.exception("execute_chat: agent.chat failed")
+        agent_failed = True
         result = {
             "answer": f"⚠️ Agent failed: {type(exc).__name__}: {str(exc)[:300]}",
             "citations": [],
@@ -453,6 +457,9 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         )
     except Exception:
         _log.exception("execute_chat: append_message(assistant) failed")
+    await record_turn_memory(
+        body.session_id, body.message, result.get("answer", ""), failed=agent_failed
+    )
 
     # B2 — Follow-up suggestions. Best-effort: log + ignore on failure.
     follow_ups: list[str] = []
@@ -467,28 +474,7 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
         )
     except Exception:
         _log.exception("execute_chat: generate_followups failed")
-    # Persist on the assistant turn's extra_metadata
-    if follow_ups and isinstance(appended, dict):
-        try:
-            from src.agentrag.database import AsyncSessionLocal
-            from src.agentrag.database.models import ChatMessage as _CM
-            msg_id = appended.get("message_id")
-            if msg_id:
-                async with AsyncSessionLocal() as _s:
-                    row = await _s.get(_CM, uuid.UUID(msg_id))
-                    if row is not None:
-                        meta = dict(row.extra_metadata or {})
-                        meta["follow_ups"] = follow_ups
-                        row.extra_metadata = meta
-                        await _s.commit()
-                # Invalidate the messages cache so the very next list_messages
-                # picks up the updated extra_metadata immediately.
-                try:
-                    await store._delete_messages_cache(body.session_id)
-                except Exception:
-                    pass
-        except Exception:
-            _log.exception("execute_chat: persist follow_ups failed")
+    await attach_follow_ups(store, body.session_id, appended, follow_ups)
 
     # S6 — record chat_turn event for the activity feed (best-effort)
     try:
@@ -575,7 +561,9 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
         raise HTTPException(400, "No preceding user message to regenerate from")
 
     user_question = msgs[user_idx].get("content", "")
-    history = msgs[:user_idx + 1]  # keep prior turns + user msg, drop everything after
+    # Prior turns only (the question itself is passed separately), windowed the
+    # same as a fresh turn — previously this sent the whole conversation.
+    history = msgs[:user_idx][-settings.CHAT_HISTORY_WINDOW:] if settings.CHAT_HISTORY_WINDOW > 0 else []
 
     # Drop the stale assistant turn + ALL subsequent turns (user + assistant).
     # Regenerating from an old turn invalidates the downstream conversation
@@ -717,25 +705,7 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
         )
     except Exception:
         _log.exception("regenerate: generate_followups failed")
-    if follow_ups and isinstance(appended, dict):
-        try:
-            from src.agentrag.database import AsyncSessionLocal as _ASL
-            from src.agentrag.database.models import ChatMessage as _CM
-            msg_id = appended.get("message_id")
-            if msg_id:
-                async with _ASL() as _s:
-                    row = await _s.get(_CM, uuid.UUID(msg_id))
-                    if row is not None:
-                        meta = dict(row.extra_metadata or {})
-                        meta["follow_ups"] = follow_ups
-                        row.extra_metadata = meta
-                        await _s.commit()
-                try:
-                    await store._delete_messages_cache(body.session_id)
-                except Exception:
-                    pass
-        except Exception:
-            _log.exception("regenerate: persist follow_ups failed")
+    await attach_follow_ups(store, body.session_id, appended, follow_ups)
 
     try:
         msgs = await store.list_messages(body.session_id, limit=1000)
@@ -795,9 +765,9 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
 
     history: list[dict] = []
     try:
-        history = await store.list_messages(body.session_id, limit=20)
+        history = await load_history(store, body.session_id)
     except Exception:
-        pass
+        _log.exception("execute_chat_stream: list_messages(history) failed")
     try:
         await store.append_message(body.session_id, role="user", content=body.message)
     except Exception:
@@ -956,6 +926,7 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                     )
                 except Exception:
                     _log.exception("execute_chat_stream: append assistant failed")
+                await record_turn_memory(body.session_id, body.message, full_answer)
         except Exception as exc:
             _log.exception("execute_chat_stream: error")
             yield _sse("error", {"detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
@@ -1077,7 +1048,7 @@ async def send_message(
     meta = conv.get("extra_metadata") or {}
     document_title = meta.get("document_title")
 
-    history = await store.list_messages(session_id, limit=10)
+    history = await load_history(store, session_id)
     await store.append_message(session_id, role="user", content=body.message)
 
     admin = is_admin(request)
@@ -1137,21 +1108,8 @@ async def send_message(
         except Exception:
             pass
         # Persist follow_ups on the assistant turn so they survive a reload.
-        if follow_ups and isinstance(appended, dict):
-            try:
-                from src.agentrag.database import AsyncSessionLocal as _ASL
-                from src.agentrag.database.models import ChatMessage as _CM
-                _mid = appended.get("message_id")
-                if _mid:
-                    async with _ASL() as _s:
-                        _row = await _s.get(_CM, uuid.UUID(_mid))
-                        if _row is not None:
-                            meta = dict(_row.extra_metadata or {})
-                            meta["follow_ups"] = follow_ups
-                            _row.extra_metadata = meta
-                            await _s.commit()
-            except Exception:
-                pass
+        await attach_follow_ups(store, session_id, appended, follow_ups)
+        await record_turn_memory(session_id, body.message, answer)
 
         on_sources = [
             {

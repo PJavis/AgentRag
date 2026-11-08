@@ -9,9 +9,11 @@ from fastapi import FastAPI, Body, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openai import RateLimitError
-from sqlalchemy import select, delete
+from sqlalchemy import select
 
 from src.agentrag.chat.history import ConversationStore
+from src.agentrag.chat.turns import load_history, record_turn_memory
+from src.agentrag.services import document_service
 from src.agentrag.common.langfuse_client import init_langfuse, langfuse_flush
 from src.agentrag.common.phoenix_client import init_phoenix
 from src.agentrag.config import settings
@@ -19,7 +21,7 @@ from src.agentrag.mcp.app import mcp
 from src.agentrag.config_validation import validate_settings
 from src.agentrag.health.embedding_dims import check_embedding_dims_at_startup
 from src.agentrag.database import AsyncSessionLocal
-from src.agentrag.database.models import Document, Segment
+from src.agentrag.database.models import Document
 from src.agentrag.health.providers import collect_provider_health
 from src.agentrag.ingestion.pipeline import ingest_folder
 from src.agentrag.worker.pool import init_pool, close_pool, get_pool
@@ -205,17 +207,10 @@ async def list_documents(limit: int = 50):
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str):
     _require_uuid(document_id, "document")
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Document).where(Document.id == document_id)
-        )
-        doc = result.scalar_one_or_none()
-        if doc is None:
-            raise HTTPException(status_code=404, detail="document not found")
-        await session.execute(delete(Segment).where(Segment.document_id == doc.id))
-        await session.delete(doc)
-        await session.commit()
-    return {"ok": True, "document_id": document_id}
+    result = await document_service.delete_document(uuid.UUID(document_id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return {"ok": True, **result}
 
 
 @app.post("/search")
@@ -286,10 +281,7 @@ async def chat(payload: dict = Body(...)):
         conversation_id=conversation_id,
         title=conversation_title,
     )
-    history = await store.list_messages(
-        conversation_id=conversation["conversation_id"],
-        limit=settings.CHAT_HISTORY_WINDOW,
-    )
+    history = await load_history(store, conversation["conversation_id"])
     agent = get_agent_service()
     try:
         await store.append_message(
@@ -315,16 +307,7 @@ async def chat(payload: dict = Body(...)):
             timings_ms=result.get("timings_ms", {}),
             extra_metadata={"document_title": document_title},
         )
-        if settings.CHAT_STRUCTMEM_ENABLED and assistant_content:
-            from datetime import datetime, timezone
-            await get_pool().enqueue_job(
-                "chat_memory",
-                conversation_id=cid,
-                user_message=question,
-                assistant_message=assistant_content,
-                turn_id=str(uuid.uuid4()),
-                turn_timestamp=datetime.now(timezone.utc).isoformat(),
-            )
+        await record_turn_memory(cid, question, assistant_content)
         result["conversation_id"] = cid
         return result
     except RateLimitError as exc:
@@ -423,10 +406,7 @@ async def chat_stream(payload: dict = Body(...)):
         conversation_id=conversation_id,
         title=conversation_title,
     )
-    history = await store.list_messages(
-        conversation_id=conversation["conversation_id"],
-        limit=settings.CHAT_HISTORY_WINDOW,
-    )
+    history = await load_history(store, conversation["conversation_id"])
     await store.append_message(
         conversation_id=conversation["conversation_id"],
         role="user",
@@ -464,16 +444,7 @@ async def chat_stream(payload: dict = Body(...)):
                 content=full_answer,
                 extra_metadata={"document_title": document_title},
             )
-            if settings.CHAT_STRUCTMEM_ENABLED:
-                from datetime import datetime, timezone
-                await get_pool().enqueue_job(
-                    "chat_memory",
-                    conversation_id=stream_cid,
-                    user_message=question,
-                    assistant_message=full_answer,
-                    turn_id=str(uuid.uuid4()),
-                    turn_timestamp=datetime.now(timezone.utc).isoformat(),
-                )
+            await record_turn_memory(stream_cid, question, full_answer)
 
     return StreamingResponse(
         event_generator(),

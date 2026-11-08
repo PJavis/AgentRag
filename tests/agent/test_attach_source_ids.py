@@ -75,3 +75,20 @@ def test_source_chat_links_citations():
     from src.agentrag.adapter.routers import chat
 
     assert "_attach_source_ids(citations)" in inspect.getsource(chat.send_message)
+
+
+async def test_document_id_links_even_when_the_title_is_shared(db):
+    # Two users' "report.pdf": the title is ambiguous, the segment's id is not.
+    a = "11111111-1111-4111-8111-111111111111"
+    b = "22222222-2222-4222-8222-222222222222"
+    db([(a, "report", "pdf"), (b, "report", "md")])
+    cites = [{"document_title": "report", "document_id": b}]
+    await _attach_source_ids(cites)
+    assert cites[0]["source_id"] == b and cites[0]["source_type"] == "md"
+
+
+async def test_unknown_document_id_stays_unlinked(db):
+    db([])
+    cites = [{"document_title": "report", "document_id": "33333333-3333-4333-8333-333333333333"}]
+    await _attach_source_ids(cites)
+    assert "source_id" not in cites[0]

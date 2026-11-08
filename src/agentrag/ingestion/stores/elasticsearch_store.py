@@ -165,6 +165,9 @@ class ElasticsearchStore:
         if group_id:
             mem_q = {"term": {"group_id": group_id}}
         else:
+            # No (unshared) group known: fall back to the title, unless another
+            # document carries it. Callers pass group_id=None when the group is
+            # shared with another document.
             mem_q = None if title_shared else by_title
         title_q = None if title_shared else by_title
         plan = [
@@ -737,6 +740,7 @@ class ElasticsearchStore:
                     "source": source,
                     "content": payload.get("content"),
                     "document_title": payload.get("document_title"),
+                    "document_id": payload.get("document_id"),
                     "section_path": payload.get("section_path"),
                     "position": payload.get("position"),
                     "content_hash": payload.get("content_hash"),

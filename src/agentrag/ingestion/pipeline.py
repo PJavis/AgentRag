@@ -79,6 +79,17 @@ async def _build_and_index_raptor(
     return len(summary_nodes)
 
 
+async def _source_id_shared(session: Any, source_id: str, document_id: Any) -> bool:
+    """Another document with this source_id shares its StructMem group (legacy
+    uploads used the bare filename): its memory must survive this re-ingest."""
+    row = await session.execute(
+        select(Document.id)
+        .where(Document.source_id == source_id, Document.id != document_id)
+        .limit(1)
+    )
+    return row.first() is not None
+
+
 async def _title_shared(session: Any, title: str, document_id: Any) -> bool:
     """Does another document carry this title? Then title-keyed ES data (legacy
     segments without a document_id) is partly that document's and must not be
@@ -340,7 +351,11 @@ async def ingest_folder(
                     await es_store.delete_document(
                         doc["title"],
                         document_id=str(doc_id),
-                        group_id=StructMemService.normalize_group_id(doc["source_id"]),
+                        group_id=(
+                            None
+                            if await _source_id_shared(session, doc["source_id"], doc_id)
+                            else StructMemService.normalize_group_id(doc["source_id"])
+                        ),
                         title_shared=await _title_shared(session, doc["title"], doc_id),
                     )
                 except Exception:

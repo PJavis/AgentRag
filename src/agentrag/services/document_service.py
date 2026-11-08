@@ -65,6 +65,19 @@ async def _titles_still_used(titles: list[str]) -> set[str]:
         return {t for (t,) in rows.all()}
 
 
+async def _source_ids_still_used(source_ids: list[str]) -> set[str]:
+    """source_ids another document still carries. StructMem memory is grouped
+    by source_id, and legacy uploads used the bare filename, so two users'
+    "report.pdf" share one group: purging it would delete the other's memory."""
+    if not source_ids:
+        return set()
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(Document.source_id).where(Document.source_id.in_(source_ids)).distinct()
+        )
+        return {s for (s,) in rows.all()}
+
+
 async def purge_document_artifacts(refs: list[PurgeRef]) -> dict[str, Any]:
     """Best-effort purge of a deleted document's ES docs and images, after the
     Postgres rows are gone. Bumps the corpus version once, only if something
@@ -75,6 +88,7 @@ async def purge_document_artifacts(refs: list[PurgeRef]) -> dict[str, Any]:
 
     unique = list({r.document_id: r for r in refs if r.document_id}.values())
     still_used = await _titles_still_used([r.title for r in unique if r.title])
+    groups_used = await _source_ids_still_used([r.source_id for r in unique if r.source_id])
     purged: dict[str, Any] = {}
     removed_any = False
     for ref in unique:
@@ -90,7 +104,7 @@ async def purge_document_artifacts(refs: list[PurgeRef]) -> dict[str, Any]:
                 document_id=ref.document_id,
                 group_id=(
                     StructMemService.normalize_group_id(ref.source_id)
-                    if ref.source_id else None
+                    if ref.source_id and ref.source_id not in groups_used else None
                 ),
                 title_shared=shared or not ref.title,
             )

@@ -254,7 +254,13 @@ class AgentTools:
     async def get_chunk_by_hash(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         hashes = tool_input.get("content_hashes") or []
         return {
+            # Scope only: these hashes come from this turn's own results, and
+            # the soft domain filters (never relaxed here) would drop untagged
+            # segments.
             "results": await self.es_store.get_chunks_by_hashes(
-                hashes, filters=self._current_filters()
+                hashes,
+                filters=(
+                    {"document_ids": _scope()} if _scope() is not None else None
+                ),
             )
         }

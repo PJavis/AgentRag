@@ -135,6 +135,7 @@ async def test_chunk_lookup_by_hash_is_scoped(monkeypatch):
     t = tools_mod.AgentTools.__new__(tools_mod.AgentTools)
     t.es_store = Store()
     set_document_scope([DOC_A])
+    set_domain_filter({"system": "cardio"})  # soft filters must not drop the lookup
     await t.get_chunk_by_hash({"content_hashes": ["h"]})
     assert seen["filters"] == {"document_ids": [DOC_A]}
 
@@ -186,3 +187,35 @@ def test_answer_cache_key_includes_scope():
     assert k([DOC_A]) != k([DOC_B])
     assert k([DOC_A, DOC_B]) == k([DOC_B, DOC_A])
     assert k(None) != k([])
+
+
+async def test_filename_hint_never_picks_another_notebooks_document(monkeypatch):
+    # "tóm tắt chương 3" in a notebook without such a document used to fall back
+    # to a GLOBAL title match: the turn was narrowed to someone else's document.
+    from src.agentrag.adapter.routers import chat
+
+    stmts = []
+
+    class Rows:
+        def all(self):
+            return [] if len(stmts) == 1 else [("Chuong 3 (other user)",)]
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, stmt):
+            stmts.append(stmt)
+            return Rows()
+
+    monkeypatch.setattr(chat, "AsyncSessionLocal", lambda: Session())
+    nb = "44444444-4444-4444-8444-444444444444"
+    assert await chat._resolve_document_hint("tóm tắt chương 3", nb) is None
+    assert len(stmts) == 1  # the notebook query only, no global fallback
+    # Outside a notebook (admin routes) the global match still applies.
+    stmts.clear()
+    stmts.append("pre")  # make the next query return the row
+    assert await chat._resolve_document_hint("tóm tắt chương 3", None) == "Chuong 3 (other user)"

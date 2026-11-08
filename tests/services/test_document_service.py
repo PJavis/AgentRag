@@ -81,6 +81,7 @@ def title_free(monkeypatch):
         return set()
 
     monkeypatch.setattr(document_service, "_titles_still_used", _free)
+    monkeypatch.setattr(document_service, "_source_ids_still_used", _free)
 
 
 async def test_delete_purges_es_images_and_bumps_cache(monkeypatch, tmp_path, es_calls, bumps, title_free):
@@ -118,7 +119,11 @@ async def test_shared_title_purges_by_id_and_keeps_title_keyed_data(monkeypatch,
     async def _used(titles):
         return set(titles)
 
+    async def _free(_ids):
+        return set()
+
     monkeypatch.setattr(document_service, "_titles_still_used", _used)
+    monkeypatch.setattr(document_service, "_source_ids_still_used", _free)
     monkeypatch.setattr(document_service.settings, "IMAGE_STORAGE_DIR", str(tmp_path))
     (tmp_path / "Shared").mkdir()
     ref = document_service.PurgeRef("d1", "Shared", "d1/Shared.pdf")
@@ -176,3 +181,20 @@ def test_every_delete_route_uses_the_service(module, func, expected):
 
     fn = getattr(importlib.import_module(module), func)
     assert expected in _calls_in(fn)
+
+
+async def test_shared_structmem_group_is_not_purged(monkeypatch, es_calls, bumps):
+    # Legacy uploads used the bare filename as source_id: two users' "report.pdf"
+    # share one StructMem group. Deleting one must not wipe the other's memory.
+    async def _none(_t):
+        return set()
+
+    async def _shared(ids):
+        return set(ids)
+
+    monkeypatch.setattr(document_service, "_titles_still_used", _none)
+    monkeypatch.setattr(document_service, "_source_ids_still_used", _shared)
+    await document_service.purge_document_artifacts(
+        [document_service.PurgeRef("d1", "report", "report.pdf")]
+    )
+    assert es_calls[0]["group_id"] is None and es_calls[0]["document_id"] == "d1"

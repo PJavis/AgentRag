@@ -238,9 +238,12 @@ async def _resolve_document_hint(question: str, notebook_id: str | None) -> str 
                 from sqlalchemy import or_
                 q = q.where(or_(*ors)).limit(5)
                 rows = (await session.execute(q)).all()
-                if rows:
-                    return rows[0][0]
-        # Fallback: search globally.
+                return rows[0][0] if rows else None
+            # A notebook chat must not pick another notebook's document: the
+            # global match narrowed the turn to a document outside its scope,
+            # so it searched nothing (and before that, leaked the document).
+            return None
+        # Outside a notebook (admin routes): search globally.
         from sqlalchemy import or_
         q2 = select(Document.title).where(
             or_(*[func.lower(Document.title).like(p.lower()) for p in patterns])

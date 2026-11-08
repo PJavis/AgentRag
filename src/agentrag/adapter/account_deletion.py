@@ -25,15 +25,16 @@ async def delete_user_data(user_id: str) -> dict[str, int]:
     ES + image-file purge. Only ever touches rows matching this user_id."""
     counts = {"documents": 0, "segments": 0, "conversations": 0,
               "messages": 0, "feedback": 0, "events": 0}
-    titles: list[str] = []
+    from src.agentrag.services.document_service import PurgeRef, purge_document_artifacts
+
+    refs: list[PurgeRef] = []
 
     async with AsyncSessionLocal() as s:
         docs = (await s.execute(select(Document).where(Document.user_id == user_id))).scalars().all()
         for doc in docs:
             seg = await s.execute(delete(Segment).where(Segment.document_id == doc.id))
             counts["segments"] += seg.rowcount or 0
-            if doc.title:
-                titles.append(doc.title)
+            refs.append(PurgeRef.of(doc))
             await s.delete(doc)
             counts["documents"] += 1
 
@@ -55,9 +56,7 @@ async def delete_user_data(user_id: str) -> dict[str, int]:
         await s.commit()
 
     # Best-effort search/file purge — Postgres is already committed above.
-    from src.agentrag.services.document_service import purge_document_artifacts
-
-    await purge_document_artifacts(titles)
+    await purge_document_artifacts(refs)
 
     logger.info("account wipe user=%s counts=%s", user_id, counts)
     return counts

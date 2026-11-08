@@ -311,34 +311,58 @@ _PRIMARY_ANSWER_KEYS = (
 
 
 async def _attach_source_ids(citations: list[dict[str, Any]]) -> None:
-    """Mutate citations in place, adding `source_id` resolved from document_title.
+    """Mutate citations in place, adding `source_id` (+ `source_type`).
 
-    The UI uses this to open the cited page of the original. Titles that don't
-    resolve get no source_id (badge stays hover-only). A title shared by
-    several documents is ambiguous and also left unlinked — it used to link to
-    whichever row came last. `source_type` lets the UI skip downloading a
-    non-PDF original just to find out it cannot open it at a page.
+    The UI uses this to open the cited page of the original. A citation whose
+    segment carries `document_id` links to exactly that document. Older
+    citations fall back to the title; a title shared by several documents is
+    ambiguous and left unlinked (it used to link to whichever row came last),
+    as is one that does not resolve. `source_type` lets the UI skip
+    downloading a non-PDF original just to find out it cannot open it at a page.
     """
-    titles = {c.get("document_title") for c in citations if c.get("document_title")}
-    if not titles:
+    import uuid as _uuid
+
+    ids: set[_uuid.UUID] = set()
+    for c in citations:
+        try:
+            if c.get("document_id"):
+                ids.add(_uuid.UUID(str(c["document_id"])))
+        except (TypeError, ValueError):
+            continue
+    titles = {
+        c.get("document_title") for c in citations
+        if c.get("document_title") and not c.get("document_id")
+    }
+    if not ids and not titles:
         return
     try:
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
 
         from src.agentrag.database import AsyncSessionLocal
         from src.agentrag.database.models import Document
 
+        conds = []
+        if ids:
+            conds.append(Document.id.in_(ids))
+        if titles:
+            conds.append(Document.title.in_(titles))
         async with AsyncSessionLocal() as session:
             rows = await session.execute(
-                select(Document.id, Document.title, Document.source_type)
-                .where(Document.title.in_(titles))
+                select(Document.id, Document.title, Document.source_type).where(or_(*conds))
             )
+            by_id: dict[str, str | None] = {}
             matches: dict[str, list[tuple[str, str | None]]] = {}
             for doc_id, title, source_type in rows.all():
+                by_id[str(doc_id)] = source_type
                 matches.setdefault(title, []).append((str(doc_id), source_type))
     except Exception:  # noqa: BLE001 — best-effort enrichment, never break the answer
         return
     for c in citations:
+        did = str(c.get("document_id") or "")
+        if did:
+            if did in by_id:
+                c["source_id"], c["source_type"] = did, by_id[did]
+            continue
         found = matches.get(c.get("document_title")) or []
         if len(found) == 1:
             c["source_id"], c["source_type"] = found[0]
@@ -750,6 +774,7 @@ class AgentService:
             excerpt = (ctx.get("excerpt") or ctx.get("content") or "")[:300]
             entry: dict[str, Any] = {
                 "document_title": citation.get("document_title"),
+                "document_id": citation.get("document_id") or ctx.get("document_id"),
                 "section_path": citation.get("section_path"),
                 "position": citation.get("position"),
                 "content_hash": citation.get("content_hash"),
@@ -807,6 +832,7 @@ class AgentService:
             entry: dict[str, Any] = {
                 "source": idx + 1,
                 "document_title": item.get("document_title"),
+                "document_id": item.get("document_id"),
                 "section_path": item.get("section_path"),
                 "position": item.get("position"),
                 "content_hash": item.get("content_hash"),

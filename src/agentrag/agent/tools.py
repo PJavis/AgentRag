@@ -15,14 +15,28 @@ ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 def _scope() -> list[str] | None:
+    """The turn's document ids (None = unscoped)."""
     from src.agentrag.retrieval.context import get_document_scope
 
     return get_document_scope()
 
 
-def _in_scope(document_title: str | None) -> bool:
+def _scoped(query):
+    """Restrict a Document query to the turn's documents, by id. The planner
+    names documents by title, and titles collide across users, so a title
+    check let a scoped turn read another notebook's same-named document."""
+    import uuid as _uuid
+
     scope = _scope()
-    return scope is None or document_title in scope
+    if scope is None:
+        return query
+    ids = []
+    for d in scope:
+        try:
+            ids.append(_uuid.UUID(str(d)))
+        except (TypeError, ValueError):
+            continue
+    return query.where(Document.id.in_(ids))
 
 
 class AgentTools:
@@ -170,11 +184,8 @@ class AgentTools:
 
     async def list_documents(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         limit = tool_input.get("limit") or 20
-        scope = _scope()
-        query = select(Document)
-        if scope is not None:
-            # A scoped turn must not even learn the names of other documents.
-            query = query.where(Document.title.in_(scope))
+        # A scoped turn must not even learn the names of other documents.
+        query = _scoped(select(Document))
         async with AsyncSessionLocal() as session:
             result = await session.execute(query.limit(limit))
             documents = result.scalars().all()
@@ -192,11 +203,9 @@ class AgentTools:
 
     async def get_document_graph_status(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         document_title = tool_input["document_title"]
-        if not _in_scope(document_title):
-            return {"documents": []}
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Document).where(Document.title == document_title)
+                _scoped(select(Document).where(Document.title == document_title))
             )
             documents = result.scalars().all()
         return {
@@ -219,13 +228,13 @@ class AgentTools:
         limit = tool_input.get("limit") or settings.AGENT_TOOL_TOP_K
         # The planner picks the title; a title outside the turn's scope (from
         # history, or hallucinated) must not read another notebook's segments.
-        if not _in_scope(document_title):
-            return {"segments": []}
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(Segment, Document)
-                .join(Document, Segment.document_id == Document.id)
-                .where(Document.title == document_title)
+                _scoped(
+                    select(Segment, Document)
+                    .join(Document, Segment.document_id == Document.id)
+                    .where(Document.title == document_title)
+                )
                 .limit(limit)
             )
             rows = result.all()
@@ -244,4 +253,14 @@ class AgentTools:
 
     async def get_chunk_by_hash(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         hashes = tool_input.get("content_hashes") or []
-        return {"results": await self.es_store.get_chunks_by_hashes(hashes)}
+        return {
+            # Scope only: these hashes come from this turn's own results, and
+            # the soft domain filters (never relaxed here) would drop untagged
+            # segments.
+            "results": await self.es_store.get_chunks_by_hashes(
+                hashes,
+                filters=(
+                    {"document_ids": _scope()} if _scope() is not None else None
+                ),
+            )
+        }

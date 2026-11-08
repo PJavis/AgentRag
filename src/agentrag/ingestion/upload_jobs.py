@@ -87,6 +87,12 @@ async def run_upload_ingest(
     from src.agentrag.observability.activity import record_event
 
     parent_dir = os.path.dirname(file_path)
+    # New layout: <staging root>/<skeleton id>/<filename>. Ingest from the root
+    # so source_id is "<skeleton id>/<filename>", the key the skeleton row was
+    # created with. Jobs queued before that layout staged the file directly in
+    # the root and still ingest from there.
+    if skeleton_id and os.path.basename(parent_dir) == str(skeleton_id):
+        parent_dir = os.path.dirname(parent_dir)
     started = time.perf_counter()
     doc_id: str | None = None
     segment_count: int | None = None

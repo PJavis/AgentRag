@@ -311,9 +311,16 @@ async def create_source(
     # Persist file outside request lifecycle, on the volume the worker shares.
     # basename: a client-supplied "../x" must not escape the staging dir.
     filename = os.path.basename(filename) or "upload"
+    # The document id is minted here so the file can be staged under it:
+    # <staging>/<doc id>/<filename>. The ingest scans <staging>, so the
+    # document's source_id becomes "<doc id>/<filename>" — unique per upload.
+    # It used to be the bare filename: two users' "report.pdf" then shared a
+    # source_id (one StructMem group) and a re-ingest of either purged both.
+    doc_uuid = uuid.uuid4()
     os.makedirs(settings.UPLOAD_STAGING_DIR, exist_ok=True)
     persist_dir = tempfile.mkdtemp(prefix="upload_", dir=settings.UPLOAD_STAGING_DIR)
-    dest = os.path.join(persist_dir, filename)
+    os.makedirs(os.path.join(persist_dir, str(doc_uuid)))
+    dest = os.path.join(persist_dir, str(doc_uuid), filename)
     with open(dest, "wb") as f:
         f.write(raw)
 
@@ -340,11 +347,13 @@ async def create_source(
             except (ValueError, TypeError):
                 owner_uuid = None
         skeleton = Document(
+            id=doc_uuid,
             project_id=proj.id,
             user_id=owner_uuid,
             title=doc_title,
             source_type=ext,
-            source_id=filename,            # matches FolderConnector.source_id
+            # = FolderConnector.source_id for <staging>/<doc id>/<filename>
+            source_id=f"{doc_uuid}/{filename}",
             content_hash=content_hash,
             graph_synced=False,
             graph_status="pending",

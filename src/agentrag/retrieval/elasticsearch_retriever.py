@@ -16,6 +16,23 @@ from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
 from src.agentrag.retrieval.reranker import LLMReranker
 from src.agentrag.services.semantic_cache import SemanticCache
 
+# Filter keys that restrict WHICH documents a search may touch. Never relaxed by
+# the zero-hit domain fallback.
+_HARD_SCOPE_KEYS = ("document_ids", "document_titles")
+
+
+def _with_turn_scope(filters: dict | None) -> dict | None:
+    """Add the turn's document scope (retrieval.context) to filters that carry
+    no scope of their own. Outside a scoped turn this is a no-op."""
+    from src.agentrag.retrieval.context import get_document_scope
+
+    scope = get_document_scope()
+    if scope is None or (filters and "document_ids" in filters):
+        return filters
+    out = dict(filters or {})
+    out["document_ids"] = list(scope)
+    return out
+
 
 # Module-level result cache shared across retriever instances. 60-second TTL
 # is short enough to not stall content updates but big enough to make repeated
@@ -71,9 +88,14 @@ class ElasticsearchRetriever:
         filters; if that returns zero hits, retries with only the SOFT domain
         filters (systems/specialties) relaxed — so we still ground the answer
         when domain tags haven't been backfilled — but NEVER drops the hard
-        `document_titles` scope. Dropping it would leak other notebooks' /
-        sources' documents into a scoped chat (e.g. an empty notebook returning
-        a different notebook's doc)."""
+        document scope (`document_ids` / `document_titles`). Dropping it would
+        leak other notebooks' / sources' documents into a scoped chat (e.g. an
+        empty notebook returning a different notebook's doc).
+
+        A caller that passes no scope inside a scoped turn (summary, mindmap,
+        any helper that builds its own filters) still gets the turn's scope:
+        isolation must not depend on every call site remembering it."""
+        filters = _with_turn_scope(filters)
         payload = await self.search_cached(
             query=query,
             mode=mode,
@@ -85,7 +107,7 @@ class ElasticsearchRetriever:
         )
         if filters and not payload.get("results"):
             # Keep the hard document scope; relax only soft domain filters.
-            hard = {k: v for k, v in filters.items() if k == "document_titles"}
+            hard = {k: v for k, v in filters.items() if k in _HARD_SCOPE_KEYS}
             # Nothing soft to relax → the scope itself is empty; do not fall back.
             if hard == dict(filters):
                 return payload
@@ -237,6 +259,7 @@ class ElasticsearchRetriever:
                     query_embedding=query_embedding,
                     top_k=candidate_size,
                     document_title=document_title,
+                    scope_ids=(filters or {}).get("document_ids"),
                     scope_titles=(filters or {}).get("document_titles"),
                 )
                 hits = self._rrf_fuse_multi_source(
@@ -309,33 +332,46 @@ class ElasticsearchRetriever:
         top_k: int,
         document_title: str | None,
         scope_titles: list[str] | None = None,
+        scope_ids: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
         """StructMem entries + synthesis for the query, fused with chunk hits.
 
         Must honour the same document scope as the chunk search. It used to
-        receive only `document_title`, so a notebook-scoped turn (scope passed
-        via filters["document_titles"]) fused in memory entries from EVERY
-        document: a 1-document notebook came back with citations from 14."""
+        receive only `document_title`, so a notebook-scoped turn fused in
+        memory entries from EVERY document: a 1-document notebook came back
+        with citations from 14. Memory is grouped by the document's source_id,
+        so the scope is resolved to source_ids through Postgres."""
         import asyncio
 
-        scoped = scope_titles is not None or bool(document_title)
-        if scope_titles is not None:
-            allowed = [t for t in scope_titles if t]
-            # An explicit document_title (from the planner) only narrows the
-            # scope; a title outside it must not pull its memory in.
-            titles = [document_title] if document_title in allowed else ([] if document_title else allowed)
-        else:
-            titles = [document_title] if document_title else []
-
+        scoped = scope_ids is not None or scope_titles is not None or bool(document_title)
         group_ids: list[str] | None = None
         if scoped:
-            if not titles:
+            if scope_ids is not None and not [i for i in scope_ids if i]:
                 return [], "scope_empty"
+            if scope_titles is not None and not [t for t in scope_titles if t]:
+                return [], "scope_empty"
+            conds = []
+            if scope_ids is not None:
+                import uuid as _uuid
+
+                ids = []
+                for i in scope_ids:
+                    try:
+                        ids.append(_uuid.UUID(str(i)))
+                    except (TypeError, ValueError):
+                        continue
+                if not ids:
+                    return [], "scope_empty"
+                conds.append(Document.id.in_(ids))
+            if scope_titles is not None:
+                conds.append(Document.title.in_([t for t in scope_titles if t]))
+            # An explicit document_title (from the planner) only narrows the
+            # scope; a title outside it resolves to nothing.
+            if document_title:
+                conds.append(Document.title == document_title)
             try:
                 async with AsyncSessionLocal() as session:
-                    result = await session.execute(
-                        select(Document.source_id).where(Document.title.in_(titles))
-                    )
+                    result = await session.execute(select(Document.source_id).where(*conds))
                     source_ids = [row[0] for row in result.all() if row[0]]
             except Exception as exc:
                 # StructMem is an add-on to the chunk search: fail soft.

@@ -76,9 +76,13 @@ def test_the_pipeline_purges_a_document_before_re_indexing_it():
     from src.agentrag.ingestion import pipeline
 
     source = inspect.getsource(pipeline)
-    purge = source.index('es_store.delete_document(doc["title"])')
-    index = source.index('es_store.index_segments(chunks_search, doc["title"])')
+    purge = source.index("await es_store.delete_document(")
+    index = source.index("await es_store.index_segments(\n                    chunks_search")
     assert purge < index
+    # The purge is by document id: a title purge also wiped other users'
+    # documents that share the filename.
+    purge_call = source[purge:source.index(")\n", purge)]
+    assert "document_id=str(doc_id)" in purge_call
 
 
 def test_an_ocr_setting_change_also_forces_a_reingest(tmp_path, monkeypatch):

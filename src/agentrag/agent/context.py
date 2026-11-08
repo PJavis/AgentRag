@@ -264,6 +264,7 @@ class ContextAssembler:
                 # lost-in-middle display reordering in the prompt.
                 "source": idx + 1,
                 "document_title": item.get("document_title"),
+                "document_id": item.get("document_id"),
                 "section_path": item.get("section_path"),
                 "position": item.get("position"),
                 "content_hash": item.get("content_hash"),

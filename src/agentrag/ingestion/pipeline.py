@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 from typing import Any, Literal
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from src.agentrag.database.models import Document
 from src.agentrag.database import AsyncSessionLocal
@@ -64,13 +64,42 @@ def _embed_input_for_chunk(chunk: dict[str, Any]) -> str:
     return chunk["content"]
 
 
-async def _build_and_index_raptor(builder: Any, es_store: Any, leaf_chunks: list[dict[str, Any]], document_title: str) -> int:
+async def _build_and_index_raptor(
+    builder: Any,
+    es_store: Any,
+    leaf_chunks: list[dict[str, Any]],
+    document_title: str,
+    document_id: str | None = None,
+) -> int:
     """Build RAPTOR summary nodes from leaves and index them. Returns count."""
     summary_nodes = await builder.build(leaf_chunks, document_title)
     if not summary_nodes:
         return 0
-    await es_store.index_segments(summary_nodes, document_title)
+    await es_store.index_segments(summary_nodes, document_title, document_id=document_id)
     return len(summary_nodes)
+
+
+async def _source_id_shared(session: Any, source_id: str, document_id: Any) -> bool:
+    """Another document with this source_id shares its StructMem group (legacy
+    uploads used the bare filename): its memory must survive this re-ingest."""
+    row = await session.execute(
+        select(Document.id)
+        .where(Document.source_id == source_id, Document.id != document_id)
+        .limit(1)
+    )
+    return row.first() is not None
+
+
+async def _title_shared(session: Any, title: str, document_id: Any) -> bool:
+    """Does another document carry this title? Then title-keyed ES data (legacy
+    segments without a document_id) is partly that document's and must not be
+    purged with this one."""
+    row = await session.execute(
+        select(Document.id)
+        .where(Document.title == title, Document.id != document_id)
+        .limit(1)
+    )
+    return row.first() is not None
 
 
 async def ingest_folder(
@@ -319,12 +348,23 @@ async def ingest_folder(
                 # the document's ES docs first so a re-ingest replaces rather
                 # than accumulates.
                 try:
-                    await es_store.delete_document(doc["title"])
+                    await es_store.delete_document(
+                        doc["title"],
+                        document_id=str(doc_id),
+                        group_id=(
+                            None
+                            if await _source_id_shared(session, doc["source_id"], doc_id)
+                            else StructMemService.normalize_group_id(doc["source_id"])
+                        ),
+                        title_shared=await _title_shared(session, doc["title"], doc_id),
+                    )
                 except Exception:
                     logger.exception(
                         "ES purge before re-index failed for %r", doc["title"]
                     )
-                await es_store.index_segments(chunks_search, doc["title"])
+                await es_store.index_segments(
+                    chunks_search, doc["title"], document_id=str(doc_id)
+                )
                 timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
                 if settings.RAPTOR_ENABLED:
                     t0 = time.perf_counter()
@@ -333,6 +373,7 @@ async def ingest_folder(
                     raptor_count = await _build_and_index_raptor(
                         RaptorBuilder(LLMGateway(), embedder),
                         es_store, chunks_search, doc["title"],
+                        document_id=str(doc_id),
                     )
                     timings["raptor_ms"] = (time.perf_counter() - t0) * 1000
                     report["raptor_summary_nodes"] = raptor_count

@@ -212,7 +212,7 @@ async def process_vision_job(job: VisionExtractJob) -> dict[str, Any]:
                 ))
             await session.commit()
 
-        await es_store.index_segments(pending, job.title)
+        await es_store.index_segments(pending, job.title, document_id=str(job.document_id))
         total_indexed += len(pending)
         logger.info(
             "vision_extract: flushed batch (cumulative indexed=%d) doc=%s",

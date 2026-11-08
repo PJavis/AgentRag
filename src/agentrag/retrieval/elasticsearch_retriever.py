@@ -318,19 +318,28 @@ class ElasticsearchRetriever:
         document: a 1-document notebook came back with citations from 14."""
         import asyncio
 
-        titles: list[str] = []
-        if document_title:
-            titles.append(document_title)
-        elif scope_titles:
-            titles.extend(t for t in scope_titles if t)
+        scoped = scope_titles is not None or bool(document_title)
+        if scope_titles is not None:
+            allowed = [t for t in scope_titles if t]
+            # An explicit document_title (from the planner) only narrows the
+            # scope; a title outside it must not pull its memory in.
+            titles = [document_title] if document_title in allowed else ([] if document_title else allowed)
+        else:
+            titles = [document_title] if document_title else []
 
         group_ids: list[str] | None = None
-        if titles:
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(Document.source_id).where(Document.title.in_(titles))
-                )
-                source_ids = [row[0] for row in result.all() if row[0]]
+        if scoped:
+            if not titles:
+                return [], "scope_empty"
+            try:
+                async with AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        select(Document.source_id).where(Document.title.in_(titles))
+                    )
+                    source_ids = [row[0] for row in result.all() if row[0]]
+            except Exception as exc:
+                # StructMem is an add-on to the chunk search: fail soft.
+                return [], f"entries_scope_lookup_exception:{type(exc).__name__}"
             if not source_ids:
                 # A scope that resolves to nothing must not widen to all memory.
                 return [], "scope_empty"

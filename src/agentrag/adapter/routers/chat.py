@@ -103,8 +103,11 @@ _FILENAME_HINT_RE = re.compile(
 )
 
 
-async def _list_notebook_document_titles(notebook_id: str | None, limit: int = 10) -> list[str]:
-    """Return Document.title list for sources linked to the given notebook."""
+async def _list_notebook_document_titles(notebook_id: str | None, limit: int = 1000) -> list[str]:
+    """Return Document.title list for sources linked to the given notebook.
+
+    This is the notebook's retrieval scope, so it must cover the whole notebook:
+    the old cap of 50 (no ORDER BY) silently dropped an arbitrary subset."""
     if not notebook_id:
         return []
     try:
@@ -410,7 +413,9 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     if not document_title:
         try:
             from src.agentrag.retrieval.context import set_document_scope
-            set_document_scope(await _list_notebook_document_titles(notebook_id, limit=50))
+            set_document_scope(
+                await _list_notebook_document_titles(notebook_id) if notebook_id else None
+            )
         except Exception:
             _log.exception("execute_chat: notebook scope resolution failed")
 
@@ -617,7 +622,9 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
     if not document_title:
         try:
             from src.agentrag.retrieval.context import set_document_scope
-            set_document_scope(await _list_notebook_document_titles(notebook_id, limit=50))
+            set_document_scope(
+                await _list_notebook_document_titles(notebook_id) if notebook_id else None
+            )
         except Exception:
             _log.exception("regenerate: notebook scope resolution failed")
 
@@ -628,7 +635,7 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
     _summary_doc = document_title
     if not _summary_doc:
         try:
-            _nb_titles = await _list_notebook_document_titles(notebook_id, limit=50)
+            _nb_titles = await _list_notebook_document_titles(notebook_id)
             if len(_nb_titles) == 1:
                 _summary_doc = _nb_titles[0]
         except Exception:
@@ -760,7 +767,7 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
         # Default: scope retrieval to ALL of this notebook's documents so chat
         # never leaks other notebooks' sources (NotebookLM-style isolation).
         try:
-            scope_titles = await _list_notebook_document_titles(notebook_id, limit=50)
+            scope_titles = await _list_notebook_document_titles(notebook_id)
         except Exception:
             _log.exception("execute_chat_stream: notebook scope resolution failed")
 
@@ -856,7 +863,14 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             # Semantic path — stream via agent.chat_stream.
             from src.agentrag.retrieval.context import set_domain_filter, set_document_scope
             set_domain_filter(effective_domain_filter)
-            set_document_scope(scope_titles)
+            # Ticked sources / notebook docs; a resolved filename hint narrows to
+            # that one doc. [] (empty notebook) means nothing, not everything.
+            if scope_titles:
+                set_document_scope(scope_titles)
+            elif document_title:
+                set_document_scope([document_title])
+            else:
+                set_document_scope([] if notebook_id else None)
             agent = get_agent_service()
             # The picker sends a `prefix::provider::model` id — take the bare
             # model name (e.g. deepseek-v4-pro) so AgentLLM prefix-routing applies.

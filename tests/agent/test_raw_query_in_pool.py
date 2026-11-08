@@ -12,7 +12,7 @@ def _mk_assembler(monkeypatch, raw_hit):
     a = ContextAssembler()
 
     class _FakeRetriever:
-        async def search(self, query, mode="hybrid", top_k=8):
+        async def search(self, query, mode="hybrid", top_k=8, filters=None):
             return {"results": [dict(raw_hit)]}
 
     async def _fake_rerank(query, items, top_k, force=False):

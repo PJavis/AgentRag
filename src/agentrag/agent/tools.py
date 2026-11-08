@@ -98,19 +98,9 @@ class AgentTools:
 
     def _current_filters(self) -> dict[str, Any] | None:
         """Read S5 domain_filter + document scope from per-turn ContextVars."""
-        from src.agentrag.retrieval.context import get_domain_filter, get_document_scope
-        df = get_domain_filter() or {}
-        out: dict[str, list[str]] = {}
-        system = df.get("system")
-        if system:
-            out["systems"] = [system]
-        specs = df.get("specialties") or []
-        if specs:
-            out["specialties"] = list(specs)
-        scope = get_document_scope()
-        if scope:
-            out["document_titles"] = list(scope)
-        return out or None
+        from src.agentrag.retrieval.context import current_retrieval_filters
+
+        return current_retrieval_filters()
 
     async def search_sparse(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         return await self.retriever.search(

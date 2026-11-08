@@ -69,9 +69,15 @@ class ContextAssembler:
         is non-fatal — fall back to the tool-only pool."""
         if not question.strip():
             return retrieved
+        from src.agentrag.retrieval.context import current_retrieval_filters
+
         try:
+            # Same scope as the turn's tool searches. Without filters this pulled
+            # RAW_QUERY_TOP_K hits from the WHOLE corpus into every answer: a
+            # 1-document notebook got 33 citations from 14 documents.
             res = await self._retriever.search(
-                query=question, mode="hybrid", top_k=settings.RETRIEVAL_RAW_QUERY_TOP_K
+                query=question, mode="hybrid", top_k=settings.RETRIEVAL_RAW_QUERY_TOP_K,
+                filters=current_retrieval_filters(),
             )
             hits = res.get("results", []) if isinstance(res, dict) else []
         except Exception:

@@ -6,10 +6,6 @@ notebook returned citations from 14 documents (reproduced on master
 """
 from __future__ import annotations
 
-import inspect
-
-import pytest
-
 from src.agentrag.retrieval import elasticsearch_retriever as er
 
 
@@ -79,6 +75,36 @@ async def test_unscoped_search_stays_global(monkeypatch):
     assert session.stmts == []
 
 
-def test_hybrid_kg_passes_scope_to_entries_search():
-    src = inspect.getsource(er.ElasticsearchRetriever)
-    assert 'scope_titles=(filters or {}).get("document_titles")' in src
+async def test_document_title_outside_scope_gets_no_entries(monkeypatch):
+    # The planner may pass a document_title from another notebook.
+    r, _ = _retriever(monkeypatch, [("other.pdf",)])
+    hits, reason = await r._entries_search("q", [0.0], 5, "other", scope_titles=["quasar-manual"])
+    assert (hits, reason) == ([], "scope_empty")
+
+
+async def test_document_title_inside_scope_narrows(monkeypatch):
+    r, session = _retriever(monkeypatch, [("quasar-manual.md",)])
+    await r._entries_search("q", [0.0], 5, "quasar-manual", scope_titles=["quasar-manual", "b"])
+    assert r.store.group_ids == [er.StructMemService.normalize_group_id("quasar-manual.md")]
+
+
+async def test_empty_scope_list_returns_nothing(monkeypatch):
+    r, session = _retriever(monkeypatch, [("x",)])
+    assert await r._entries_search("q", [0.0], 5, None, scope_titles=[]) == ([], "scope_empty")
+    assert session.stmts == []
+
+
+async def test_scope_lookup_failure_fails_soft(monkeypatch):
+    r = er.ElasticsearchRetriever.__new__(er.ElasticsearchRetriever)
+    r.store = _Store()
+
+    class Broken:
+        async def __aenter__(self):
+            raise ConnectionError("db")
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(er, "AsyncSessionLocal", lambda: Broken())
+    hits, reason = await r._entries_search("q", [0.0], 5, None, scope_titles=["a"])
+    assert hits == [] and reason.startswith("entries_scope_lookup_exception")

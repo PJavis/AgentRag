@@ -42,6 +42,17 @@ async def link_to_notebooks(session, doc_id: uuid.UUID, notebook_ids: list[str])
         )
 
 
+async def _skeleton_exists(skeleton_id: str) -> bool:
+    try:
+        async with AsyncSessionLocal() as session:
+            return await session.get(Document, uuid.UUID(skeleton_id)) is not None
+    except (ValueError, TypeError):
+        return True  # not a uuid — nothing to check against, proceed
+    except Exception:
+        logger.exception("upload ingest: skeleton lookup failed; proceeding")
+        return True
+
+
 async def _mark_failed(doc_id: str | None, error: str) -> None:
     """A job that dies before the pipeline touches the skeleton must not leave
     it "pending" forever — the UI would spin on it indefinitely."""
@@ -80,7 +91,13 @@ async def run_upload_ingest(
     doc_id: str | None = None
     segment_count: int | None = None
     error_msg: str | None = None
+    cancelled = False
     try:
+        if skeleton_id and not await _skeleton_exists(skeleton_id):
+            # Deleted while the job sat in the queue. Ingesting now would find
+            # no skeleton, create a fresh Document and bring the source back.
+            logger.info("upload ingest: skeleton %s deleted before ingest; dropping", skeleton_id)
+            return None
         if not os.path.exists(file_path):
             error_msg = f"staged upload missing: {file_path}"
             logger.error("upload ingest: %s (is the staging dir shared with the worker?)", error_msg)
@@ -105,12 +122,20 @@ async def run_upload_ingest(
             await link_to_notebooks(session, doc.id, notebook_ids)
             await session.commit()
         return doc_id
+    except asyncio.CancelledError:
+        # ARQ job_timeout (or worker shutdown) cancels the task. CancelledError
+        # is not an Exception, so this used to fall through to "ingest_done"
+        # with the doc stuck pending. Keep the staged file: ARQ retries the job.
+        cancelled = True
+        error_msg = "upload ingest cancelled (job timeout or worker shutdown)"
+        raise
     except Exception as exc:
         logger.exception("upload ingest failed for %s", file_path)
         error_msg = str(exc)[:500]
         return None
     finally:
-        shutil.rmtree(parent_dir, ignore_errors=True)
+        if not cancelled:
+            shutil.rmtree(parent_dir, ignore_errors=True)
         if error_msg:
             await _mark_failed(doc_id or skeleton_id, error_msg)
         duration_ms = round((time.perf_counter() - started) * 1000.0, 1)

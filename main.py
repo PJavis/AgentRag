@@ -422,12 +422,18 @@ async def chat_stream(payload: dict = Body(...)):
 
     async def event_generator():
         collected_tokens: list[str] = []
+        stream_done = False
+        stream_error = False
         async for chunk in agent.chat_stream(
             question=question,
             document_title=document_title,
             chat_history=history,
             conversation_id=stream_cid,
         ):
+            if chunk.startswith("event: error"):
+                stream_error = True
+            elif chunk.startswith("event: done"):
+                stream_done = True
             if chunk.startswith("event: token"):
                 import json as _json
                 data_line = chunk.split("data: ", 1)[-1].strip()
@@ -446,7 +452,9 @@ async def chat_stream(payload: dict = Body(...)):
                 content=full_answer,
                 extra_metadata={"document_title": document_title},
             )
-            await record_turn_memory(stream_cid, question, full_answer)
+            await record_turn_memory(
+                stream_cid, question, full_answer, failed=stream_error or not stream_done
+            )
 
     return StreamingResponse(
         event_generator(),

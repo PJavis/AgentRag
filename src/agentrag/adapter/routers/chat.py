@@ -458,7 +458,8 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     except Exception:
         _log.exception("execute_chat: append_message(assistant) failed")
     await record_turn_memory(
-        body.session_id, body.message, result.get("answer", ""), failed=agent_failed
+        body.session_id, body.message, result.get("answer", ""),
+        failed=agent_failed or result.get("reasoning_path") == "error",
     )
 
     # B2 — Follow-up suggestions. Best-effort: log + ignore on failure.
@@ -862,6 +863,8 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             _ov = body.model_override
             _ov = _ov.split("::")[-1] if _ov and "::" in _ov else _ov
             collected: list[str] = []
+            stream_done = False
+            stream_error = False
             stream_citations: list[dict] = []
             stream_tool_trace: list[dict] = []
             stream_timings: dict = {}
@@ -881,7 +884,12 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                             collected.append(token)
                     except Exception:
                         pass
+                elif "event: error" in chunk:
+                    # agent.chat_stream reports failures as an error frame
+                    # instead of raising: what was collected is a partial answer.
+                    stream_error = True
                 elif "event: done" in chunk:
+                    stream_done = True
                     # Capture citations from the terminal done frame so we can
                     # persist them on the message (the UI reads citations +
                     # follow-ups from the refetched session, not the SSE stream).
@@ -926,7 +934,10 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                     )
                 except Exception:
                     _log.exception("execute_chat_stream: append assistant failed")
-                await record_turn_memory(body.session_id, body.message, full_answer)
+                await record_turn_memory(
+                    body.session_id, body.message, full_answer,
+                    failed=stream_error or not stream_done,
+                )
         except Exception as exc:
             _log.exception("execute_chat_stream: error")
             yield _sse("error", {"detail": f"{type(exc).__name__}: {str(exc)[:200]}"})

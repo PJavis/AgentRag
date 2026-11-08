@@ -129,3 +129,16 @@ def test_regenerate_history_excludes_question_and_is_windowed():
     src = inspect.getsource(importlib.import_module(CHAT).regenerate_chat)
     assert "msgs[:user_idx][-settings.CHAT_HISTORY_WINDOW:]" in src
     assert "msgs[:user_idx + 1]" not in src
+
+
+@pytest.mark.parametrize("module,func", [("main", "chat_stream"), (CHAT, "execute_chat_stream")])
+def test_streams_do_not_record_partial_answers(module, func):
+    # agent.chat_stream reports failures as an `error` frame instead of raising;
+    # a turn without a clean `done` must not become long-term memory.
+    src = inspect.getsource(getattr(importlib.import_module(module), func))
+    assert "failed=stream_error or not stream_done" in src
+
+
+def test_execute_chat_treats_error_path_as_failed():
+    src = inspect.getsource(importlib.import_module(CHAT).execute_chat)
+    assert 'result.get("reasoning_path") == "error"' in src

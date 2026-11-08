@@ -70,10 +70,10 @@ def bumps(monkeypatch):
 
 @pytest.fixture
 def title_free(monkeypatch):
-    async def _free(_title):
-        return False
+    async def _free(_titles):
+        return set()
 
-    monkeypatch.setattr(document_service, "_title_still_used", _free)
+    monkeypatch.setattr(document_service, "_titles_still_used", _free)
 
 
 async def test_delete_purges_es_images_and_bumps_cache(monkeypatch, tmp_path, es_calls, bumps, title_free):
@@ -95,7 +95,7 @@ async def test_delete_purges_es_images_and_bumps_cache(monkeypatch, tmp_path, es
     assert bumps == [1]  # cached answers citing the doc are re-keyed
 
 
-async def test_delete_missing_returns_none_and_touches_nothing(monkeypatch, es_calls, bumps):
+async def test_delete_missing_returns_none_and_touches_nothing(monkeypatch, es_calls, bumps, title_free):
     monkeypatch.setattr(document_service, "AsyncSessionLocal", lambda: FakeSession({}))
     assert await document_service.delete_document(uuid.uuid4()) is None
     assert es_calls == [] and bumps == []
@@ -103,13 +103,15 @@ async def test_delete_missing_returns_none_and_touches_nothing(monkeypatch, es_c
 
 async def test_shared_title_is_not_purged(monkeypatch, es_calls, bumps):
     # ES is keyed by title: purging would delete the OTHER document's hits.
-    async def _used(_title):
-        return True
+    async def _used(titles):
+        return set(titles)
 
-    monkeypatch.setattr(document_service, "_title_still_used", _used)
+    monkeypatch.setattr(document_service, "_titles_still_used", _used)
     purged = await document_service.purge_document_artifacts(["Shared"])
     assert es_calls == []
     assert purged["Shared"].startswith("kept")
+    # Nothing removed → the answer cache must not be re-keyed for nothing.
+    assert bumps == []
 
 
 async def test_es_failure_is_reported_not_raised(monkeypatch, bumps, title_free):

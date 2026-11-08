@@ -135,7 +135,7 @@ async def delete_notebook(notebook_id: str, delete_exclusive_sources: bool = Fal
             delete(AdapterNotebook).where(AdapterNotebook.id == nb_uuid)
         )
         await session.commit()
-    if delete_exclusive_sources and purge_titles:
+    if purge_titles:
         await document_service.purge_document_artifacts(purge_titles)
     return {"message": "Notebook deleted"}
 

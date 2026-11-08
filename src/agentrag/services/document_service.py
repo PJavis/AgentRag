@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 
 from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
@@ -37,26 +37,33 @@ def image_dir_for(title: str) -> Path:
     return Path(settings.IMAGE_STORAGE_DIR) / re.sub(r"[^\w\-]", "_", title)[:80]
 
 
-async def _title_still_used(title: str) -> bool:
-    """ES and the image folder are keyed by title, not id. If another document
-    still carries this title, purging by title would delete ITS hits too."""
+async def _titles_still_used(titles: list[str]) -> set[str]:
+    """ES and the image folder are keyed by title, not id. Titles another
+    document still carries must not be purged (it would delete ITS hits too).
+    One query for all titles."""
+    if not titles:
+        return set()
     async with AsyncSessionLocal() as session:
-        count = (
-            await session.execute(
-                select(func.count()).select_from(Document).where(Document.title == title)
-            )
-        ).scalar() or 0
-    return count > 0
+        rows = await session.execute(
+            select(Document.title).where(Document.title.in_(titles)).distinct()
+        )
+        return {t for (t,) in rows.all()}
 
 
 async def purge_document_artifacts(titles: list[str]) -> dict[str, Any]:
     """Best-effort purge of everything keyed by title, after the Postgres rows
-    are gone. Bumps the corpus version once if anything was purged."""
+    are gone. Bumps the corpus version once, only if something was purged."""
+    import asyncio
+
+    unique = list(dict.fromkeys(t for t in titles if t))
+    still_used = await _titles_still_used(unique)
     purged: dict[str, Any] = {}
-    for title in dict.fromkeys(t for t in titles if t):
-        if await _title_still_used(title):
+    removed_any = False
+    for title in unique:
+        if title in still_used:
             purged[title] = "kept: title shared with another document"
             continue
+        removed_any = True
         try:
             from src.agentrag.ingestion.stores.elasticsearch_store import (
                 ElasticsearchStore,
@@ -67,11 +74,12 @@ async def purge_document_artifacts(titles: list[str]) -> dict[str, Any]:
             logger.warning("ES purge failed for %r: %s", title, exc)
             purged[title] = f"error: {type(exc).__name__}"
         shutil.rmtree(image_dir_for(title), ignore_errors=True)
-    if purged:
+    if removed_any:
         try:
             from src.agentrag.common.corpus_version import bump_corpus_version
 
-            bump_corpus_version()
+            # Sync redis call — keep it off the event loop.
+            await asyncio.to_thread(bump_corpus_version)
         except Exception as exc:
             logger.warning("corpus version bump failed after delete: %s", exc)
     return purged

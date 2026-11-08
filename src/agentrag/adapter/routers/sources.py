@@ -199,7 +199,8 @@ def _user_upload_semaphore(user_id: str) -> asyncio.Semaphore:
     return sem
 
 
-_link_to_notebooks = link_to_notebooks
+# arq's default health-check key for the default queue.
+_WORKER_HEALTH_KEY = "arq:queue:health-check"
 
 
 async def _enqueue_upload_ingest(
@@ -211,7 +212,17 @@ async def _enqueue_upload_ingest(
     try:
         from src.agentrag.worker.pool import get_pool
 
-        job = await get_pool().enqueue_job(
+        pool = get_pool()
+        # A queue with no consumer accepts the job and the doc sits "pending"
+        # forever. The worker refreshes this key every health_check_interval.
+        if not await pool.exists(_WORKER_HEALTH_KEY):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "no live ARQ worker (%s missing); ingesting upload in-process", _WORKER_HEALTH_KEY
+            )
+            return False
+        job = await pool.enqueue_job(
             "upload_ingest",
             file_path=os.path.abspath(dest),
             user_id=user_id,
@@ -290,7 +301,7 @@ async def create_source(
         existing = await find_existing_document(content_hash)
         if existing is not None:
             async with AsyncSessionLocal() as session:
-                await _link_to_notebooks(session, existing.id, all_notebooks)
+                await link_to_notebooks(session, existing.id, all_notebooks)
                 await session.commit()
                 doc = await session.get(Document, existing.id)
                 payload = await _doc_to_source(session, doc, all_notebooks)
@@ -341,7 +352,7 @@ async def create_source(
         session.add(skeleton)
         await session.commit()
         await session.refresh(skeleton)
-        await _link_to_notebooks(session, skeleton.id, all_notebooks)
+        await link_to_notebooks(session, skeleton.id, all_notebooks)
         await session.commit()
         payload = await _doc_to_source(session, skeleton, all_notebooks)
 

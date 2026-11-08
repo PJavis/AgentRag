@@ -16,9 +16,14 @@ from src.agentrag.ingestion import upload_jobs
 
 
 class FakePool:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, worker_alive=True):
         self.fail = fail
         self.jobs = []
+        self.worker_alive = worker_alive
+
+    async def exists(self, key):
+        assert key == "arq:queue:health-check"
+        return 1 if self.worker_alive else 0
 
     async def enqueue_job(self, name, **kw):
         if self.fail:
@@ -66,6 +71,9 @@ async def test_enqueue_failure_falls_back_in_process(monkeypatch):
 async def test_enqueue_returning_none_falls_back(monkeypatch):
     # ARQ returns None instead of a Job when it refuses the enqueue.
     class NonePool:
+        async def exists(self, key):
+            return 1
+
         async def enqueue_job(self, name, **kw):
             return None
 
@@ -93,6 +101,10 @@ async def test_missing_staged_file_marks_skeleton_failed(monkeypatch, tmp_path):
     monkeypatch.setattr(upload_jobs, "_mark_failed", fake_mark)
     monkeypatch.setattr(activity, "record_event", fake_event)
 
+    async def exists(_sid):
+        return True
+
+    monkeypatch.setattr(upload_jobs, "_skeleton_exists", exists)
     result = await upload_jobs.run_upload_ingest(
         str(tmp_path / "gone" / "a.pdf"), "u1", [], None, skeleton_id="sk-1"
     )
@@ -166,3 +178,84 @@ def test_worker_registers_upload_ingest_and_installs_pool():
 def test_staging_dir_is_on_the_shared_cache_volume():
     # docker-compose mounts structmem_cache at /app/.cache on api AND worker.
     assert settings.UPLOAD_STAGING_DIR.startswith(".cache/")
+
+
+async def test_no_live_worker_means_in_process(monkeypatch):
+    # Redis up, no worker consuming: the job would sit queued and the doc
+    # "pending" forever.
+    import src.agentrag.worker.pool as pool_mod
+
+    p = FakePool(worker_alive=False)
+    monkeypatch.setattr(pool_mod, "get_pool", lambda: p)
+    monkeypatch.setattr(settings, "UPLOAD_INGEST_VIA_WORKER", True)
+    assert await sources._enqueue_upload_ingest("a", "u", [], "h", "s") is False
+    assert p.jobs == []
+
+
+async def test_timeout_cancellation_marks_failed_and_keeps_staging(monkeypatch, tmp_path):
+    import asyncio
+
+    stage = tmp_path / "upload_9"
+    stage.mkdir()
+    (stage / "a.pdf").write_bytes(b"%PDF")
+    marked, events = {}, []
+
+    async def slow_ingest(folder, user_id):
+        raise asyncio.CancelledError()
+
+    async def fake_mark(doc_id, error):
+        marked[doc_id] = error
+
+    async def fake_event(**kw):
+        events.append(kw)
+
+    async def exists(_sid):
+        return True
+
+    import src.agentrag.ingestion.pipeline as pipeline
+    import src.agentrag.observability.activity as activity
+
+    monkeypatch.setattr(pipeline, "ingest_folder", slow_ingest)
+    monkeypatch.setattr(upload_jobs, "_mark_failed", fake_mark)
+    monkeypatch.setattr(upload_jobs, "_skeleton_exists", exists)
+    monkeypatch.setattr(activity, "record_event", fake_event)
+
+    with pytest.raises(asyncio.CancelledError):
+        await upload_jobs.run_upload_ingest(str(stage / "a.pdf"), "u", [], None, skeleton_id="sk-9")
+    assert "cancelled" in marked["sk-9"]
+    assert events[0]["event_type"] == "ingest_failed"  # was "ingest_done"
+    assert stage.exists()  # ARQ retries the job; the file must still be there
+
+
+async def test_skeleton_deleted_while_queued_is_not_resurrected(monkeypatch, tmp_path):
+    stage = tmp_path / "upload_8"
+    stage.mkdir()
+    (stage / "a.pdf").write_bytes(b"%PDF")
+    called = []
+
+    async def fake_ingest(folder, user_id):
+        called.append(folder)
+        return {"documents": []}
+
+    async def gone(_sid):
+        return False
+
+    async def fake_event(**kw):
+        pass
+
+    import src.agentrag.ingestion.pipeline as pipeline
+    import src.agentrag.observability.activity as activity
+
+    monkeypatch.setattr(pipeline, "ingest_folder", fake_ingest)
+    monkeypatch.setattr(upload_jobs, "_skeleton_exists", gone)
+    monkeypatch.setattr(activity, "record_event", fake_event)
+
+    assert await upload_jobs.run_upload_ingest(str(stage / "a.pdf"), "u", [], None, skeleton_id="sk-8") is None
+    assert called == []
+    assert not stage.exists()
+
+
+def test_worker_refreshes_liveness_key_often():
+    from src.agentrag.worker import settings as ws
+
+    assert ws.WorkerSettings.health_check_interval <= 120

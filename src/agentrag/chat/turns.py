@@ -11,6 +11,10 @@ routes in main.py, and the adapter's notebook (`/chat/execute`,
   20 on notebook chat and 10 on source chat;
 - the follow-up persistence block was copy-pasted twice.
 
+Regenerate deliberately does NOT record memory: the original turn was already
+recorded and StructMem has no delete-by-turn, so recording again would store
+both answers.
+
 Each helper here is the one place that behaviour lives. They are best-effort
 where a failure must not cost the user an answer they already received.
 """

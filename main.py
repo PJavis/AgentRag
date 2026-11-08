@@ -16,6 +16,7 @@ from src.agentrag.common.phoenix_client import init_phoenix
 from src.agentrag.config import settings
 from src.agentrag.mcp.app import mcp
 from src.agentrag.config_validation import validate_settings
+from src.agentrag.health.embedding_dims import check_embedding_dims_at_startup
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Document, Segment
 from src.agentrag.health.providers import collect_provider_health
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
     # error, so provenance has to be visible without anyone opening a doc.
     log_build_banner("api")
     validate_settings(settings)
+    await check_embedding_dims_at_startup(settings)
     init_langfuse()
     init_phoenix()
     await init_pool(settings.REDIS_URL or "redis://127.0.0.1:6379/0")

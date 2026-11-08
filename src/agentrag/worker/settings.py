@@ -20,6 +20,11 @@ async def _on_startup(ctx: dict) -> None:
     """Which code is actually running. The worker ingests documents, so a stale
     image here corrupts a whole corpus silently rather than erroring."""
     log_build_banner("worker")
+    # The worker runs vision + graph ingest; a bad config there corrupts a corpus
+    # silently. Refuse to start, same as the api lifespan.
+    from src.agentrag.config_validation import validate_settings
+
+    validate_settings(app_settings)
 
 
 class WorkerSettings:

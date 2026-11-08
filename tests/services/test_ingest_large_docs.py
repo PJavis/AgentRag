@@ -170,3 +170,68 @@ async def test_a_skeleton_showing_progress_is_still_populated():
     )
     assert (doc_id, status) == ("d1", "ingested")
     assert len(session.added) == 1
+
+
+async def test_an_interrupted_run_is_repopulated_on_retry():
+    # Cut off after the save committed (row pending/parsing WITH segments): the
+    # ARQ retry must re-index, not answer "skipped" and leave the row stuck.
+    from src.agentrag.ingestion.stores.postgres_store import PostgresStore
+
+    row = SimpleNamespace(id="d1", content_hash="h", graph_status="parsing",
+                          title="t", source_type="excel")
+
+    class Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return [row]
+
+        def scalar_one_or_none(self):
+            return object()  # segments already exist
+
+    class Session:
+        added: list = []
+
+        async def execute(self, stmt):
+            return Result()
+
+        async def flush(self):
+            pass
+
+        async def commit(self):
+            pass
+
+        def add(self, obj):
+            self.added.append(obj)
+
+    _, status = await PostgresStore().save_document_and_segments(
+        Session(),
+        {"source_id": "d1/x.xlsx", "content_hash": "h", "title": "t", "source_type": "excel"},
+        [{"content": "c", "content_hash": "c1", "segment_type": "text",
+          "section_path": "", "position": 0, "metadata": {}}],
+        project_id="p",
+    )
+    assert status == "ingested"
+
+
+async def test_a_finished_document_is_still_skipped():
+    from src.agentrag.ingestion.stores.postgres_store import PostgresStore
+
+    row = SimpleNamespace(id="d1", content_hash="h", graph_status="done", title="t", source_type="pdf")
+
+    class Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return [row]
+
+    class Session:
+        async def execute(self, stmt):
+            return Result()
+
+    _, status = await PostgresStore().save_document_and_segments(
+        Session(), {"source_id": "a.pdf", "content_hash": "h"}, [], project_id="p"
+    )
+    assert status == "skipped"

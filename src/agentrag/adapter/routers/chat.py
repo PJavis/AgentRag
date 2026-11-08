@@ -103,12 +103,10 @@ _FILENAME_HINT_RE = re.compile(
 )
 
 
-async def _list_notebook_document_titles(notebook_id: str | None, limit: int | None = None) -> list[str]:
-    """Return Document.title list for sources linked to the given notebook.
-
-    Used as the notebook's retrieval scope, so by default it is the WHOLE
-    notebook: the old cap of 50 with no ORDER BY silently dropped an arbitrary
-    subset. Callers that only need a sample pass `limit` (ordered, stable)."""
+async def _list_notebook_documents(notebook_id: str | None) -> list[tuple[str, str]]:
+    """(document id, title) for every source linked to the notebook, oldest
+    first. This is the notebook's retrieval scope, so it is the WHOLE
+    notebook: an old cap of 50 with no ORDER BY silently dropped documents."""
     if not notebook_id:
         return []
     try:
@@ -117,7 +115,7 @@ async def _list_notebook_document_titles(notebook_id: str | None, limit: int | N
         return []
     async with AsyncSessionLocal() as session:
         q = (
-            select(Document.title)
+            select(Document.id, Document.title)
             .join(
                 adapter_notebook_sources,
                 adapter_notebook_sources.c.document_id == Document.id,
@@ -125,10 +123,14 @@ async def _list_notebook_document_titles(notebook_id: str | None, limit: int | N
             .where(adapter_notebook_sources.c.notebook_id == nb_uuid)
             .order_by(Document.created_at, Document.id)
         )
-        if limit is not None:
-            q = q.limit(limit)
         rows = (await session.execute(q)).all()
-    return [r[0] for r in rows if r and r[0]]
+    return [(str(r[0]), r[1]) for r in rows if r and r[0]]
+
+
+async def _document_ids_titled(title: str) -> list[str]:
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(select(Document.id).where(Document.title == title))
+        return [str(r[0]) for r in rows.all()]
 
 
 async def _resolve_turn_scope(
@@ -136,35 +138,56 @@ async def _resolve_turn_scope(
     document_title: str | None,
     source_ids: list[str] | None = None,
 ) -> list[str] | None:
-    """The document scope for one notebook-chat turn. Fails CLOSED.
+    """The document ids one chat turn may retrieve from. Fails CLOSED.
 
-    - ticked sources → exactly those (none resolvable → [] , never "all");
-    - a resolved filename hint → just that document;
+    - ticked sources → exactly those that still exist (none → [], never "all");
+    - a resolved filename hint → the notebook's documents with that title;
     - otherwise the whole notebook ([] for an empty notebook);
     - a lookup error → [] (search nothing) rather than None (search everything).
-    Outside a notebook there is no isolation to enforce → None.
+    Outside a notebook: a document_title → the documents carrying it (admin
+    routes), else None (unscoped).
+
+    Ids, not titles: titles are client filenames, so two users' "report.pdf"
+    share one, and a title scope let each notebook read the other's chunks.
     """
     import logging
 
+    log = logging.getLogger(__name__)
     if not notebook_id:
-        return [document_title] if document_title else None
+        if not document_title:
+            return None
+        try:
+            return await _document_ids_titled(document_title)
+        except Exception:
+            log.exception("document_title scope lookup failed; searching nothing")
+            return []
     if source_ids:
-        titles: list[str] = []
+        ids: list[str] = []
         for sid in source_ids:
             try:
-                t = await _get_document_title(sid)
+                if await _get_document_title(sid) is not None:
+                    ids.append(str(uuid.UUID(str(sid))))
             except Exception:
-                t = None
-            if t:
-                titles.append(t)
-        return titles
-    if document_title:
-        return [document_title]
+                continue
+        return ids
     try:
-        return await _list_notebook_document_titles(notebook_id)
+        docs = await _list_notebook_documents(notebook_id)
     except Exception:
-        logging.getLogger(__name__).exception("notebook scope lookup failed; searching nothing")
+        log.exception("notebook scope lookup failed; searching nothing")
         return []
+    if document_title:
+        return [d for d, t in docs if t == document_title]
+    return [d for d, _ in docs]
+
+
+async def _single_scope_title(scope: list[str] | None) -> str | None:
+    """Title of the turn's only document (whole-doc summary target)."""
+    if not scope or len(scope) != 1:
+        return None
+    try:
+        return await _get_document_title(scope[0])
+    except Exception:
+        return None
 
 
 async def _resolve_document_hint(question: str, notebook_id: str | None) -> str | None:
@@ -661,7 +684,7 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
 
     # Whole-doc summary → map-reduce over the ENTIRE doc (covers 100% of pages,
     # not top-K), same routing as execute_chat_stream. Single-doc only.
-    _summary_doc = document_title or (turn_scope[0] if turn_scope and len(turn_scope) == 1 else None)
+    _summary_doc = document_title or await _single_scope_title(turn_scope)
     if _is_summary_request(user_question) and _summary_doc:
         try:
             from src.agentrag.generation.summary_service import SummaryService
@@ -769,32 +792,17 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
 
     notebook_id = (conv.get("extra_metadata") or {}).get("notebook_id")
     document_title: str | None = None
-    # Ticked source subset → restrict retrieval to those documents (speed + focus).
-    scope_titles: list[str] = []
-    if body.source_ids:
-        for sid in body.source_ids:
-            try:
-                t = await _get_document_title(sid)
-                if t:
-                    scope_titles.append(t)
-            except Exception:
-                pass
-    # Ticked sources that no longer resolve (deleted meanwhile) must not widen
-    # the turn to the whole notebook.
-    ticked_unresolved = bool(body.source_ids) and not scope_titles
-    if not scope_titles and not ticked_unresolved:
-        # No explicit selection → keep the single-doc hint heuristic.
+    if not body.source_ids:
+        # No explicit selection → the single-doc filename hint may narrow the
+        # turn to one notebook document.
         try:
             document_title = await _resolve_document_hint(body.message, notebook_id)
         except Exception:
             _log.exception("execute_chat_stream: _resolve_document_hint failed")
-    if not scope_titles and not document_title and not ticked_unresolved:
-        # Default: scope retrieval to ALL of this notebook's documents so chat
-        # never leaks other notebooks' sources (NotebookLM-style isolation).
-        try:
-            scope_titles = await _list_notebook_document_titles(notebook_id)
-        except Exception:
-            _log.exception("execute_chat_stream: notebook scope resolution failed")
+    # Ticked sources / filename hint / whole notebook, by document id. Fails
+    # closed: ticked-but-deleted sources or a lookup error search nothing.
+    turn_scope = await _resolve_turn_scope(notebook_id, document_title, body.source_ids)
+    _summary_title = document_title or await _single_scope_title(turn_scope)
 
     history: list[dict] = []
     try:
@@ -841,9 +849,11 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             # Whole-document summary → map-reduce over the ENTIRE doc (covers
             # 100% of pages, not top-K retrieval). Single-doc only; multi-doc
             # compare stays on the agent path below.
-            _summary_doc = document_title or (
-                scope_titles[0] if scope_titles and len(scope_titles) == 1 else None
-            )
+            # Scope first: the summary reads the document by title, and the
+            # store applies the turn's id scope to that read.
+            from src.agentrag.retrieval.context import set_document_scope as _set_scope
+            _set_scope(turn_scope)
+            _summary_doc = _summary_title
             if _is_summary_request(body.message) and _summary_doc:
                 try:
                     from src.agentrag.generation.summary_service import SummaryService
@@ -888,14 +898,9 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
             # Semantic path — stream via agent.chat_stream.
             from src.agentrag.retrieval.context import set_domain_filter, set_document_scope
             set_domain_filter(effective_domain_filter)
-            # Ticked sources / notebook docs; a resolved filename hint narrows to
-            # that one doc. [] (empty notebook) means nothing, not everything.
-            if scope_titles:
-                set_document_scope(scope_titles)
-            elif document_title:
-                set_document_scope([document_title])
-            else:
-                set_document_scope([] if notebook_id else None)
+            # Ticked sources / notebook docs / hinted doc, by id. [] (empty
+            # notebook) means nothing, not everything.
+            set_document_scope(turn_scope)
             agent = get_agent_service()
             # The picker sends a `prefix::provider::model` id — take the bare
             # model name (e.g. deepseek-v4-pro) so AgentLLM prefix-routing applies.
@@ -1103,7 +1108,17 @@ async def send_message(
 
     admin = is_admin(request)
 
+    # The document this session chats with, by id: `document_title` alone also
+    # matched other users' documents with the same filename.
+    scope_doc = meta.get("source_id") or source_id
+
     async def event_stream():
+        from src.agentrag.retrieval.context import set_document_scope
+
+        try:
+            set_document_scope([str(uuid.UUID(str(scope_doc)))])
+        except (TypeError, ValueError):
+            set_document_scope([])
         yield json.dumps({"type": "user", "content": body.message}) + "\n"
         try:
             answer, citations, highlights, tool_trace = await _direct_rag(
@@ -1208,6 +1223,12 @@ def _direct_rag_cache_key(question: str, document_title: str | None, history: li
     h.update((question or "").strip().lower().encode("utf-8"))
     h.update(b"|")
     h.update((document_title or "").encode("utf-8"))
+    h.update(b"|")
+    # The turn's document ids: titles collide across users, and a title-only
+    # key served one user's cached answer to another's same-named document.
+    from src.agentrag.retrieval.context import get_document_scope
+
+    h.update(json.dumps(get_document_scope()).encode("utf-8"))
     h.update(b"|")
     # Include last 2 turns so multi-turn refinements still work
     for m in (history or [])[-2:]:

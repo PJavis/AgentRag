@@ -11,7 +11,7 @@ Before this, four routes deleted documents four different ways:
 - account deletion purged ES per title on its own.
 
 A deleted document must stop being retrievable everywhere at once: Postgres,
-every ES index that carries its title, its extracted images, and any cached
+its ES docs (segments by document_id, memory by StructMem group), its extracted images, and any cached
 answer built while it existed (bumping the corpus version re-keys the cache).
 """
 from __future__ import annotations
@@ -20,6 +20,7 @@ import logging
 import re
 import shutil
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,10 +38,24 @@ def image_dir_for(title: str) -> Path:
     return Path(settings.IMAGE_STORAGE_DIR) / re.sub(r"[^\w\-]", "_", title)[:80]
 
 
+@dataclass(frozen=True)
+class PurgeRef:
+    """What purging needs from a deleted Document row (read before the delete)."""
+
+    document_id: str
+    title: str | None
+    source_id: str | None = None
+
+    @classmethod
+    def of(cls, doc: Any) -> "PurgeRef":
+        return cls(str(doc.id), doc.title, getattr(doc, "source_id", None))
+
+
 async def _titles_still_used(titles: list[str]) -> set[str]:
-    """ES and the image folder are keyed by title, not id. Titles another
-    document still carries must not be purged (it would delete ITS hits too).
-    One query for all titles."""
+    """Titles another document still carries. Segments are purged by
+    document_id, but legacy segments (indexed before that field), entities,
+    relationships and the image folder are keyed by title only, and must not be
+    purged while another document uses the title. One query for all titles."""
     if not titles:
         return set()
     async with AsyncSessionLocal() as session:
@@ -50,30 +65,40 @@ async def _titles_still_used(titles: list[str]) -> set[str]:
         return {t for (t,) in rows.all()}
 
 
-async def purge_document_artifacts(titles: list[str]) -> dict[str, Any]:
-    """Best-effort purge of everything keyed by title, after the Postgres rows
-    are gone. Bumps the corpus version once, only if something was purged."""
+async def purge_document_artifacts(refs: list[PurgeRef]) -> dict[str, Any]:
+    """Best-effort purge of a deleted document's ES docs and images, after the
+    Postgres rows are gone. Bumps the corpus version once, only if something
+    was purged. Returns per-document results keyed by document id."""
     import asyncio
 
-    unique = list(dict.fromkeys(t for t in titles if t))
-    still_used = await _titles_still_used(unique)
+    from src.agentrag.graph.structmem_service import StructMemService
+
+    unique = list({r.document_id: r for r in refs if r.document_id}.values())
+    still_used = await _titles_still_used([r.title for r in unique if r.title])
     purged: dict[str, Any] = {}
     removed_any = False
-    for title in unique:
-        if title in still_used:
-            purged[title] = "kept: title shared with another document"
-            continue
+    for ref in unique:
+        shared = ref.title in still_used
         removed_any = True
         try:
             from src.agentrag.ingestion.stores.elasticsearch_store import (
                 ElasticsearchStore,
             )
 
-            purged[title] = await ElasticsearchStore().delete_document(title)
+            purged[ref.document_id] = await ElasticsearchStore().delete_document(
+                ref.title or "",
+                document_id=ref.document_id,
+                group_id=(
+                    StructMemService.normalize_group_id(ref.source_id)
+                    if ref.source_id else None
+                ),
+                title_shared=shared or not ref.title,
+            )
         except Exception as exc:
-            logger.warning("ES purge failed for %r: %s", title, exc)
-            purged[title] = f"error: {type(exc).__name__}"
-        shutil.rmtree(image_dir_for(title), ignore_errors=True)
+            logger.warning("ES purge failed for %s (%r): %s", ref.document_id, ref.title, exc)
+            purged[ref.document_id] = f"error: {type(exc).__name__}"
+        if ref.title and not shared:
+            shutil.rmtree(image_dir_for(ref.title), ignore_errors=True)
     if removed_any:
         try:
             from src.agentrag.common.corpus_version import bump_corpus_version
@@ -91,25 +116,24 @@ async def delete_document(document_id: uuid.UUID) -> dict[str, Any] | None:
         doc = await session.get(Document, document_id)
         if doc is None:
             return None
-        title = doc.title
+        ref = PurgeRef.of(doc)
         await session.execute(delete(Segment).where(Segment.document_id == doc.id))
         await session.delete(doc)
         await session.commit()
-    purged = await purge_document_artifacts([title] if title else [])
-    return {"document_id": str(document_id), "title": title, "purged": purged.get(title, {})}
+    purged = await purge_document_artifacts([ref])
+    return {"document_id": str(document_id), "title": ref.title, "purged": purged.get(ref.document_id, {})}
 
 
-async def delete_documents_in_session(session, docs: list[Document]) -> list[str]:
+async def delete_documents_in_session(session, docs: list[Document]) -> list[PurgeRef]:
     """Delete Document rows (and their segments) inside a caller's transaction.
 
-    Returns the titles to hand to `purge_document_artifacts` AFTER the caller
+    Returns the refs to hand to `purge_document_artifacts` AFTER the caller
     commits — purging before the commit would leave ES empty for rows a failed
     transaction kept.
     """
-    titles: list[str] = []
+    refs: list[PurgeRef] = []
     for doc in docs:
         await session.execute(delete(Segment).where(Segment.document_id == doc.id))
-        if doc.title:
-            titles.append(doc.title)
+        refs.append(PurgeRef.of(doc))
         await session.delete(doc)
-    return titles
+    return refs

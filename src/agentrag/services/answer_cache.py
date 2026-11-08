@@ -58,6 +58,7 @@ class AnswerCache:
         domain_filter: dict[str, Any] | None,
         verbosity: str | None,
         model: str,
+        document_scope: list[str] | None = None,
     ) -> str | None:
         """Cache key, or None when caching must not happen at all.
 
@@ -71,6 +72,9 @@ class AnswerCache:
                 "q": self._normalize(question),
                 "corpus": corpus_version,
                 "doc": document_title or "",
+                # The turn's document ids: the same question in two notebooks
+                # must not share an answer (it cites the other's documents).
+                "scope": sorted(document_scope) if document_scope is not None else None,
                 # sort_keys below so an equivalent filter written in another
                 # order produces the same key.
                 "filter": domain_filter or {},

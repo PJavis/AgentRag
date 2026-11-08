@@ -24,7 +24,9 @@ def get_domain_filter() -> dict[str, Any] | None:
 
 
 # Per-turn document scope — every retrieval in the turn is restricted to these
-# document titles (notebook isolation, or a ticked subset of sources).
+# documents (notebook isolation, or a ticked subset of sources), by Postgres
+# Document.id. Titles are client filenames and collide across users, so a
+# title scope let two notebooks holding a "report.pdf" read each other.
 # None = unscoped (search everything). [] = scoped to NOTHING (an empty
 # notebook must not fall back to the whole corpus).
 _document_scope: ContextVar[list[str] | None] = ContextVar(
@@ -32,16 +34,19 @@ _document_scope: ContextVar[list[str] | None] = ContextVar(
 )
 
 
-def set_document_scope(titles: list[str] | None):
-    """Restrict this turn's retrieval to the given document titles.
+def set_document_scope(document_ids: list[Any] | None):
+    """Restrict this turn's retrieval to the given document ids.
 
     Pass None for "no scope". An empty list means the scope is empty and every
     scoped search returns nothing — it used to be coerced to None, so an empty
     notebook searched the entire corpus."""
-    return _document_scope.set(list(titles) if titles is not None else None)
+    if document_ids is None:
+        return _document_scope.set(None)
+    return _document_scope.set([str(d) for d in document_ids if d])
 
 
 def get_document_scope() -> list[str] | None:
+    """The turn's document ids, or None when the turn is unscoped."""
     return _document_scope.get()
 
 
@@ -58,5 +63,5 @@ def current_retrieval_filters() -> dict[str, Any] | None:
         out["specialties"] = list(df["specialties"])
     scope = get_document_scope()
     if scope is not None:
-        out["document_titles"] = list(scope)
+        out["document_ids"] = list(scope)
     return out or None

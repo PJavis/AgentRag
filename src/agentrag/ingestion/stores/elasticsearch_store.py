@@ -35,7 +35,17 @@ async def close_shared_es_client() -> None:
 
 
 def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Build ES `terms` filter clauses for S5 domain tags."""
+    """Build ES `terms` filter clauses for S5 domain tags + document scope.
+
+    Inside a scoped chat turn (retrieval.context), the turn's document ids
+    apply even when the caller passed no scope: summary / mindmap / tool
+    helpers call the store directly, and isolation must not depend on each of
+    them remembering to pass it. Outside a turn the ContextVar is None."""
+    from src.agentrag.retrieval.context import get_document_scope
+
+    turn_scope = get_document_scope()
+    if turn_scope is not None and "document_ids" not in (filters or {}):
+        filters = {**(filters or {}), "document_ids": turn_scope}
     if not filters:
         return []
     clauses: list[dict[str, Any]] = []
@@ -45,14 +55,19 @@ def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
     specs = filters.get("specialties") or []
     if specs:
         clauses.append({"terms": {"specialty_tag": list(specs)}})
-    # Document scope — restrict to the turn's documents (by title). A present
-    # but EMPTY scope (empty notebook) matches nothing; it must not widen to
-    # the whole corpus.
-    doc_titles = filters.get("document_titles")
-    if doc_titles is not None:
-        doc_titles = list(doc_titles)
-        if doc_titles:
-            clauses.append({"terms": {"document_title.keyword": doc_titles}})
+    # Document scope — restrict to the turn's documents. A present but EMPTY
+    # scope (empty notebook) matches nothing; it must not widen to the whole
+    # corpus. `document_ids` is the real key: titles come from client
+    # filenames, so two users' "report.pdf" share a title and a title scope
+    # lets each read the other's chunks. `document_titles` stays for callers
+    # that only know a title (admin routes, eval).
+    for key, field in (("document_ids", "document_id"), ("document_titles", "document_title.keyword")):
+        values = filters.get(key)
+        if values is None:
+            continue
+        values = [str(v) for v in values if v]
+        if values:
+            clauses.append({"terms": {field: values}})
         else:
             clauses.append({"bool": {"must_not": [{"match_all": {}}]}})
     return clauses
@@ -121,24 +136,51 @@ class ElasticsearchStore:
         await self.client.indices.delete(index=index_name)
         return True
 
-    async def delete_document(self, document_title: str) -> dict[str, Any]:
-        """Purge every ES doc belonging to a source (by document_title) across the
-        segment, StructMem-memory, entity and relationship indices. Best-effort:
-        missing indices / fields are ignored. Returns per-index deleted counts."""
+    async def delete_document(
+        self,
+        document_title: str,
+        document_id: str | None = None,
+        *,
+        group_id: str | None = None,
+        title_shared: bool = False,
+    ) -> dict[str, Any]:
+        """Purge every ES doc belonging to one document across the segment,
+        StructMem-memory, entity and relationship indices. Best-effort: missing
+        indices / fields are ignored. Returns per-index deleted counts.
+
+        With `document_id`, segments are matched by id, plus legacy segments
+        (indexed before the id field existed) that carry the title and no id.
+        Memory is matched by StructMem `group_id` when given. Anything still
+        keyed only by title (legacy segments, memory without a group, entities,
+        relationships) is skipped when `title_shared` — another document carries
+        the same title and those hits are its too."""
         from src.agentrag.config import settings as _settings
 
-        query = {"query": {"term": {"document_title.keyword": document_title}}}
-        indices = [
-            self.index_name,
-            _settings.STRUCTMEM_INDEX,
-            self.entity_index_name,
-            self.relationship_index_name,
+        by_title = {"term": {"document_title.keyword": document_title}}
+        legacy = {"bool": {"filter": [by_title], "must_not": [{"exists": {"field": "document_id"}}]}}
+        if document_id:
+            seg_q = {"bool": {"should": [{"term": {"document_id": str(document_id)}}] + ([] if title_shared else [legacy]), "minimum_should_match": 1}}
+        else:
+            seg_q = None if title_shared else by_title
+        if group_id:
+            mem_q = {"term": {"group_id": group_id}}
+        else:
+            mem_q = None if title_shared else by_title
+        title_q = None if title_shared else by_title
+        plan = [
+            (self.index_name, seg_q),
+            (_settings.STRUCTMEM_INDEX, mem_q),
+            (self.entity_index_name, title_q),
+            (self.relationship_index_name, title_q),
         ]
         result: dict[str, Any] = {}
-        for idx in indices:
+        for idx, q in plan:
+            if q is None:
+                result[idx] = "kept: title shared with another document"
+                continue
             try:
                 resp = await self.client.delete_by_query(
-                    index=idx, body=query, conflicts="proceed",
+                    index=idx, body={"query": q}, conflicts="proceed",
                     refresh=True, ignore_unavailable=True,
                 )
                 result[idx] = resp.get("deleted", 0)
@@ -170,6 +212,9 @@ class ElasticsearchStore:
                         "type": "text",
                         "fields": {"keyword": {"type": "keyword"}},
                     },
+                    # Postgres Document.id — the scope / delete key (titles
+                    # are client filenames and are not unique).
+                    "document_id": {"type": "keyword"},
                     "section_path": {
                         "type": "text",
                         "fields": {"keyword": {"type": "keyword"}},
@@ -222,6 +267,7 @@ class ElasticsearchStore:
                 index=self.index_name,
                 body={
                     "properties": {
+                        "document_id": {"type": "keyword"},
                         "segment_type": {"type": "keyword"},
                         "page_start": {"type": "integer"},
                         "page_end": {"type": "integer"},
@@ -341,7 +387,12 @@ class ElasticsearchStore:
             body=mapping,
         )
 
-    async def index_segments(self, chunks: list[dict[str, Any]], document_title: str):
+    async def index_segments(
+        self,
+        chunks: list[dict[str, Any]],
+        document_title: str,
+        document_id: str | None = None,
+    ):
         if not chunks:
             return
 
@@ -365,6 +416,7 @@ class ElasticsearchStore:
                 "content": chunk["content"],
                 "embedding": chunk["embedding"],
                 "document_title": document_title,
+                "document_id": str(document_id) if document_id else None,
                 "section_path": chunk.get("section_path"),
                 "position": chunk.get("position"),
                 "content_hash": chunk.get("content_hash"),
@@ -447,6 +499,7 @@ class ElasticsearchStore:
         document_title: str,
         max_chunks: int = 3000,
         include_images: bool = False,
+        filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Return every text segment of a document, ordered by page then
         position — the full-coverage input for whole-doc map-reduce summary.
@@ -457,7 +510,7 @@ class ElasticsearchStore:
         out: list[dict[str, Any]] = []
         filter_clauses: list[dict[str, Any]] = [
             {"term": {"document_title.keyword": document_title}}
-        ]
+        ] + _tag_filter_clauses(filters)
         if not include_images:
             # segment_type defaults to "text"; exclude image segments.
             filter_clauses.append({"bool": {"must_not": [{"term": {"segment_type": "image"}}]}})
@@ -650,7 +703,9 @@ class ElasticsearchStore:
             rrf_k=rrf_k or settings.RETRIEVAL_RRF_K,
         )
 
-    async def get_chunks_by_hashes(self, content_hashes: list[str]) -> list[dict[str, Any]]:
+    async def get_chunks_by_hashes(
+        self, content_hashes: list[str], filters: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         if not content_hashes:
             return []
         try:
@@ -658,8 +713,9 @@ class ElasticsearchStore:
                 index=self.index_name,
                 size=len(content_hashes),
                 query={
-                    "terms": {
-                        "content_hash": content_hashes,
+                    "bool": {
+                        "filter": [{"terms": {"content_hash": content_hashes}}]
+                        + _tag_filter_clauses(filters)
                     }
                 },
             )

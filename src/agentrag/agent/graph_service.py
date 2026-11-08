@@ -527,6 +527,7 @@ class GraphAgentService:
             cacheable_turn,
             current_corpus_version,
         )
+        from src.agentrag.retrieval.context import get_document_scope
 
         _cache = AnswerCache()
         _cache_key = None
@@ -538,6 +539,7 @@ class GraphAgentService:
                 domain_filter=domain_filter,
                 verbosity=verbosity,
                 model=settings.AGENT_MODEL or "",
+                document_scope=get_document_scope(),
             )
             _cached = _cache.get(_cache_key)
             if _cached is not None:

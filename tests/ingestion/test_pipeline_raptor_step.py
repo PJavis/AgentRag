@@ -5,9 +5,11 @@ from src.agentrag.ingestion.pipeline import _build_and_index_raptor
 class _Store:
     def __init__(self):
         self.indexed = None
+        self.document_id = None
 
-    async def index_segments(self, chunks, title):  # noqa: ANN001
+    async def index_segments(self, chunks, title, document_id=None):  # noqa: ANN001
         self.indexed = chunks
+        self.document_id = document_id
 
 
 class _Builder:
@@ -19,8 +21,10 @@ class _Builder:
 def test_indexes_summary_nodes_when_builder_returns_them():
     store = _Store()
     leaves = [{"content": "x", "embedding": [1.0]}]
-    asyncio.run(_build_and_index_raptor(_Builder(), store, leaves, "Doc"))
+    asyncio.run(_build_and_index_raptor(_Builder(), store, leaves, "Doc", document_id="D1"))
     assert store.indexed and store.indexed[0]["segment_type"] == "raptor_summary"
+    # Summaries are scoped like their leaves: by the document's id.
+    assert store.document_id == "D1"
 
 
 def test_no_index_when_builder_returns_empty():

@@ -259,3 +259,46 @@ def test_worker_refreshes_liveness_key_often():
     from src.agentrag.worker import settings as ws
 
     assert ws.WorkerSettings.health_check_interval <= 120
+
+
+async def test_new_layout_ingests_the_staging_root(monkeypatch, tmp_path):
+    # <staging>/<doc id>/<filename>: ingesting the root makes source_id
+    # "<doc id>/<filename>", the key the skeleton was created with. A bare
+    # filename source_id was shared by every user's "a.pdf".
+    doc_id = uuid.uuid4()
+    stage = tmp_path / "upload_2"
+    (stage / str(doc_id)).mkdir(parents=True)
+    (stage / str(doc_id) / "a.pdf").write_bytes(b"%PDF")
+    seen = {}
+
+    async def fake_ingest(folder, user_id):
+        seen["folder"] = folder
+        from src.agentrag.ingestion.connectors.folder import FolderConnector
+
+        seen["source_ids"] = [d["source_id"] for d in FolderConnector(folder).list_documents()]
+        seen["titles"] = [d["title"] for d in FolderConnector(folder).list_documents()]
+        return {"documents": []}
+
+    async def exists(_sid):
+        return True
+
+    async def fake_mark(*a):
+        return None
+
+    async def fake_event(**kw):
+        return None
+
+    import src.agentrag.ingestion.pipeline as pipeline
+    import src.agentrag.observability.activity as activity
+
+    monkeypatch.setattr(pipeline, "ingest_folder", fake_ingest)
+    monkeypatch.setattr(upload_jobs, "_skeleton_exists", exists)
+    monkeypatch.setattr(upload_jobs, "_mark_failed", fake_mark)
+    monkeypatch.setattr(activity, "record_event", fake_event)
+    await upload_jobs.run_upload_ingest(
+        str(stage / str(doc_id) / "a.pdf"), "u", [], None, skeleton_id=str(doc_id)
+    )
+    assert seen["folder"] == str(stage)
+    assert seen["source_ids"] == [f"{doc_id}/a.pdf"]
+    assert seen["titles"] == ["a"]  # the title shown to the user is unchanged
+    assert not stage.exists()  # the whole staging dir is cleaned, not just the doc dir

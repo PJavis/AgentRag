@@ -90,6 +90,42 @@ async def _source_id_shared(session: Any, source_id: str, document_id: Any) -> b
     return row.first() is not None
 
 
+def _contextualize_skip_reason(source_type: str, n_chunks: int) -> str | None:
+    """Why contextual retrieval is skipped for this document, or None.
+
+    Spreadsheet rows already carry their column headers, and one LLM call per
+    row-chunk made a 5.9k-row workbook cost a corpus pass (~1 h). Past
+    CONTEXTUAL_MAX_CHUNKS the prefix (first CONTEXTUAL_MAX_DOC_CHARS of the
+    document) no longer situates most chunks, so the calls buy little."""
+    if source_type in _EXCEL_SOURCE_TYPES:
+        return "spreadsheet"
+    cap = settings.CONTEXTUAL_MAX_CHUNKS
+    if cap and n_chunks > cap:
+        return f"{n_chunks} chunks > CONTEXTUAL_MAX_CHUNKS={cap}"
+    return None
+
+
+async def _mark_ingest_progress(source_id: str, done: int, total: int) -> None:
+    """Show progress on an upload's skeleton row while it is parsed/embedded.
+
+    The row used to stay "pending" until the chunks were saved, so a long
+    ingest looked stuck. Only a row still pending/parsing is touched (a folder
+    ingest has no skeleton row: nothing to update). Best effort."""
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                update(Document)
+                .where(
+                    Document.source_id == source_id,
+                    Document.graph_status.in_(("pending", "parsing")),
+                )
+                .values(graph_status="parsing", parse_done_pages=done, parse_total_pages=total)
+            )
+            await s.commit()
+    except Exception:  # noqa: BLE001 — progress is cosmetic
+        logger.debug("ingest progress update failed for %s", source_id, exc_info=True)
+
+
 async def _title_shared(session: Any, title: str, document_id: Any) -> bool:
     """Does another document carry this title? Then title-keyed ES data (legacy
     segments without a document_id) is partly that document's and must not be
@@ -174,6 +210,7 @@ async def ingest_folder(
 
             # ── Parse theo source_type ─────────────────────────────────────
             source_type = doc.get("source_type", "markdown")
+            await _mark_ingest_progress(doc["source_id"], 0, 0)
             t0 = time.perf_counter()
 
             if source_type in _IMAGE_SOURCE_TYPES:
@@ -308,15 +345,27 @@ async def ingest_folder(
 
             # WS1 — Contextual Retrieval: add a situating context sentence per
             # chunk BEFORE embedding so dense + BM25 see the contextualized text.
-            if settings.CONTEXTUAL_RETRIEVAL_ENABLED:
+            await _mark_ingest_progress(doc["source_id"], 0, len(chunks_search))
+            ctx_skip = _contextualize_skip_reason(source_type, len(chunks_search))
+            if settings.CONTEXTUAL_RETRIEVAL_ENABLED and ctx_skip:
+                report["contextualize_skipped"] = ctx_skip
+                logger.info("contextualize skipped for %r: %s", doc["title"], ctx_skip)
+            elif settings.CONTEXTUAL_RETRIEVAL_ENABLED:
                 t0 = time.perf_counter()
                 from src.agentrag.ingestion.contextualizer import Contextualizer
                 from src.agentrag.services.llm_gateway import LLMGateway
+
+                _sid = doc["source_id"]
+
+                async def _progress(done: int, total: int, _sid: str = _sid) -> None:
+                    await _mark_ingest_progress(_sid, done, total)
+
                 chunks_search = await Contextualizer(LLMGateway()).contextualize_chunks(
                     doc_text=content,
                     chunks=chunks_search,
                     document_title=doc["title"],
                     doc_key=doc.get("source_bytes_sha"),
+                    on_progress=_progress,
                 )
                 timings["contextualize_ms"] = (time.perf_counter() - t0) * 1000
 
@@ -366,7 +415,9 @@ async def ingest_folder(
                     chunks_search, doc["title"], document_id=str(doc_id)
                 )
                 timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
-                if settings.RAPTOR_ENABLED:
+                # A summary tree over table rows is not useful, and on a big
+                # workbook it is hundreds more LLM calls.
+                if settings.RAPTOR_ENABLED and source_type not in _EXCEL_SOURCE_TYPES:
                     t0 = time.perf_counter()
                     from src.agentrag.ingestion.raptor import RaptorBuilder
                     from src.agentrag.services.llm_gateway import LLMGateway
@@ -380,8 +431,36 @@ async def ingest_folder(
             else:
                 timings["elasticsearch_ms"] = 0.0
 
+            skip_graph = (
+                settings.STRUCTMEM_SKIP_SPREADSHEETS and source_type in _EXCEL_SOURCE_TYPES
+            )
             try:
-                if mode == "sync":
+                if skip_graph:
+                    # Searchable now, and nothing else will run: done.
+                    _pages = int(report.get("pages") or 0)
+                    await session.execute(
+                        update(Document)
+                        .where(Document.id == doc_id)
+                        .values(
+                            graph_synced=False,
+                            graph_status="done",
+                            graph_last_error=None,
+                            graph_total_chunks=0,
+                            graph_processed_chunks=0,
+                            graph_failed_chunks=0,
+                            parse_total_pages=_pages,
+                            parse_done_pages=_pages,
+                        )
+                    )
+                    report["graph_status"] = "done"
+                    report["graph_skipped"] = "spreadsheet"
+                    timings["structmem_ms"] = 0.0
+                    try:
+                        from src.agentrag.common.progress import publish_progress
+                        await publish_progress(user_id, str(doc_id), "done")
+                    except Exception:
+                        pass
+                elif mode == "sync":
                     assert structmem_service is not None
                     t0 = time.perf_counter()
                     structmem_results = await structmem_service.sync_chunks(
@@ -444,7 +523,7 @@ async def ingest_folder(
 
                 await session.commit()
 
-                if mode == "async":
+                if mode == "async" and not skip_graph:
                     # Cache parsed content so the ARQ worker can read it without
                     # re-parsing (also fixes upload endpoint where temp dir is
                     # deleted before the worker runs).

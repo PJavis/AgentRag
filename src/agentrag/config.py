@@ -94,6 +94,10 @@ class Settings(BaseSettings):
 
     # StructMem — thay thế Graphiti graph extraction
     STRUCTMEM_ENABLED: bool = True
+    #: Spreadsheets skip StructMem extraction (one LLM call per graph chunk):
+    #: a 5.9k-row workbook was 1,163 extract calls, a quarter of a corpus pass,
+    #: for facts the chat only reads on relationship/timeline questions.
+    STRUCTMEM_SKIP_SPREADSHEETS: bool = True
     # S5 — domain tagging during ingest (SectionTagger). Adds system_tag /
     # specialty_tag / canonical_terms to every chunk.
     TAGGING_ENABLED: bool = True
@@ -348,6 +352,15 @@ class Settings(BaseSettings):
     #: Cap the document text sent as the cached situating prefix (chars).
     CONTEXTUAL_MAX_DOC_CHARS: int = 48000
     CONTEXTUAL_CACHE_DIR: str = ".cache/agentrag/context"
+    #: Concurrent contextualize calls per document. It was hard-wired to 4
+    #: (EMBEDDING_BATCH_SIZE // 4): ~1.3 calls/s at DeepSeek's ~3 s latency.
+    CONTEXTUAL_CONCURRENCY: int = 16
+    #: Documents with more search chunks than this skip contextualization
+    #: (0 = no cap). It is one LLM call per chunk: a 5.9k-row spreadsheet made
+    #: 4.6k chunks, a whole corpus pass worth of calls and ~1 h for one upload.
+    #: The situating prefix is also clipped to CONTEXTUAL_MAX_DOC_CHARS, so
+    #: chunks far into a huge document get context from the wrong part anyway.
+    CONTEXTUAL_MAX_CHUNKS: int = 1500
 
     # ── WS2: RAPTOR summary layer ────────────────────────────────────────────
     RAPTOR_ENABLED: bool = False

@@ -38,8 +38,10 @@ class PostgresStore:
                         seg_count = (await session.execute(
                             select(Segment).where(Segment.document_id == doc.id).limit(1)
                         )).scalar_one_or_none()
+                        # "parsing" = a skeleton the pipeline is reporting
+                        # progress on (pipeline._mark_ingest_progress).
                         is_skeleton = (
-                            doc.graph_status == "pending" and seg_count is None
+                            doc.graph_status in ("pending", "parsing") and seg_count is None
                         )
                         if doc.graph_status == "failed" or is_skeleton:
                             # Reset + (re)populate. Clear any stale segments first.

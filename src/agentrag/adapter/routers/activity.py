@@ -229,19 +229,43 @@ async def admin_users(request: Request):
 
 _INGEST_STATUS_ORDER = {"processing": 0, "queued": 1, "pending": 2, "failed": 3, "done": 4}
 
+# Document.graph_status (pipeline stages) → the five states this panel shows.
+# It used to filter on "processing"/"queued", which nothing sets: a document
+# being parsed or enriched vanished from the panel while it was working.
+_PANEL_STATUS = {
+    "pending": "pending",
+    "queued": "queued",
+    "parsing": "processing",
+    "searchable": "processing",
+    "enriching": "processing",
+    "done": "done",
+    "done_partial": "done",
+    "failed": "failed",
+}
+_ACTIVE_STAGES = ("pending", "queued", "parsing", "searchable", "enriching", "failed")
+
 
 def _doc_progress_row(d: Document) -> dict:
-    total = d.graph_total_chunks or 0
-    processed = d.graph_processed_chunks or 0
-    failed_chunks = d.graph_failed_chunks or 0
+    stage = d.graph_status or "pending"
+    if stage == "parsing":
+        # Upload ingest: chunks contextualized / embedded so far.
+        total = d.parse_total_pages or 0
+        processed = d.parse_done_pages or 0
+        failed_chunks = 0
+    else:
+        total = d.graph_total_chunks or 0
+        processed = d.graph_processed_chunks or 0
+        failed_chunks = d.graph_failed_chunks or 0
+    status = _PANEL_STATUS.get(stage, "pending")
     pct = round(processed / total * 100, 1) if total else (
-        100.0 if d.graph_status == "done" else 0.0
+        100.0 if status == "done" else 0.0
     )
     return {
         "document_id": str(d.id),
         "title": d.title,
         "source_type": d.source_type,
-        "graph_status": d.graph_status,
+        "graph_status": status,
+        "stage": stage,
         "progress_pct": pct,
         "chunks_total": total,
         "chunks_done": processed,
@@ -259,7 +283,7 @@ async def _ingest_progress_for(user_filter: uuid.UUID | None, include_done: bool
         if user_filter is not None:
             q = q.where(Document.user_id == user_filter)
         if not include_done:
-            q = q.where(Document.graph_status.in_(("pending", "queued", "processing", "failed")))
+            q = q.where(Document.graph_status.in_(_ACTIVE_STAGES))
         q = q.order_by(desc(Document.updated_at)).limit(limit)
         docs = (await session.execute(q)).scalars().all()
     rows = [_doc_progress_row(d) for d in docs]

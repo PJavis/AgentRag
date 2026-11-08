@@ -140,24 +140,31 @@ export function ChatPanel({
   const { openModal } = useModalManager()
 
   // Stable callbacks: they are props of the memoised AIMessageContent.
+  // useModalManager returns a new openModal every render, so read it through a
+  // ref — depending on it directly re-created every callback (and every
+  // message's citation components) on each streamed token.
+  const openModalRef = useRef(openModal)
+  useEffect(() => {
+    openModalRef.current = openModal
+  }, [openModal])
   const handleReferenceClick = useCallback((type: string, id: string) => {
     const modalType = type === 'source_insight' ? 'insight' : type as 'source' | 'note' | 'insight'
 
     try {
-      openModal(modalType, id)
+      openModalRef.current(modalType, id)
       // Note: The modal system uses URL parameters and doesn't throw errors for missing items.
       // The modal component itself will handle displaying "not found" states.
       // This try-catch is here for future enhancements or unexpected errors.
     } catch {
       toast.error(t('common.noResults'))
     }
-  }, [openModal, t])
+  }, [t])
 
   // [n] → the cited page of the original PDF; source detail view otherwise.
   const handleCitationClick = useCallback(async (citation: Citation) => {
     const sourceId = citation.source_id
     if (!sourceId) return
-    const opened = await openOriginalAtPage(String(sourceId), citationPage(citation))
+    const opened = await openOriginalAtPage(String(sourceId), citationPage(citation), citation.source_type)
     if (!opened) handleReferenceClick('source', String(sourceId))
   }, [handleReferenceClick])
 
@@ -175,13 +182,17 @@ export function ChatPanel({
     viewport.addEventListener('scroll', onScroll, { passive: true })
     return () => viewport.removeEventListener('scroll', onScroll)
   }, [])
-  const lastType = messages[messages.length - 1]?.type
+  const seenCountRef = useRef(messages.length)
   useEffect(() => {
-    // Sending a question always brings the conversation back into view.
-    if (lastType === 'human') stickToBottomRef.current = true
+    // Sending a question always brings the conversation back into view. Check
+    // every newly added message: notebook chat appends [question, placeholder]
+    // in one update, so the last message alone is never the human one.
+    const added = messages.slice(seenCountRef.current)
+    seenCountRef.current = messages.length
+    if (added.some(m => m.type === 'human')) stickToBottomRef.current = true
     if (!stickToBottomRef.current) return
     messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth', block: 'end' })
-  }, [messages, lastType, isStreaming])
+  }, [messages, isStreaming])
 
   const handleSend = () => {
     if (isStreaming) return

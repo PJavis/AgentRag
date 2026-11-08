@@ -313,8 +313,11 @@ _PRIMARY_ANSWER_KEYS = (
 async def _attach_source_ids(citations: list[dict[str, Any]]) -> None:
     """Mutate citations in place, adding `source_id` resolved from document_title.
 
-    The UI uses this to deep-link a citation badge to its source page. Titles
-    that don't resolve simply get no source_id (badge stays hover-only).
+    The UI uses this to open the cited page of the original. Titles that don't
+    resolve get no source_id (badge stays hover-only). A title shared by
+    several documents is ambiguous and also left unlinked — it used to link to
+    whichever row came last. `source_type` lets the UI skip downloading a
+    non-PDF original just to find out it cannot open it at a page.
     """
     titles = {c.get("document_title") for c in citations if c.get("document_title")}
     if not titles:
@@ -327,15 +330,18 @@ async def _attach_source_ids(citations: list[dict[str, Any]]) -> None:
 
         async with AsyncSessionLocal() as session:
             rows = await session.execute(
-                select(Document.id, Document.title).where(Document.title.in_(titles))
+                select(Document.id, Document.title, Document.source_type)
+                .where(Document.title.in_(titles))
             )
-            title_to_id = {title: str(doc_id) for doc_id, title in rows.all()}
+            matches: dict[str, list[tuple[str, str | None]]] = {}
+            for doc_id, title, source_type in rows.all():
+                matches.setdefault(title, []).append((str(doc_id), source_type))
     except Exception:  # noqa: BLE001 — best-effort enrichment, never break the answer
         return
     for c in citations:
-        sid = title_to_id.get(c.get("document_title"))
-        if sid:
-            c["source_id"] = sid
+        found = matches.get(c.get("document_title")) or []
+        if len(found) == 1:
+            c["source_id"], c["source_type"] = found[0]
 
 
 def _find_answer_field(obj: Any, max_depth: int = 6) -> str | None:

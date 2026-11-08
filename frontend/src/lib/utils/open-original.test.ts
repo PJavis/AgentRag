@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { citationPage, pageUrl } from './open-original'
 
 describe('citationPage', () => {
@@ -20,5 +20,15 @@ describe('pageUrl', () => {
   it('adds the PDF page fragment', () => {
     expect(pageUrl('blob:x/1', 5)).toBe('blob:x/1#page=5')
     expect(pageUrl('blob:x/1', null)).toBe('blob:x/1')
+  })
+})
+
+describe('openOriginalAtPage', () => {
+  it('does not download or open a tab for a known non-PDF source', async () => {
+    const { openOriginalAtPage } = await import('./open-original')
+    const open = vi.spyOn(window, 'open')
+    expect(await openOriginalAtPage('doc-1', 3, 'docx')).toBe(false)
+    expect(open).not.toHaveBeenCalled()
+    open.mockRestore()
   })
 })

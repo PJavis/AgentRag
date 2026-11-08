@@ -32,7 +32,6 @@ export const zhCN = {
     spanish: "Español",
     source: "来源",
     notebook: "笔记本",
-    podcast: "播客",
     quickActions: "快捷操作",
     quickActionsDesc: "导航、搜索、提问、主题",
     appName: "Open Notebook",

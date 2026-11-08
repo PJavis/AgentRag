@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useId } from 'react'
+import { useState, useRef, useEffect, useId, useCallback, useMemo, memo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -40,7 +40,12 @@ import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { toast } from 'sonner'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { chatFailure, retryQuestionFor } from '@/lib/utils/chat-errors'
+import { citationPage, openOriginalAtPage } from '@/lib/utils/open-original'
 import type { StreamingStep } from '@/lib/hooks/useNotebookChat'
+
+// Stable empty list: `?? []` inline would be a new array every render and
+// defeat AIMessageContent's memo for every message without citations.
+const EMPTY_CITATIONS: Citation[] = []
 
 interface NotebookContextStats {
   sourcesInsights: number
@@ -134,7 +139,8 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const { openModal } = useModalManager()
 
-  const handleReferenceClick = (type: string, id: string) => {
+  // Stable callbacks: they are props of the memoised AIMessageContent.
+  const handleReferenceClick = useCallback((type: string, id: string) => {
     const modalType = type === 'source_insight' ? 'insight' : type as 'source' | 'note' | 'insight'
 
     try {
@@ -145,12 +151,37 @@ export function ChatPanel({
     } catch {
       toast.error(t('common.noResults'))
     }
-  }
+  }, [openModal, t])
 
-  // Auto-scroll to bottom when new messages arrive
+  // [n] → the cited page of the original PDF; source detail view otherwise.
+  const handleCitationClick = useCallback(async (citation: Citation) => {
+    const sourceId = citation.source_id
+    if (!sourceId) return
+    const opened = await openOriginalAtPage(String(sourceId), citationPage(citation))
+    if (!opened) handleReferenceClick('source', String(sourceId))
+  }, [handleReferenceClick])
+
+  // Follow the bottom only while the reader is there. The old effect forced a
+  // smooth scroll on every token, yanking anyone reading an earlier answer back
+  // down and queueing hundreds of overlapping smooth-scroll animations.
+  const stickToBottomRef = useRef(true)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const viewport = scrollAreaRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+    if (!viewport) return
+    const onScroll = () => {
+      stickToBottomRef.current =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120
+    }
+    viewport.addEventListener('scroll', onScroll, { passive: true })
+    return () => viewport.removeEventListener('scroll', onScroll)
+  }, [])
+  const lastType = messages[messages.length - 1]?.type
+  useEffect(() => {
+    // Sending a question always brings the conversation back into view.
+    if (lastType === 'human') stickToBottomRef.current = true
+    if (!stickToBottomRef.current) return
+    messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth', block: 'end' })
+  }, [messages, lastType, isStreaming])
 
   const handleSend = () => {
     if (isStreaming) return
@@ -327,8 +358,9 @@ export function ChatPanel({
                           {failure.partial.trim() && (
                             <AIMessageContent
                               content={failure.partial}
-                              citations={(message.citations as Citation[] | undefined) || []}
+                              citations={(message.citations as Citation[] | undefined) ?? EMPTY_CITATIONS}
                               onReferenceClick={handleReferenceClick}
+                              onCitationClick={handleCitationClick}
                             />
                           )}
                           <div
@@ -376,8 +408,9 @@ export function ChatPanel({
                       ) : (
                         <AIMessageContent
                           content={message.content}
-                          citations={(message.citations as Citation[] | undefined) || []}
+                          citations={(message.citations as Citation[] | undefined) ?? EMPTY_CITATIONS}
                           onReferenceClick={handleReferenceClick}
+                          onCitationClick={handleCitationClick}
                         />
                       )}
                       {/* Action row + follow-ups: hidden on the actively-streaming
@@ -681,17 +714,29 @@ export function ChatPanel({
   )
 }
 
-// Helper component to render AI messages with hover-card citations + inline images
-function AIMessageContent({
+// Helper component to render AI messages with hover-card citations + inline images.
+// Memoised: while one answer streams, the others keep their props and skip the
+// (expensive) markdown + KaTeX render that used to run for every message per token.
+const AIMessageContent = memo(function AIMessageContent({
   content,
   citations,
   onReferenceClick,
+  onCitationClick,
 }: {
   content: string
   citations: Citation[]
   onReferenceClick: (type: string, id: string) => void
+  onCitationClick?: (citation: Citation) => void
 }) {
   const { t } = useTranslation()
+  // A new component type every render remounted every citation badge (and
+  // its hover card) on each streamed token.
+  const LinkComponent = useMemo(
+    () => (citations && citations.length > 0
+      ? createCompactReferenceHoverComponent(citations, onReferenceClick, onCitationClick)
+      : createCompactReferenceLinkComponent(onReferenceClick)),
+    [citations, onReferenceClick, onCitationClick],
+  )
   // Never render an empty prose container — an AI bubble with no content (e.g. a
   // completion that streamed no tokens and skipped reconciliation) would otherwise
   // show up as a stray empty bar. The active-stream placeholder is handled by the
@@ -710,10 +755,6 @@ function AIMessageContent({
       },
     )
   }
-  // Prefer hover when citations are present; fall back to clickable when not.
-  const LinkComponent = citations && citations.length > 0
-    ? createCompactReferenceHoverComponent(citations, onReferenceClick)
-    : createCompactReferenceLinkComponent(onReferenceClick)
   const imageCitations = (citations || []).filter((c) => c.segment_type === 'image' && c.image_url)
   return (
     <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none break-words prose-headings:font-semibold prose-a:text-blue-600 prose-a:break-all prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2">
@@ -768,7 +809,7 @@ function AIMessageContent({
       </ReactMarkdown>
     </div>
   )
-}
+})
 
 // Animated flow indicator shown while the assistant prepares a reply. `step`
 // mirrors the backend `event: status` pipeline steps, so the user sees the real

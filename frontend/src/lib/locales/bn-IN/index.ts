@@ -32,7 +32,6 @@ export const bnIN = {
     spanish: "Español",
     source: "উৎস",
     notebook: "নোটবুক",
-    podcast: "পডকাস্ট",
     quickActions: "দ্রুত ক্রিয়া",
     quickActionsDesc: "নেভিগেশন, অনুসন্ধান, প্রশ্ন, থিম",
     appName: "ওপেন নোটবুক",

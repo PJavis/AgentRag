@@ -32,7 +32,6 @@ export const esES = {
     spanish: "Español",
     source: "Fuente",
     notebook: "Cuaderno",
-    podcast: "Podcast",
     quickActions: "Acciones rápidas",
     quickActionsDesc: "Navegación, búsqueda, preguntar, tema",
     appName: "Open Notebook",

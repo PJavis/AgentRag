@@ -32,7 +32,6 @@ export const frFR = {
     spanish: "Español",
     source: "Source",
     notebook: "Carnet",
-    podcast: "Podcast",
     quickActions: "Actions rapides",
     quickActionsDesc: "Navigation, recherche, poser une question, thème",
     appName: "Open Notebook",

@@ -32,7 +32,6 @@ export const ptBR = {
     spanish: "Español",
     source: "Fonte",
     notebook: "Caderno",
-    podcast: "Podcast",
     quickActions: "Ações rápidas",
     quickActionsDesc: "Navegação, busca, perguntar, tema",
     appName: "Open Notebook",

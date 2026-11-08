@@ -32,7 +32,6 @@ export const zhTW = {
     spanish: "Español",
     source: "來源",
     notebook: "筆記本",
-    podcast: "播客",
     quickActions: "快捷操作",
     quickActionsDesc: "導覽、搜尋、提問、主題",
     appName: "Open Notebook",

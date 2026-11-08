@@ -134,6 +134,10 @@ class ConversationStore:
         extra_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         async with AsyncSessionLocal() as session:
+            if citations:
+                from src.agentrag.chat.turns import attach_source_ids
+
+                citations = await attach_source_ids(session, citations)
             message = ChatMessage(
                 conversation_id=uuid.UUID(conversation_id),
                 role=role,

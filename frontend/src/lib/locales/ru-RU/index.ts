@@ -32,7 +32,6 @@ export const ruRU = {
     spanish: "Español",
     source: "Источник",
     notebook: "Блокнот",
-    podcast: "Подкаст",
     quickActions: "Быстрые действия",
     quickActionsDesc: "Навигация, поиск, запрос, тема",
     appName: "Open Notebook",

@@ -1090,6 +1090,9 @@ async def send_message(
             citations=citations,
             tool_trace=tool_trace,
         )
+        # The live `context` frame must carry the same source_id-linked
+        # citations the persisted message has, or [n] is unclickable until reload.
+        citations = appended.get("citations") or citations
         # S6 — activity event for source chat turn
         identity_src = get_identity(request)
         await record_event(

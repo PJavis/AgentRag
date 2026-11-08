@@ -32,7 +32,6 @@ export const itIT = {
     spanish: "Español",
     source: "Fonte",
     notebook: "Quaderno",
-    podcast: "Podcast",
     quickActions: "Azioni rapide",
     quickActionsDesc: "Navigazione, ricerca, domande, tema",
     appName: "Open Notebook",

@@ -32,7 +32,6 @@ export const enUS = {
     spanish: "Español",
     source: "Source",
     notebook: "Notebook",
-    podcast: "Podcast",
     quickActions: "Quick actions",
     quickActionsDesc: "Navigation, search, ask, theme",
     appName: "Open Notebook",

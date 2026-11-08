@@ -32,7 +32,6 @@ export const jaJP = {
     spanish: "Español",
     source: "ソース",
     notebook: "ノートブック",
-    podcast: "ポッドキャスト",
     quickActions: "クイックアクション",
     quickActionsDesc: "ナビゲーション、検索、質問、テーマ",
     appName: "Open Notebook",

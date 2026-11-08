@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from src.agentrag.config import settings
 
@@ -45,7 +46,11 @@ class Contextualizer:
         chunks: list[dict[str, Any]],
         document_title: str,
         doc_key: str | None = None,
+        on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
+        """Add `context_text` to each chunk. `on_progress(done, total)` is
+        awaited as chunks finish (throttled), so the UI can show progress
+        instead of a status that sits on "pending" for the whole run."""
         if not chunks:
             return chunks
         doc_clip = doc_text[: settings.CONTEXTUAL_MAX_DOC_CHARS]
@@ -56,7 +61,24 @@ class Contextualizer:
         doc_hash = doc_key or sha256(doc_clip.encode("utf-8")).hexdigest()
         system = f"{_SYSTEM_PROMPT}\n\n<document title=\"{document_title}\">\n{doc_clip}\n</document>"
 
-        sem = asyncio.Semaphore(max(settings.EMBEDDING_BATCH_SIZE // 4, 4))
+        sem = asyncio.Semaphore(max(1, settings.CONTEXTUAL_CONCURRENCY))
+        total = len(chunks)
+        done = 0
+        reported = 0
+        last_report = time.monotonic()
+
+        async def tick() -> None:
+            nonlocal done, reported, last_report
+            done += 1
+            if on_progress is None:
+                return
+            now = time.monotonic()
+            if done == total or (done - reported >= 25 and now - last_report >= 2.0):
+                reported, last_report = done, now
+                try:
+                    await on_progress(done, total)
+                except Exception:  # noqa: BLE001 — progress is cosmetic
+                    logger.debug("contextualize progress callback failed", exc_info=True)
 
         async def one(chunk: dict[str, Any]) -> None:
             chunk_hash = chunk.get("content_hash") or sha256(
@@ -65,6 +87,7 @@ class Contextualizer:
             cached = self._load(doc_hash, chunk_hash)
             if cached is not None:
                 chunk["context_text"] = cached
+                await tick()
                 return
             async with sem:
                 try:
@@ -80,6 +103,7 @@ class Contextualizer:
             chunk["context_text"] = text or None
             if text:
                 self._store(doc_hash, chunk_hash, text)
+            await tick()
 
         await asyncio.gather(*(one(c) for c in chunks))
         return chunks

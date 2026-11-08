@@ -33,14 +33,15 @@ class PostgresStore:
                 # 2. Kiểm tra xem có bản ghi nào trùng khớp content_hash không
                 for doc in existing_docs:
                     if doc.content_hash == doc_data["content_hash"]:
-                        # Skeleton (pre-created via /sources upload, no segments yet)
-                        # → populate it instead of creating new doc.
-                        seg_count = (await session.execute(
-                            select(Segment).where(Segment.document_id == doc.id).limit(1)
-                        )).scalar_one_or_none()
-                        is_skeleton = (
-                            doc.graph_status == "pending" and seg_count is None
-                        )
+                        # Skeleton (pre-created via /sources upload) → populate it
+                        # instead of creating a new doc. "parsing" = a skeleton the
+                        # pipeline reports progress on (pipeline._mark_ingest_progress).
+                        # A pending/parsing row only exists while an ingest is in
+                        # flight, so one that already HAS segments is a run cut off
+                        # after this save (ARQ timeout) — repopulate it too. It used
+                        # to answer "skipped": no ES index, no failure recorded, the
+                        # row stuck in pending/parsing for good.
+                        is_skeleton = doc.graph_status in ("pending", "parsing")
                         if doc.graph_status == "failed" or is_skeleton:
                             # Reset + (re)populate. Clear any stale segments first.
                             await session.execute(

@@ -7,5 +7,10 @@
       "Bash(find ~/open-notebook/frontend/src -name \"*.ts\" -o -name \"*.tsx\" | xargs grep -l \"localhost:5055\\\\|apiUrl\" 2>/dev/null | grep -v node_modules | head -10)",
       "Read(//home/nguyenquocdung/open-notebook/frontend/src/**)"
     ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
   }
 }

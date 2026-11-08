@@ -9,6 +9,7 @@ def validate_settings(settings: Settings) -> None:
     _validate_agent_settings(settings)
     _validate_retrieval_reranker_settings(settings)
     _validate_relevance_scale_settings(settings)
+    _validate_vision_settings(settings)
     _validate_general_settings(settings)
 
 
@@ -82,7 +83,7 @@ def _validate_agent_settings(settings: Settings) -> None:
 
 
 _API_MODEL_MARKERS = (
-    "gemini", "gpt-", "gpt4", "gpt-4", "claude", "deepseek", "o1-", "o3-",
+    "gemini", "gpt-", "gpt4", "gpt-4", "claude", "deepseek", "o1-", "o3-", "o4-",
     "text-embedding", "flash", "turbo",
 )
 
@@ -188,6 +189,75 @@ def _validate_retrieval_reranker_settings(settings: Settings) -> None:
             "RETRIEVAL_RERANK_BASE_URL or AGENT_BASE_URL or EXTRACTION_BASE_URL or OLLAMA_BASE_URL "
             "is required when reranker provider resolves to ollama"
         )
+
+
+def _same_server(a: str, b: str) -> bool:
+    from urllib.parse import urlparse
+
+    pa, pb = urlparse(a), urlparse(b)
+    return (pa.hostname or "").lower() == (pb.hostname or "").lower() and pa.port == pb.port
+
+
+def _looks_like_ollama_url(url: str, ollama_base_url: str | None = None) -> bool:
+    """True for the configured OLLAMA_BASE_URL server (exact host+port — catches a
+    remapped port or proxy), else the default port / an 'ollama' hostname."""
+    from urllib.parse import urlparse
+
+    if ollama_base_url and _same_server(url, ollama_base_url):
+        return True
+    parsed = urlparse(url)
+    return parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower()
+
+
+def _validate_vision_settings(settings: Settings) -> None:
+    """Vision failures are silent: ingest reports success while scanned pages are
+    "described" by the wrong model, come out as ~40 chars and get filtered away
+    (seen 2026-09-07). Fail at startup instead."""
+    provider = settings.VISION_PROVIDER
+    if not provider:
+        return
+
+    if not settings.VISION_MODEL:
+        # llm_gateway._get_vision_client falls back to EXTRACTION_MODEL — a text model.
+        raise ValueError(
+            f"VISION_PROVIDER={provider} needs VISION_MODEL; without it vision calls fall "
+            f"back to EXTRACTION_MODEL={settings.EXTRACTION_MODEL!r}, which is a text model."
+        )
+
+    base_url = settings.VISION_BASE_URL
+    # "openai" here means any OpenAI-compatible server, so openai + Ollama + llava is
+    # legitimate; it is only wrong when the model is a hosted-API name Ollama lacks.
+    wrong_server = provider == "gemini" or (
+        provider == "openai" and _looks_like_api_model(settings.VISION_MODEL)
+    )
+    on_ollama = bool(base_url) and _looks_like_ollama_url(base_url, settings.OLLAMA_BASE_URL)
+    if wrong_server and on_ollama:
+        raise ValueError(
+            f"VISION_PROVIDER={provider} but VISION_BASE_URL={base_url!r} points at Ollama, "
+            f"which serves its own models instead of {settings.VISION_MODEL!r}. Use the "
+            f"{provider} endpoint (or unset VISION_BASE_URL), or set VISION_PROVIDER=ollama "
+            "with an Ollama vision model."
+        )
+
+    if provider == "ollama":
+        # The mirror image: Ollama provider left pointing at a hosted endpoint, or
+        # asked for a hosted model name it does not serve — both 404 per page and
+        # the vision fallback returns "" (pages vanish).
+        if base_url and not on_ollama:
+            raise ValueError(
+                f"VISION_PROVIDER=ollama but VISION_BASE_URL={base_url!r} is not an Ollama "
+                "server. Point it at Ollama (or unset it to use OLLAMA_BASE_URL)."
+            )
+        if _looks_like_api_model(settings.VISION_MODEL):
+            raise ValueError(
+                f"VISION_PROVIDER=ollama but VISION_MODEL={settings.VISION_MODEL!r} is a "
+                "hosted-API model name; use an Ollama vision model (e.g. llava, qwen2.5vl)."
+            )
+
+    if provider == "gemini" and not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY is required when VISION_PROVIDER=gemini")
+    if provider == "openai" and not settings.OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY is required when VISION_PROVIDER=openai")
 
 
 def _validate_general_settings(settings: Settings) -> None:

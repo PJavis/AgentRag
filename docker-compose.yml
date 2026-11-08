@@ -69,7 +69,8 @@ services:
   # now refuses to start on a dimension mismatch (health/embedding_dims.py).
   tei:
     profiles: ["bundled-tei"]
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+    # TEI_IMAGE: see deploy/tei.compose.yml for why not cuda-latest.
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cuda-1.9}
     container_name: agentrag-tei
     restart: unless-stopped
     ports:
@@ -87,7 +88,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # No healthcheck: the cuda-latest image has no curl/wget and its /bin/sh
+    # No healthcheck: the TEI cuda images have no curl/wget and its /bin/sh
     # lacks bash /dev/tcp, so any in-container probe false-fails. Readiness is
     # verified externally via GET :8080/health.
 
@@ -97,7 +98,7 @@ services:
   # max-client-batch-size: TEI's default 32 rejects the 50+ chunk rerank pool.
   # .env (host runs): RETRIEVAL_RERANK_TEI_URL=http://127.0.0.1:8081
   tei-rerank:
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cuda-1.9}
     container_name: agentrag-tei-rerank
     restart: unless-stopped
     ports:

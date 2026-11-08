@@ -483,7 +483,7 @@ make stop-embed
 - Serves `dung6903/agentrag-embed-v1` (the finetuned e5 model) straight from HF Hub — no local `models/` checkout needed. First start pulls ~1.1 GB into the `tei_hf_cache` Docker volume, which then survives restarts.
 - CPU-only boxes: `docker compose -f deploy/tei.compose.yml --profile cpu up -d` runs the `tei-cpu` service instead, serving `BAAI/bge-m3` (no GPU required).
 - **TEI (bge-m3), stock quality:** the root `docker-compose.yml` `tei` service (started with plain `docker compose up -d`, no profile) pulls `BAAI/bge-m3` from HF Hub the same way — also no local model dir needed.
-- **Blackwell GPUs (RTX 50xx, compute cap sm_120):** pinned TEI images are sm_80-only and fail with `Runtime compute cap 120 is not compatible`. The compose uses `text-embeddings-inference:cuda-latest` (all-arch PTX) — required for sm_120, fine on older GPUs.
+- **Blackwell GPUs (RTX 50xx, compute cap sm_120):** pinned TEI images are sm_80-only and fail with `Runtime compute cap 120 is not compatible`. The compose defaults to `text-embeddings-inference:cuda-1.9` (all-arch PTX: runs on sm_120 and older GPUs, but JIT-compiles for ~4-5 min per start on sm_120). On RTX 50xx set `TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:120-1.9` in `.env` (native build, ready in ~35 s). Do not use `cuda-latest`: the 2026-04 build fails with `CUDA_ERROR_NO_DEVICE` on Windows driver 621 / WSL and silently serves on CPU.
 - TEI ignores the bearer key, so `OPENAI_API_KEY` holding a DeepSeek key is harmless.
 - **Switching embed model changes the vector dimension** (agentrag-embed-v1 / e5 768-dim vs bge-m3 1024-dim vs nomic 768-dim) → delete + re-ingest the index.
 

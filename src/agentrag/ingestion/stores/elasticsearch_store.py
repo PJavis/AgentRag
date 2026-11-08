@@ -48,8 +48,9 @@ def _tag_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
     # Document scope — restrict to the turn's documents (by title). A present
     # but EMPTY scope (empty notebook) matches nothing; it must not widen to
     # the whole corpus.
-    if "document_titles" in filters and filters["document_titles"] is not None:
-        doc_titles = list(filters["document_titles"])
+    doc_titles = filters.get("document_titles")
+    if doc_titles is not None:
+        doc_titles = list(doc_titles)
         if doc_titles:
             clauses.append({"terms": {"document_title.keyword": doc_titles}})
         else:

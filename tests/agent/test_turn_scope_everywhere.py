@@ -23,6 +23,7 @@ def _reset():
     set_domain_filter(None)
     set_document_scope(None)
     yield
+    set_domain_filter(None)
     set_document_scope(None)
 
 
@@ -62,3 +63,41 @@ def test_tools_use_the_shared_filters():
     set_domain_filter({"system": "cardio"})
     tools = AgentTools.__new__(AgentTools)
     assert tools._current_filters() == {"systems": ["cardio"], "document_titles": ["d"]}
+
+
+async def test_planner_tools_cannot_read_outside_scope(monkeypatch):
+    from src.agentrag.agent import tools as tools_mod
+
+    called = []
+
+    class NoDB:
+        async def __aenter__(self):
+            called.append(1)
+            raise AssertionError("must not query a document outside the scope")
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(tools_mod, "AsyncSessionLocal", lambda: NoDB())
+    t = tools_mod.AgentTools.__new__(tools_mod.AgentTools)
+    set_document_scope(["mine"])
+    assert await t.get_document_segments({"document_title": "other-notebook.pdf"}) == {"segments": []}
+    assert await t.get_document_graph_status({"document_title": "other-notebook.pdf"}) == {"documents": []}
+    assert called == []
+
+
+async def test_turn_scope_fails_closed(monkeypatch):
+    from src.agentrag.adapter.routers import chat
+
+    async def boom(_nb):
+        raise ConnectionError("db")
+
+    async def none_title(_sid):
+        return None
+
+    monkeypatch.setattr(chat, "_list_notebook_document_titles", boom)
+    monkeypatch.setattr(chat, "_get_document_title", none_title)
+    assert await chat._resolve_turn_scope("nb", None) == []          # lookup error → nothing
+    assert await chat._resolve_turn_scope("nb", "lec10") == ["lec10"]  # hint narrows
+    assert await chat._resolve_turn_scope("nb", None, ["gone"]) == []  # ticked but deleted
+    assert await chat._resolve_turn_scope(None, None) is None          # no notebook → unscoped

@@ -14,6 +14,17 @@ from src.agentrag.retrieval.elasticsearch_retriever import ElasticsearchRetrieve
 ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+def _scope() -> list[str] | None:
+    from src.agentrag.retrieval.context import get_document_scope
+
+    return get_document_scope()
+
+
+def _in_scope(document_title: str | None) -> bool:
+    scope = _scope()
+    return scope is None or document_title in scope
+
+
 class AgentTools:
     def __init__(self):
         self.retriever = ElasticsearchRetriever()
@@ -149,16 +160,23 @@ class AgentTools:
         return {
             "query": query,
             "document_title": document_title,
-            "sparse": await self.retriever.search(query, "sparse", top_k, document_title),
-            "dense": await self.retriever.search(query, "dense", top_k, document_title),
-            "hybrid": await self.retriever.search(query, "hybrid", top_k, document_title),
-            "hybrid_kg": await self.retriever.search(query, "hybrid_kg", top_k, document_title),
+            **{
+                mode: await self.retriever.search(
+                    query, mode, top_k, document_title, filters=self._current_filters()
+                )
+                for mode in ("sparse", "dense", "hybrid", "hybrid_kg")
+            },
         }
 
     async def list_documents(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         limit = tool_input.get("limit") or 20
+        scope = _scope()
+        query = select(Document)
+        if scope is not None:
+            # A scoped turn must not even learn the names of other documents.
+            query = query.where(Document.title.in_(scope))
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Document).limit(limit))
+            result = await session.execute(query.limit(limit))
             documents = result.scalars().all()
         return {
             "documents": [
@@ -174,6 +192,8 @@ class AgentTools:
 
     async def get_document_graph_status(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         document_title = tool_input["document_title"]
+        if not _in_scope(document_title):
+            return {"documents": []}
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Document).where(Document.title == document_title)
@@ -197,6 +217,10 @@ class AgentTools:
     async def get_document_segments(self, tool_input: dict[str, Any]) -> dict[str, Any]:
         document_title = tool_input["document_title"]
         limit = tool_input.get("limit") or settings.AGENT_TOOL_TOP_K
+        # The planner picks the title; a title outside the turn's scope (from
+        # history, or hallucinated) must not read another notebook's segments.
+        if not _in_scope(document_title):
+            return {"segments": []}
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Segment, Document)

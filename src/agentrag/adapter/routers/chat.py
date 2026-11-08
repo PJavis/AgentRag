@@ -103,11 +103,12 @@ _FILENAME_HINT_RE = re.compile(
 )
 
 
-async def _list_notebook_document_titles(notebook_id: str | None, limit: int = 1000) -> list[str]:
+async def _list_notebook_document_titles(notebook_id: str | None, limit: int | None = None) -> list[str]:
     """Return Document.title list for sources linked to the given notebook.
 
-    This is the notebook's retrieval scope, so it must cover the whole notebook:
-    the old cap of 50 (no ORDER BY) silently dropped an arbitrary subset."""
+    Used as the notebook's retrieval scope, so by default it is the WHOLE
+    notebook: the old cap of 50 with no ORDER BY silently dropped an arbitrary
+    subset. Callers that only need a sample pass `limit` (ordered, stable)."""
     if not notebook_id:
         return []
     try:
@@ -122,10 +123,48 @@ async def _list_notebook_document_titles(notebook_id: str | None, limit: int = 1
                 adapter_notebook_sources.c.document_id == Document.id,
             )
             .where(adapter_notebook_sources.c.notebook_id == nb_uuid)
-            .limit(limit)
+            .order_by(Document.created_at, Document.id)
         )
+        if limit is not None:
+            q = q.limit(limit)
         rows = (await session.execute(q)).all()
     return [r[0] for r in rows if r and r[0]]
+
+
+async def _resolve_turn_scope(
+    notebook_id: str | None,
+    document_title: str | None,
+    source_ids: list[str] | None = None,
+) -> list[str] | None:
+    """The document scope for one notebook-chat turn. Fails CLOSED.
+
+    - ticked sources → exactly those (none resolvable → [] , never "all");
+    - a resolved filename hint → just that document;
+    - otherwise the whole notebook ([] for an empty notebook);
+    - a lookup error → [] (search nothing) rather than None (search everything).
+    Outside a notebook there is no isolation to enforce → None.
+    """
+    import logging
+
+    if not notebook_id:
+        return [document_title] if document_title else None
+    if source_ids:
+        titles: list[str] = []
+        for sid in source_ids:
+            try:
+                t = await _get_document_title(sid)
+            except Exception:
+                t = None
+            if t:
+                titles.append(t)
+        return titles
+    if document_title:
+        return [document_title]
+    try:
+        return await _list_notebook_document_titles(notebook_id)
+    except Exception:
+        logging.getLogger(__name__).exception("notebook scope lookup failed; searching nothing")
+        return []
 
 
 async def _resolve_document_hint(question: str, notebook_id: str | None) -> str | None:
@@ -407,17 +446,12 @@ async def execute_chat(body: ExecuteChatRequest, request: Request):
     except Exception:
         _log.exception("execute_chat: verbosity intent detection failed")
 
-    # Scope retrieval to this notebook's documents (NotebookLM-style isolation)
-    # unless a single-doc filename hint already narrowed it. Prevents cross-
-    # notebook leakage when the agent searches.
-    if not document_title:
-        try:
-            from src.agentrag.retrieval.context import set_document_scope
-            set_document_scope(
-                await _list_notebook_document_titles(notebook_id) if notebook_id else None
-            )
-        except Exception:
-            _log.exception("execute_chat: notebook scope resolution failed")
+    # Notebook isolation for EVERY retrieval of the turn (tools and the raw-
+    # question search). A filename hint narrows to that one document; it used
+    # to leave the scope unset, i.e. search the whole corpus.
+    from src.agentrag.retrieval.context import set_document_scope
+
+    set_document_scope(await _resolve_turn_scope(notebook_id, document_title, body.source_ids))
 
     result: dict
     agent_failed = False
@@ -617,29 +651,17 @@ async def regenerate_chat(body: RegenerateChatRequest, request: Request):
     except Exception:
         _log.exception("regenerate: verbosity intent detection failed")
 
-    # Scope to this notebook's documents (NotebookLM-style) unless a single-doc
-    # hint already narrowed it — prevents cross-notebook leakage on regenerate.
-    if not document_title:
-        try:
-            from src.agentrag.retrieval.context import set_document_scope
-            set_document_scope(
-                await _list_notebook_document_titles(notebook_id) if notebook_id else None
-            )
-        except Exception:
-            _log.exception("regenerate: notebook scope resolution failed")
+    # Same isolation as a fresh turn (see execute_chat).
+    from src.agentrag.retrieval.context import set_document_scope
+
+    turn_scope = await _resolve_turn_scope(notebook_id, document_title)
+    set_document_scope(turn_scope)
 
     result: dict | None = None
 
     # Whole-doc summary → map-reduce over the ENTIRE doc (covers 100% of pages,
     # not top-K), same routing as execute_chat_stream. Single-doc only.
-    _summary_doc = document_title
-    if not _summary_doc:
-        try:
-            _nb_titles = await _list_notebook_document_titles(notebook_id)
-            if len(_nb_titles) == 1:
-                _summary_doc = _nb_titles[0]
-        except Exception:
-            _log.exception("regenerate: notebook titles for summary failed")
+    _summary_doc = document_title or (turn_scope[0] if turn_scope and len(turn_scope) == 1 else None)
     if _is_summary_request(user_question) and _summary_doc:
         try:
             from src.agentrag.generation.summary_service import SummaryService
@@ -757,13 +779,16 @@ async def execute_chat_stream(body: ExecuteChatRequest, request: Request):
                     scope_titles.append(t)
             except Exception:
                 pass
-    if not scope_titles:
+    # Ticked sources that no longer resolve (deleted meanwhile) must not widen
+    # the turn to the whole notebook.
+    ticked_unresolved = bool(body.source_ids) and not scope_titles
+    if not scope_titles and not ticked_unresolved:
         # No explicit selection → keep the single-doc hint heuristic.
         try:
             document_title = await _resolve_document_hint(body.message, notebook_id)
         except Exception:
             _log.exception("execute_chat_stream: _resolve_document_hint failed")
-    if not scope_titles and not document_title:
+    if not scope_titles and not document_title and not ticked_unresolved:
         # Default: scope retrieval to ALL of this notebook's documents so chat
         # never leaks other notebooks' sources (NotebookLM-style isolation).
         try:

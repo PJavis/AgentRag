@@ -438,6 +438,8 @@ export const bnIN = {
     starterSummary: "ডকুমেন্ট সারসংক্ষেপ",
     readingTime: "{min} মিনিট পড়া",
     readingTimeTitle: "আনুমানিক পড়ার সময়",
+    answerFailed: "উত্তর তৈরি করা যায়নি",
+    generationStopped: "জেনারেশন থামানো হয়েছে",
     sessions: "সেশনগুলি",
     sessionTitlePlaceholder: "এখানে একটি শিরোনাম লিখুন...",
     noSessions: "এখনও কোন চ্যাট সেশন নেই",

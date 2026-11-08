@@ -438,6 +438,8 @@ export const enUS = {
     starterSummary: "Summarize document",
     readingTime: "{min} min read",
     readingTimeTitle: "Estimated reading time",
+    answerFailed: "Couldn't generate an answer",
+    generationStopped: "Generation stopped",
     sessions: "Sessions",
     sessionTitlePlaceholder: "Type a title here...",
     noSessions: "No chat sessions yet",

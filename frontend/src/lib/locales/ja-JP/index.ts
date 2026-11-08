@@ -438,6 +438,8 @@ export const jaJP = {
     starterSummary: "文書を要約",
     readingTime: "約{min}分で読了",
     readingTimeTitle: "推定読了時間",
+    answerFailed: "回答を生成できませんでした",
+    generationStopped: "生成を停止しました",
     sessions: "セッション",
     sessionTitlePlaceholder: "タイトルを入力...",
     noSessions: "チャットセッションがまだありません",

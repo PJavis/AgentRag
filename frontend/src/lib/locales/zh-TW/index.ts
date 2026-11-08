@@ -438,6 +438,8 @@ export const zhTW = {
     starterSummary: "總結文件",
     readingTime: "閱讀約 {min} 分鐘",
     readingTimeTitle: "預計閱讀時間",
+    answerFailed: "無法產生回答",
+    generationStopped: "已停止產生",
     sessions: "對話",
     sessionTitlePlaceholder: "在此輸入標題...",
     noSessions: "暫無對話",

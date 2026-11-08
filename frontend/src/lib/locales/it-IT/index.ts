@@ -438,6 +438,8 @@ export const itIT = {
     starterSummary: "Riassumi documento",
     readingTime: "{min} min di lettura",
     readingTimeTitle: "Tempo di lettura stimato",
+    answerFailed: "Impossibile generare una risposta",
+    generationStopped: "Generazione interrotta",
     sessions: "Sessioni",
     sessionTitlePlaceholder: "Digita un titolo qui...",
     noSessions: "Ancora nessuna sessione chat",

@@ -438,6 +438,8 @@ export const esES = {
     starterSummary: "Resumir documento",
     readingTime: "{min} min de lectura",
     readingTimeTitle: "Tiempo estimado de lectura",
+    answerFailed: "No se pudo generar una respuesta",
+    generationStopped: "Generación detenida",
     sessions: "Sesiones",
     sessionTitlePlaceholder: "Escribe un título aquí...",
     noSessions: "Aún no hay sesiones de chat",

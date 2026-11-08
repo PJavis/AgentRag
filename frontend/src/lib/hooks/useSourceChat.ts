@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { getApiErrorMessage } from '@/lib/utils/error-handler'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { sourceChatApi } from '@/lib/api/source-chat'
+import { createNdjsonReader } from '@/lib/utils/ndjson'
 import {
   SourceChatSession,
   SourceChatMessage,
@@ -130,33 +131,35 @@ export function useSourceChat(sourceId: string) {
     }
     setMessages(prev => [...prev, userMessage])
     setIsStreaming(true)
+    // Wire Stop: cancelStreaming() aborts this controller, which ends the fetch.
+    abortControllerRef.current?.abort()
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
 
     try {
       const response = await sourceChatApi.sendMessage(sourceId, sessionId, {
         message,
         model_override: modelOverride
-      })
+      }, abortController.signal)
 
       if (!response) {
         throw new Error('No response body')
       }
 
       const reader = response.getReader()
-      const decoder = new TextDecoder()
+      // Keeps decoder state + the unfinished line across chunks (multi-byte
+      // Vietnamese characters and JSON lines can be cut between reads).
+      const readLines = createNdjsonReader()
       let aiMessage: SourceChatMessage | null = null
 
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        const lines = readLines(value, done)
 
-        const text = decoder.decode(value)
-        const lines = text.split('\n')
-
-        for (const rawLine of lines) {
-          // Backend yields newline-delimited JSON (no `data: ` prefix).
-          // Accept both bare JSON and standard `data: …` SSE for safety.
-          const line = rawLine.startsWith('data: ') ? rawLine.slice(6) : rawLine
-          if (line.trim().startsWith('{')) {
+        for (const line of lines) {
+          // Backend yields newline-delimited JSON (no `data: ` prefix); the
+          // reader also strips a standard `data: ` SSE prefix.
+          if (line.startsWith('{')) {
             try {
               const data = JSON.parse(line)
               
@@ -215,8 +218,14 @@ export function useSourceChat(sourceId: string) {
             }
           }
         }
+        if (done) break
       }
     } catch (err: unknown) {
+      if (abortController.signal.aborted) {
+        // User pressed Stop: keep what already streamed, drop nothing.
+        toast.info(t('chat.generationStopped'))
+        return
+      }
       const error = err as { response?: { data?: { detail?: string } }, message?: string };
       console.error('Error sending message:', error)
       toast.error(getApiErrorMessage(error.response?.data?.detail || error.message, (key) => t(key), 'apiErrors.failedToSendMessage'))
@@ -224,8 +233,10 @@ export function useSourceChat(sourceId: string) {
       setMessages(prev => prev.filter(msg => !msg.id.startsWith('temp-')))
     } finally {
       setIsStreaming(false)
-      // Refetch session to get persisted messages
-      refetchCurrentSession()
+      if (abortControllerRef.current === abortController) abortControllerRef.current = null
+      // Refetch session to get persisted messages — but not after Stop, where
+      // the server copy may not have the partial answer the user is reading.
+      if (!abortController.signal.aborted) refetchCurrentSession()
     }
   }, [sourceId, currentSessionId, refetchCurrentSession, queryClient, t])
 

@@ -184,6 +184,8 @@ export interface SourceChatMessage {
   semantic_cache_hit?: boolean | null
   domain_route?: string | null
   retrieval_mode?: string | null
+  /** Client-only: the stream broke after some output. Never sent by the server. */
+  error?: string | null
 }
 
 export interface SourceChatContextIndicator {
@@ -262,6 +264,8 @@ export interface NotebookChatMessage {
   semantic_cache_hit?: boolean | null
   domain_route?: string | null
   retrieval_mode?: string | null
+  /** Client-only: the stream broke after some output. Never sent by the server. */
+  error?: string | null
 }
 
 export interface NotebookChatSessionWithMessages extends NotebookChatSession {

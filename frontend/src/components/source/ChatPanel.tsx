@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { Bot, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw, Paperclip, X, Square } from 'lucide-react'
+import { Bot, Send, Loader2, FileText, Lightbulb, StickyNote, Clock, RefreshCcw, Paperclip, X, Square, AlertTriangle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -39,6 +39,7 @@ import {
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { toast } from 'sonner'
 import { useTranslation } from '@/lib/hooks/use-translation'
+import { chatFailure, retryQuestionFor } from '@/lib/utils/chat-errors'
 import type { StreamingStep } from '@/lib/hooks/useNotebookChat'
 
 interface NotebookContextStats {
@@ -303,7 +304,7 @@ export function ChatPanel({
             </div>
           ) : (
             <div className="space-y-8">
-              {messages.map((message) => (
+              {messages.map((message, messageIndex) => (
                 <div key={message.id}>
                   {message.type === 'human' ? (
                     <div className="flex justify-end">
@@ -315,6 +316,55 @@ export function ChatPanel({
                     (() => {
                     // Is THIS bubble the one currently being streamed into?
                     const isActiveStream = message.id === streamingMsgId
+                    const failure = chatFailure(message)
+                    // A failed turn shows an error + Retry instead of the answer
+                    // affordances (feedback, save, follow-ups) of a real answer.
+                    const showAnswerActions = !isActiveStream && !failure.failed && message.content.trim()
+                    if (failure.failed && !isActiveStream) {
+                      const retryText = retryQuestionFor(messages, messageIndex)
+                      return (
+                        <div className="group space-y-2">
+                          {failure.partial.trim() && (
+                            <AIMessageContent
+                              content={failure.partial}
+                              citations={(message.citations as Citation[] | undefined) || []}
+                              onReferenceClick={handleReferenceClick}
+                            />
+                          )}
+                          <div
+                            role="alert"
+                            className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm"
+                          >
+                            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" aria-hidden="true" />
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <p className="font-medium text-destructive">{t('chat.answerFailed')}</p>
+                              {failure.detail && (
+                                <p className="text-xs text-muted-foreground break-words">{failure.detail}</p>
+                              )}
+                            </div>
+                            {retryText && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 shrink-0 gap-1 text-xs"
+                                disabled={isStreaming}
+                                onClick={() =>
+                                  onSendMessage(
+                                    retryText,
+                                    modelOverride,
+                                    contextType === 'notebook' ? domainFilter : undefined,
+                                    verbosity,
+                                  )
+                                }
+                              >
+                                <RefreshCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                                {t('common.retry')}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    }
                     return (
                     <div className="group">
                       {isActiveStream && !message.content.trim() ? (
@@ -333,7 +383,7 @@ export function ChatPanel({
                       {/* Action row + follow-ups: hidden on the actively-streaming
                           bubble (no premature save/regenerate/feedback) and on any
                           empty bubble (so a content-less placeholder shows nothing). */}
-                      {!isActiveStream && message.content.trim() && (
+                      {showAnswerActions && (
                       <div className="flex items-center justify-between gap-2 mt-1 opacity-70 group-hover:opacity-100 transition-opacity">
                         <div className="flex items-center gap-1 flex-wrap">
                           <MessageActions
@@ -386,7 +436,7 @@ export function ChatPanel({
                         />
                       </div>
                       )}
-                      {!isActiveStream && message.content.trim() && (
+                      {showAnswerActions && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {QUICK_ACTIONS.map((qa) => (
                             <button

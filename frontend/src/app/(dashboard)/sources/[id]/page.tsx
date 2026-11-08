@@ -62,6 +62,7 @@ export default function SourceDetailPage() {
           <ChatPanel
             messages={chat.messages}
             isStreaming={chat.isStreaming}
+            onCancelStreaming={chat.cancelStreaming}
             contextIndicators={chat.contextIndicators}
             onSendMessage={(message, model) => chat.sendMessage(message, model)}
             modelOverride={chat.currentSession?.model_override}

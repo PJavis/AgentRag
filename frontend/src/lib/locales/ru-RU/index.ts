@@ -438,6 +438,8 @@ export const ruRU = {
     starterSummary: "Кратко о документе",
     readingTime: "{min} мин чтения",
     readingTimeTitle: "Примерное время чтения",
+    answerFailed: "Не удалось сгенерировать ответ",
+    generationStopped: "Генерация остановлена",
     sessions: "Сессии",
     sessionTitlePlaceholder: "Введите название...",
     noSessions: "Пока нет сессий чата",

@@ -371,6 +371,7 @@ async def list_conversations(limit: int = 20):
 
 @app.get("/conversations/{conversation_id}/messages")
 async def list_conversation_messages(conversation_id: str, limit: int = 20):
+    _require_uuid(conversation_id, "conversation")
     store = ConversationStore()
     conversation = await store.get_conversation(conversation_id)
     if conversation is None:
@@ -384,6 +385,7 @@ async def list_conversation_messages(conversation_id: str, limit: int = 20):
 
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
+    _require_uuid(conversation_id, "conversation")
     store = ConversationStore()
     deleted = await store.delete_conversation(conversation_id)
     if not deleted:

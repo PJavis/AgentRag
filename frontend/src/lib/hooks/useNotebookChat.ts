@@ -9,6 +9,7 @@ import { chatApi } from '@/lib/api/chat'
 import { QUERY_KEYS } from '@/lib/api/query-client'
 import { getApiUrl } from '@/lib/config'
 import { useAuthStore } from '@/lib/stores/auth-store'
+import { mergeServerMessages, dropClientFailures } from '@/lib/utils/chat-errors'
 import {
   NotebookChatMessage,
   CreateNotebookChatSessionRequest,
@@ -99,7 +100,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
   useEffect(() => {
     if (!currentSession?.messages) return
     if (isSending) return
-    setMessages(currentSession.messages)
+    const serverMessages = currentSession.messages
+    setMessages(prev => mergeServerMessages(serverMessages, prev))
   }, [currentSession, isSending])
 
   // Auto-select most recent session when sessions are loaded
@@ -410,7 +412,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     const userId = `temp-user-${Date.now()}`
     const aiPlaceholderId = `temp-ai-${Date.now()}`
     setMessages(prev => [
-      ...prev,
+      ...dropClientFailures(prev),
       { id: userId, type: 'human', content: message, timestamp: new Date().toISOString() },
       { id: aiPlaceholderId, type: 'ai', content: '', timestamp: new Date().toISOString() },
     ])

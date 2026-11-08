@@ -243,6 +243,20 @@ async def set_default_models(body: dict):
         updates[model_field] = model
 
     if updates:
+        # Validate the would-be settings BEFORE persisting: a bad combination
+        # saved here would take effect silently now and stop the api from
+        # starting on the next boot (lifespan runs validate_settings).
+        import copy
+
+        from src.agentrag.config_validation import validate_settings
+
+        candidate = copy.copy(settings)
+        for key, value in updates.items():
+            setattr(candidate, key, value)
+        try:
+            validate_settings(candidate)
+        except ValueError as exc:
+            raise HTTPException(400, f"Rejected model defaults: {exc}") from exc
         save_overrides(updates)
         apply_overrides(settings)
 

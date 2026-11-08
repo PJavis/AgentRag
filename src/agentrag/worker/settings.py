@@ -30,6 +30,16 @@ async def _on_startup(ctx: dict) -> None:
     # upload_ingest runs ingest_folder here, which enqueues graph_ingest /
     # vision_extract through get_pool(). Reuse the worker's own connection.
     set_pool(ctx["redis"])
+    # The worker runs vision + graph ingest; a bad config there corrupts a corpus
+    # silently. Refuse to start, same as the api lifespan.
+    from src.agentrag.config_validation import validate_settings
+
+    validate_settings(app_settings)
+    # Same embedding-dims guard as the api: the worker is the process that
+    # writes vectors, so it must not start against the wrong embedding server.
+    from src.agentrag.health.embedding_dims import check_embedding_dims_at_startup
+
+    await check_embedding_dims_at_startup(app_settings)
 
 
 class WorkerSettings:
@@ -42,6 +52,11 @@ class WorkerSettings:
     max_jobs = app_settings.STRUCTMEM_WORKER_MAX_JOBS
     # Timeout per job (seconds) — covers the full document, not a single chunk
     job_timeout = app_settings.STRUCTMEM_JOB_TIMEOUT_SECONDS
+    # Liveness key (arq:health-check) refreshed every 60 s, so it expires about a
+    # minute after the worker dies. POST /sources checks it before handing an
+    # upload to the queue — no live worker means ingest in-process instead of a
+    # document stuck "pending" forever.
+    health_check_interval = 60
     # Keep job result in Redis for 1 hour (for status inspection)
     keep_result = 3600
     # Retry failed jobs once

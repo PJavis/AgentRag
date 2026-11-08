@@ -2,6 +2,7 @@
 import os
 import shutil
 import tempfile
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Body, HTTPException, UploadFile, File
@@ -59,6 +60,14 @@ async def lifespan(app: FastAPI):
         pass
 
 
+def _require_uuid(value: str, what: str) -> None:
+    """Ids are UUID columns: a malformed one is "not found", not a Postgres 500."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"{what} not found") from None
+
+
 app = FastAPI(lifespan=lifespan)
 # Root routes (/chat, /ingest/*, /documents, /search, /mcp, ...) need the same
 # bearer auth as the adapter; nginx proxies them publicly.
@@ -102,10 +111,10 @@ async def provider_health():
 async def ingest(payload: dict = Body(...)):
     folder_path = payload.get("folder_path")
     if not folder_path:
-        return {"error": "folder_path is required"}
+        raise HTTPException(status_code=400, detail="folder_path is required")
     mode = payload.get("graph_ingest_mode")
     if mode is not None and mode not in ("sync", "async"):
-        return {"error": "graph_ingest_mode must be 'sync' or 'async'"}
+        raise HTTPException(status_code=400, detail="graph_ingest_mode must be 'sync' or 'async'")
     result = await ingest_folder(folder_path, graph_ingest_mode=mode)
     return result
 
@@ -115,7 +124,8 @@ async def ingest_upload(file: UploadFile = File(...)):
     """Upload a single file (PDF, DOCX, PPTX, HTML, MD, XLSX, CSV, TXT) and ingest it."""
     tmp_dir = tempfile.mkdtemp(prefix="agentrag_upload_")
     try:
-        dest = os.path.join(tmp_dir, file.filename or "upload")
+        # basename: a client-supplied "../../x" must not write outside tmp_dir.
+        dest = os.path.join(tmp_dir, os.path.basename(file.filename or "") or "upload")
         with open(dest, "wb") as f:
             shutil.copyfileobj(file.file, f)
         result = await ingest_folder(tmp_dir)
@@ -194,6 +204,7 @@ async def list_documents(limit: int = 50):
 
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str):
+    _require_uuid(document_id, "document")
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Document).where(Document.id == document_id)
@@ -211,7 +222,7 @@ async def delete_document(document_id: str):
 async def search(payload: dict = Body(...)):
     query = payload.get("query")
     if not query:
-        return {"error": "query is required"}
+        raise HTTPException(status_code=400, detail="query is required")
 
     mode = payload.get("mode", "hybrid_kg")
     top_k = payload.get("top_k")
@@ -234,6 +245,7 @@ async def search(payload: dict = Body(...)):
 
 @app.get("/documents/{document_id}/graph-status")
 async def graph_status(document_id: str):
+    _require_uuid(document_id, "document")
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Document).where(Document.id == document_id)
@@ -265,7 +277,7 @@ async def graph_status(document_id: str):
 async def chat(payload: dict = Body(...)):
     question = payload.get("question")
     if not question:
-        return {"error": "question is required"}
+        raise HTTPException(status_code=400, detail="question is required")
     document_title = payload.get("document_title")
     conversation_id = payload.get("conversation_id")
     conversation_title = payload.get("conversation_title")
@@ -310,7 +322,7 @@ async def chat(payload: dict = Body(...)):
                 conversation_id=cid,
                 user_message=question,
                 assistant_message=assistant_content,
-                turn_id=str(id(result)),
+                turn_id=str(uuid.uuid4()),
                 turn_timestamp=datetime.now(timezone.utc).isoformat(),
             )
         result["conversation_id"] = cid
@@ -401,7 +413,7 @@ async def chat_stream(payload: dict = Body(...)):
     """SSE streaming chat. Returns Server-Sent Events with event types: status, token, done, error."""
     question = payload.get("question")
     if not question:
-        return {"error": "question is required"}
+        raise HTTPException(status_code=400, detail="question is required")
     document_title = payload.get("document_title")
     conversation_id = payload.get("conversation_id")
     conversation_title = payload.get("conversation_title")
@@ -459,7 +471,7 @@ async def chat_stream(payload: dict = Body(...)):
                     conversation_id=stream_cid,
                     user_message=question,
                     assistant_message=full_answer,
-                    turn_id=str(id(full_answer)),
+                    turn_id=str(uuid.uuid4()),
                     turn_timestamp=datetime.now(timezone.utc).isoformat(),
                 )
 

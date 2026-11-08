@@ -381,10 +381,10 @@ uv run python scaler.py                    # thay cho ARQ nếu muốn tự scal
 cd frontend && npm run dev
 ```
 
-Kiểm tra:
+Kiểm tra (route gốc cần bearer token khi `AUTH_ENABLED=true` — JWT hoặc `OPEN_NOTEBOOK_PASSWORD`):
 ```bash
-curl http://127.0.0.1:8000/config/validate
-curl http://127.0.0.1:8000/health/providers
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/config/validate
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/health/providers
 ```
 
 ### Production deployment (docker compose)

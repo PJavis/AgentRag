@@ -25,24 +25,38 @@ _PUBLIC_PREFIXES = (
     "/api/auth/signup",
     "/api/auth/google/start",
     "/api/auth/google/callback",
-    "/api/health",
     "/api/images",
     "/api/ontology",
-    "/health",
     "/docs",
     "/openapi.json",
     "/redoc",
     "/admin",
+    "/images",
 )
+
+# Liveness probes: public as exact paths only — /health/providers (root) exposes
+# provider URLs, models and config errors and stays private.
+_PUBLIC_EXACT = ("/health", "/api/health")
+
+# The adapter is mounted at /on, and a mounted app's middleware sees the full path.
+_ADAPTER_MOUNT = "/on"
+
+
+def _strip_adapter_mount(path: str) -> str:
+    if path == _ADAPTER_MOUNT:
+        return "/"
+    if path.startswith(_ADAPTER_MOUNT + "/"):
+        return path[len(_ADAPTER_MOUNT):]
+    return path
 
 
 def _is_public(path: str) -> bool:
-    if path == "/":
+    # Exact prefix match only. The old endswith/substring match made any path
+    # ending in /health or /docs, or containing /admin/, public.
+    path = _strip_adapter_mount(path)
+    if path == "/" or path in _PUBLIC_EXACT:
         return True
-    for p in _PUBLIC_PREFIXES:
-        if path == p or path.startswith(p + "/") or path.endswith(p) or (p + "/") in path:
-            return True
-    return False
+    return any(path == p or path.startswith(p + "/") for p in _PUBLIC_PREFIXES)
 
 
 def _identity_from_token(token: str) -> AuthIdentity | None:
@@ -114,6 +128,17 @@ class OpenNotebookAuthMiddleware(BaseHTTPMiddleware):
 
         request.state.auth_identity = identity
         return await call_next(request)
+
+
+class RootAuthMiddleware(OpenNotebookAuthMiddleware):
+    """Same auth for the root app's own routes (main.py, /mcp). Requests under the
+    adapter mount are skipped here because the adapter authenticates them itself."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path == _ADAPTER_MOUNT or path.startswith(_ADAPTER_MOUNT + "/"):
+            return await call_next(request)
+        return await super().dispatch(request, call_next)
 
 
 def is_admin(request: Request) -> bool:

@@ -70,11 +70,24 @@ def validate_reply(reply: dict) -> None:
         raise ChatError("empty answer")
 
 
+def _auth_headers() -> dict:
+    """Root routes require a bearer token. AGENTRAG_API_TOKEN (a JWT or the legacy
+    password) wins; otherwise fall back to OPEN_NOTEBOOK_PASSWORD from .env."""
+    import os
+
+    token = os.environ.get("AGENTRAG_API_TOKEN")
+    if not token:
+        from src.agentrag.config import settings
+
+        token = settings.OPEN_NOTEBOOK_PASSWORD
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def _post(url: str, payload: dict, timeout: int) -> dict:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_auth_headers()},
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:

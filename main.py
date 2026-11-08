@@ -27,6 +27,7 @@ from src.agentrag.services.llm_gateway import LLMGateway
 from src.agentrag.adapter.db import create_adapter_tables
 from src.agentrag.adapter.app import adapter
 from src.agentrag.adapter import admin as adapter_admin
+from src.agentrag.adapter.auth import RootAuthMiddleware
 from src.agentrag.common.build_info import log_build_banner
 
 
@@ -41,7 +42,11 @@ async def lifespan(app: FastAPI):
     init_phoenix()
     await init_pool(settings.REDIS_URL or "redis://127.0.0.1:6379/0")
     await create_adapter_tables()
-    yield
+    # A mounted app's lifespan never runs, so FastMCP's session manager has to be
+    # started here — without it every /mcp/mcp call failed with
+    # "Task group is not initialized".
+    async with mcp.session_manager.run():
+        yield
     langfuse_flush()
     await close_pool()
     # Close shared aiohttp-backed clients to silence "Unclosed connector".
@@ -53,6 +58,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+# Root routes (/chat, /ingest/*, /documents, /search, /mcp, ...) need the same
+# bearer auth as the adapter; nginx proxies them publicly.
+app.add_middleware(RootAuthMiddleware)
 app.include_router(adapter_admin.router)
 app.mount("/mcp", mcp.streamable_http_app())
 

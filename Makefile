@@ -361,7 +361,9 @@ deepclean: clean
 
 .PHONY: health
 health:
-	@curl -fsS http://127.0.0.1:$(API_PORT)/config/validate || (echo "API not reachable on :$(API_PORT)"; exit 1)
+	@# Root routes need a bearer token: AGENTRAG_API_TOKEN, else OPEN_NOTEBOOK_PASSWORD from .env.
+	@TOKEN="$${AGENTRAG_API_TOKEN:-$$(.venv/bin/python -c 'from src.agentrag.config import settings; print(settings.OPEN_NOTEBOOK_PASSWORD or "")' 2>/dev/null)}"; \
+	curl -fsS -H "Authorization: Bearer $$TOKEN" http://127.0.0.1:$(API_PORT)/config/validate || (echo "API not reachable on :$(API_PORT), or token rejected"; exit 1)
 	@curl -fsS http://127.0.0.1:$(API_PORT)/on/api/auth/status
 
 .PHONY: test

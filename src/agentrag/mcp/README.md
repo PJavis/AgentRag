@@ -52,8 +52,10 @@ Module này **không đọc trực tiếp** bất kỳ `settings.*` flag nào. H
 ## Sử dụng / Usage
 Claude Code / Claude Desktop (`.mcp.json` hoặc `~/.claude.json`):
 ```json
-{ "mcpServers": { "agentrag": { "type": "http", "url": "http://localhost:8000/mcp" } } }
+{ "mcpServers": { "agentrag": { "type": "http", "url": "http://localhost:8000/mcp",
+    "headers": { "Authorization": "Bearer <JWT hoặc OPEN_NOTEBOOK_PASSWORD>" } } } }
 ```
+`/mcp` cần bearer token như mọi route gốc (khi `AUTH_ENABLED=true`); thiếu token → 401.
 MCP Inspector:
 ```bash
 npx @modelcontextprotocol/inspector http://localhost:8000/mcp

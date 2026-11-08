@@ -237,6 +237,7 @@ class ElasticsearchRetriever:
                     query_embedding=query_embedding,
                     top_k=candidate_size,
                     document_title=document_title,
+                    scope_titles=(filters or {}).get("document_titles"),
                 )
                 hits = self._rrf_fuse_multi_source(
                     sources={
@@ -307,20 +308,33 @@ class ElasticsearchRetriever:
         query_embedding: list[float],
         top_k: int,
         document_title: str | None,
+        scope_titles: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
+        """StructMem entries + synthesis for the query, fused with chunk hits.
+
+        Must honour the same document scope as the chunk search. It used to
+        receive only `document_title`, so a notebook-scoped turn (scope passed
+        via filters["document_titles"]) fused in memory entries from EVERY
+        document: a 1-document notebook came back with citations from 14."""
         import asyncio
 
-        group_ids: list[str] | None = None
+        titles: list[str] = []
         if document_title:
+            titles.append(document_title)
+        elif scope_titles:
+            titles.extend(t for t in scope_titles if t)
+
+        group_ids: list[str] | None = None
+        if titles:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    select(Document.source_id).where(Document.title == document_title)
+                    select(Document.source_id).where(Document.title.in_(titles))
                 )
                 source_ids = [row[0] for row in result.all() if row[0]]
-            if source_ids:
-                group_ids = [
-                    StructMemService.normalize_group_id(sid) for sid in source_ids
-                ]
+            if not source_ids:
+                # A scope that resolves to nothing must not widen to all memory.
+                return [], "scope_empty"
+            group_ids = [StructMemService.normalize_group_id(sid) for sid in source_ids]
 
         try:
             entry_hits, synth_hits = await asyncio.gather(

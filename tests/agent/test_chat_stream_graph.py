@@ -4,7 +4,7 @@ from src.agentrag.agent import graph_service as gs
 
 
 class _FakeGraph:
-    async def ainvoke(self, initial, config):  # noqa: ANN001
+    async def ainvoke(self, initial, config=None):  # noqa: ANN001
         return {
             "answer": "Nhồi máu cơ tim là tắc động mạch vành.",
             "citations": [{"source": 1, "document_title": "Tim mạch"}],
@@ -54,7 +54,7 @@ def test_chat_stream_runs_graph_and_streams_answer(monkeypatch):
 
 def test_chat_stream_emits_error_frame_on_failure(monkeypatch):
     class _Boom:
-        async def ainvoke(self, initial, config):  # noqa: ANN001
+        async def ainvoke(self, initial, config=None):  # noqa: ANN001
             raise RuntimeError("graph blew up")
     monkeypatch.setattr(gs, "_GRAPH", _Boom())
     svc = gs.GraphAgentService()

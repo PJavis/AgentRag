@@ -154,6 +154,8 @@ export interface Citation {
   document_title: string
   source?: number | null
   source_id?: string | null
+  /** Original file type of the cited document (e.g. 'pdf'), set with source_id. */
+  source_type?: string | null
   section_path?: string | null
   position?: number | null
   page?: number | null

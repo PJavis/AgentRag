@@ -2,7 +2,7 @@
 
 Each node = one phase of the existing chat() loop. Helper methods on the
 shared AgentService instance handle the actual work; the graph supplies
-orchestration, conditional branching, and checkpointing.
+orchestration and conditional branching (no checkpointer — see _GRAPH).
 
 Nodes:
     validate            → security gate
@@ -31,7 +31,6 @@ import json
 import time
 from typing import Any, AsyncIterator, Optional, TypedDict
 
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from src.agentrag.agent.service import AgentService, _is_chitchat, _lang_instruction, _CHITCHAT_SYSTEM_PROMPT, _attach_source_ids
@@ -79,7 +78,16 @@ class ChatState(TypedDict, total=False):
 
 
 _INNER = AgentService()
-_CHECKPOINTER = InMemorySaver()
+# No checkpointer. Nothing reads graph checkpoints (no get_state, no interrupts),
+# and an InMemorySaver keyed by conversation_id did two kinds of damage:
+#  - every conversation, plus one "anon-<id>" thread per anonymous turn, kept
+#    its full state (packed context, tool traces) in each gunicorn worker
+#    forever — unbounded memory growth;
+#  - a new turn was MERGED into the previous turn's checkpoint, so keys the
+#    entry node does not reset carried over: critique_retries kept counting
+#    across turns (after a few turns critique could never retry), and a stale
+#    answer/citations/packed_context could leak into a path that skips them.
+# Each turn starts from its own input; history comes from chat_history.
 
 
 def _chain_query(subquery: str, prior_output: dict[str, Any] | None) -> str:
@@ -489,7 +497,7 @@ def _build_graph():
                             {"ground": "ground", "corrective_retrieve": "corrective_retrieve"})
     g.add_edge("corrective_retrieve", "critique")
     g.add_edge("ground", END)
-    return g.compile(checkpointer=_CHECKPOINTER)
+    return g.compile()
 
 
 _GRAPH = _build_graph()
@@ -566,7 +574,6 @@ class GraphAgentService:
         # picks it up downstream (same mechanism as loop backend).
         from src.agentrag.retrieval.context import set_domain_filter
         set_domain_filter(domain_filter)
-        config = {"configurable": {"thread_id": conversation_id or f"anon-{id(initial)}"}}
         # Total wall-clock budget: the per-call LLM timeout does NOT bound the whole
         # decide→tools→rerank→answer loop (each call retryable). Under a gemini 503 storm
         # the total can run away (>120s, 42-min hang observed). Cap it and degrade
@@ -575,7 +582,7 @@ class GraphAgentService:
         import logging as _logging
         try:
             state = await _aio.wait_for(
-                _GRAPH.ainvoke(initial, config=config),
+                _GRAPH.ainvoke(initial),
                 timeout=settings.AGENT_TOTAL_TIMEOUT_S,
             )
         except _aio.TimeoutError:
@@ -653,8 +660,7 @@ class GraphAgentService:
                 "conversation_id": conversation_id,
                 "verbosity": verbosity,
             }
-            config = {"configurable": {"thread_id": conversation_id or f"anon-{id(initial)}"}}
-            state = await _GRAPH.ainvoke(initial, config=config)
+            state = await _GRAPH.ainvoke(initial)
 
             answer = state.get("answer", "") or ""
             yield _sse("status", {"step": "answer"})

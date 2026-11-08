@@ -500,6 +500,7 @@ export function convertSourceReferencesLegacy(text: string): React.ReactNode {
 export function createCompactReferenceHoverComponent(
   citations: Citation[],
   onReferenceClick?: (type: string, id: string) => void,
+  onCitationClick?: (citation: Citation) => void,
 ) {
   const HoverComponent = ({
     href,
@@ -532,12 +533,14 @@ export function createCompactReferenceHoverComponent(
     }
     const citation = citations[idx]
     const sourceId = citation.source_id
-    const clickable = Boolean(sourceId && onReferenceClick)
+    const clickable = Boolean(sourceId && (onCitationClick || onReferenceClick))
     const handleClick = (e: React.MouseEvent | React.KeyboardEvent) => {
       if (!clickable) return
       e.preventDefault()
       e.stopPropagation()
-      onReferenceClick!('source', String(sourceId))
+      // Prefer opening the cited page; the plain source view is the fallback.
+      if (onCitationClick) onCitationClick(citation)
+      else onReferenceClick!('source', String(sourceId))
     }
     return (
       <CitationHoverCard index={idx + 1} citation={citation}>

@@ -1083,6 +1083,11 @@ async def send_message(
             yield json.dumps({"type": "ai", "content": chunk}) + "\n"
             await asyncio.sleep(0)  # yield control
 
+        # _direct_rag bypasses the graph's ground node, which is where
+        # citations get their source_id; without it [n] could not open anything.
+        from src.agentrag.agent.service import _attach_source_ids
+
+        await _attach_source_ids(citations)
         appended = await store.append_message(
             session_id,
             role="assistant",

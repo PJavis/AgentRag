@@ -77,6 +77,25 @@ def test_required_ollama_models_skip_cloud_models():
     assert required_ollama_models(task_map) == {"llama3.2:3b"}
 
 
+def test_deepseek_non_usd_balance_is_not_compared_to_usd_threshold():
+    # 10 CNY ~ 1.4 USD: must not be reported OK as "10.00 CNY".
+    payload = {"is_available": True, "balance_infos": [{"currency": "CNY", "total_balance": "10"}]}
+    status, detail = classify_deepseek_balance(payload)
+    assert status == WARN and "no USD balance" in detail
+
+
+def test_required_ollama_models_include_ollama_providers():
+    models = required_ollama_models(
+        {},
+        provider_models=(("ollama", "qwen2.5-coder:14b-instruct"), ("deepseek", "deepseek-chat"), (None, None)),
+    )
+    assert models == {"qwen2.5-coder:14b-instruct"}
+
+
+def test_task_map_ignored_when_routing_disabled():
+    assert required_ollama_models({"decide": "llama3.2:3b"}, routing_enabled=False) == set()
+
+
 def test_ollama_missing_model_fails():
     status, detail = classify_ollama_models({"qwen2.5:7b"}, {"llama3.2:3b"})
     assert status == FAIL

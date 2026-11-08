@@ -19,6 +19,10 @@ def _vision(**overrides):
     s.VISION_MODEL = "gemini-2.5-flash"
     s.VISION_BASE_URL = None
     s.GEMINI_API_KEY = "test-key"
+    # Pin every env-dependent input: these tests must not pass or fail on the
+    # developer's .env (an unset OPENAI_API_KEY used to break the openai cases).
+    s.OPENAI_API_KEY = "test-key"
+    s.OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1/"
     for key, value in overrides.items():
         setattr(s, key, value)
     return s
@@ -82,3 +86,58 @@ def test_gemini_provider_requires_key():
 def test_validate_settings_runs_vision_rules():
     with pytest.raises(ValueError, match="VISION_BASE_URL"):
         validate_settings(_vision(VISION_BASE_URL="http://127.0.0.1:11434/v1/"))
+
+
+def test_cloud_provider_on_remapped_ollama_port_fails():
+    # Ollama behind a proxy / remapped port: caught by comparing with OLLAMA_BASE_URL.
+    with pytest.raises(ValueError, match="VISION_BASE_URL"):
+        _validate_vision_settings(
+            _vision(OLLAMA_BASE_URL="http://gpu-box:8434/v1", VISION_BASE_URL="http://gpu-box:8434/v1/")
+        )
+
+
+def test_openai_o4_model_on_ollama_fails():
+    with pytest.raises(ValueError, match="VISION_BASE_URL"):
+        _validate_vision_settings(
+            _vision(VISION_PROVIDER="openai", VISION_MODEL="o4-mini", VISION_BASE_URL="http://127.0.0.1:11434/v1/")
+        )
+
+
+def test_ollama_provider_left_on_gemini_endpoint_fails():
+    with pytest.raises(ValueError, match="not an Ollama"):
+        _validate_vision_settings(
+            _vision(
+                VISION_PROVIDER="ollama", VISION_MODEL="llava:13b",
+                VISION_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/",
+            )
+        )
+
+
+def test_ollama_provider_with_hosted_model_name_fails():
+    with pytest.raises(ValueError, match="hosted-API model"):
+        _validate_vision_settings(_vision(VISION_PROVIDER="ollama", VISION_MODEL="gemini-2.5-flash"))
+
+
+def test_ollama_provider_without_base_url_passes():
+    _validate_vision_settings(_vision(VISION_PROVIDER="ollama", VISION_MODEL="qwen2.5vl:7b"))
+
+
+async def test_ui_model_defaults_reject_bad_vision_combo_without_saving(monkeypatch):
+    # PUT /models/defaults used to persist + apply without validation; a bad
+    # combo then stopped the api from booting on the next restart.
+    from fastapi import HTTPException
+
+    from src.agentrag.adapter.routers import models as models_router
+
+    saved = []
+    monkeypatch.setattr(models_router, "save_overrides", lambda u: saved.append(u))
+    monkeypatch.setattr(models_router, "apply_overrides", lambda s: None)
+    monkeypatch.setattr(settings, "VISION_BASE_URL", "http://127.0.0.1:11434/v1/")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "k")
+    with pytest.raises(HTTPException) as exc:
+        await models_router.set_default_models(
+            {"default_vision_model": "vision::gemini::gemini-2.5-flash"}
+        )
+    assert exc.value.status_code == 400
+    assert "VISION_BASE_URL" in exc.value.detail
+    assert saved == []

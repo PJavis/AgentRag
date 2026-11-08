@@ -84,9 +84,14 @@ def classify_deepseek_balance(payload: dict, low: float = DEEPSEEK_LOW_BALANCE_U
     if not payload.get("is_available", False):
         return FAIL, "is_available=false — calls will 402"
     infos = payload.get("balance_infos") or []
-    usd = next((i for i in infos if i.get("currency") == "USD"), infos[0] if infos else None)
-    if usd is None:
+    if not infos:
         return WARN, "no balance info returned"
+    usd = next((i for i in infos if i.get("currency") == "USD"), None)
+    if usd is None:
+        # The threshold is in USD; comparing a CNY figure against it would pass
+        # a balance worth a fraction of the threshold.
+        other = ", ".join(f"{i.get('total_balance')} {i.get('currency')}" for i in infos)
+        return WARN, f"no USD balance ({other}) — threshold {low:.2f} is USD, check manually"
     total = float(usd.get("total_balance", 0))
     detail = f"{total:.2f} {usd.get('currency')}"
     if total < low:
@@ -95,7 +100,11 @@ def classify_deepseek_balance(payload: dict, low: float = DEEPSEEK_LOW_BALANCE_U
 
 
 def classify_rerank_scores(payload: object) -> tuple[str, str]:
-    """rerank_score must be a probability since #23 — floors assume that scale."""
+    """TEI's own scores must be probabilities since #23 — floors assume that scale.
+
+    This probes TEI directly, so it catches TEI returning raw logits; it does NOT
+    exercise the app reranker (where the #23 double-sigmoid lived). That one is
+    covered by the reranker unit tests, not by this monitor."""
     if not isinstance(payload, list) or not payload:
         return FAIL, f"unexpected rerank response: {str(payload)[:120]}"
     scores = [float(item.get("score", -1)) for item in payload]
@@ -104,8 +113,24 @@ def classify_rerank_scores(payload: object) -> tuple[str, str]:
     return OK, "scores " + ", ".join(f"{s:.3f}" for s in scores)
 
 
-def required_ollama_models(task_model_map: dict[str, str]) -> set[str]:
-    return {
+def required_ollama_models(
+    task_model_map: dict[str, str],
+    *,
+    routing_enabled: bool = True,
+    provider_models: tuple[tuple[str | None, str | None], ...] = (),
+) -> set[str]:
+    """Ollama models the app will actually call.
+
+    The task map only applies when LLM_ROUTING_ENABLED; AGENT/EXTRACTION/VISION
+    models count whenever their provider is ollama (e.g. extraction on a local
+    qwen that was never pulled 404s every chunk)."""
+    required = {
+        model for provider, model in provider_models
+        if provider == "ollama" and model
+    }
+    if not routing_enabled:
+        return required
+    return required | {
         model for model in task_model_map.values()
         if model and not model.lower().startswith(_CLOUD_PREFIXES)
     }
@@ -151,12 +176,23 @@ def _http(method: str, url: str, body: object | None = None, headers: dict | Non
         return status, raw.decode(errors="replace")[:300]
 
 
+def _dotenv_value(key: str) -> str | None:
+    """A key from the repo .env that pydantic Settings does not model."""
+    try:
+        from dotenv import dotenv_values
+
+        return dotenv_values(Path(__file__).resolve().parents[2] / ".env").get(key) or None
+    except Exception:
+        return None
+
+
 def _api_headers(settings) -> dict:
     """Root api routes require a bearer token once auth covers them:
     AGENTRAG_API_TOKEN (JWT or legacy password), else OPEN_NOTEBOOK_PASSWORD."""
     import os
 
-    token = os.environ.get("AGENTRAG_API_TOKEN") or settings.OPEN_NOTEBOOK_PASSWORD
+    token = os.environ.get("AGENTRAG_API_TOKEN") or _dotenv_value("AGENTRAG_API_TOKEN") \
+        or settings.OPEN_NOTEBOOK_PASSWORD
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
@@ -201,7 +237,8 @@ def run_checks(settings, api_url: str, chat: bool, chat_question: str) -> list[C
         if status != 200:
             return FAIL, f"HTTP {status}: {str(body)[:160]}"
         down = [k for k, v in (body.get("providers") or {}).items() if v.get("reachable") is False]
-        down += [k for k, v in (body.get("infra") or {}).items() if not v.get("reachable")]
+        # reachable=None means "not probed" (e.g. no port inferable) — not down.
+        down += [k for k, v in (body.get("infra") or {}).items() if v.get("reachable") is False]
         if down:
             return WARN, f"api up, but it cannot reach: {down}"
         return OK, "api up, providers/infra reachable from api"
@@ -268,9 +305,17 @@ def run_checks(settings, api_url: str, chat: bool, chat_question: str) -> list[C
             task_map = json.loads(settings.LLM_TASK_MODEL_MAP or "{}")
         except json.JSONDecodeError:
             task_map = {}
-        required = required_ollama_models(task_map)
-        if not required and settings.EXTRACTION_PROVIDER != "ollama":
-            return SKIP, "no task routed to Ollama"
+        required = required_ollama_models(
+            task_map,
+            routing_enabled=settings.LLM_ROUTING_ENABLED,
+            provider_models=(
+                (settings.AGENT_PROVIDER, settings.AGENT_MODEL),
+                (settings.EXTRACTION_PROVIDER, settings.EXTRACTION_MODEL),
+                (settings.VISION_PROVIDER, settings.VISION_MODEL),
+            ),
+        )
+        if not required:
+            return SKIP, "no model routed to Ollama"
         status, body = _http("GET", f"{_origin(settings.OLLAMA_BASE_URL)}/api/tags")
         if status != 200:
             return FAIL, f"HTTP {status}"

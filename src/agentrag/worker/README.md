@@ -20,7 +20,7 @@ job rồi gọi `process_*` — không tự ra quyết định (Reasoning) và k
 
 | File | Responsibility |
 |---|---|
-| `functions.py` | 4 ARQ task functions: `graph_ingest`, `vision_extract`, `consolidate`, `chat_memory`. Mỗi hàm `async def name(ctx, *, ...kwargs)`; chỉ build job dataclass + gọi downstream `process_*`. Lazy-imports để worker boot nhanh. |
+| `functions.py` | 5 ARQ task functions: `graph_ingest`, `vision_extract`, `consolidate`, `chat_memory`, `upload_ingest`. Mỗi hàm `async def name(ctx, *, ...kwargs)`; chỉ build job dataclass + gọi downstream `process_*`. Lazy-imports để worker boot nhanh. |
 | `settings.py` | `WorkerSettings` — class mà `arq` CLI đọc: danh sách `functions`, `redis_settings`, `max_jobs`, `job_timeout`, `keep_result`, `max_tries`. |
 | `pool.py` | ARQ Redis pool singleton: `init_pool()`, `get_pool()`, `close_pool()`. Dùng bởi API process để enqueue. |
 | `__init__.py` | Rỗng (package marker). |
@@ -50,9 +50,13 @@ async def vision_extract(ctx, *, document_id, title, image_records) -> None
 async def consolidate(ctx, *, group_id, document_id, trigger_chunk_count) -> None
 async def chat_memory(ctx, *, conversation_id, user_message, assistant_message,
                       turn_id, turn_timestamp) -> None
+async def upload_ingest(ctx, *, file_path, user_id, notebook_ids,
+                        content_hash=None, skeleton_id=None) -> str | None
 ```
 
 `ctx["redis"]` là ArqRedis pool bên trong worker — dùng để chain jobs (xem `graph_ingest`).
+`_on_startup` gọi `set_pool(ctx["redis"])` để code chạy trong worker (vd. `ingest_folder` do
+`upload_ingest` gọi) dùng được `get_pool()`.
 
 **Start a worker process:**
 
@@ -68,9 +72,10 @@ arq src.agentrag.worker.settings.WorkerSettings
 API process (enqueue, không block request)        Worker process (arq CLI)
 ────────────────────────────────────────         ──────────────────────────────
 ingestion/pipeline.py ─ "graph_ingest"  ┐
-main.py /chat,/chat/stream ─ "chat_memory"│  Redis   functions.py → process_*(job)
+chat.turns.record_turn_memory ─ "chat_memory"│  Redis   functions.py → process_*(job)
 ingestion/pipeline.py ─ "vision_extract" ┘ ───────▶  graph_jobs / vision_jobs /
 graph_jobs.py ─ "consolidate" (chained)               consolidation_jobs / chat.structmem
+adapter POST /sources ─ "upload_ingest"              ingestion.upload_jobs
 ```
 
 - **`graph_ingest`** — enqueue từ `ingestion/pipeline.py` (async mode) sau khi lưu document.
@@ -84,8 +89,9 @@ graph_jobs.py ─ "consolidate" (chained)               consolidation_jobs / cha
   → `graph.consolidation_jobs.process_consolidation_job(job)`: lấy unconsolidated entries →
   embed + cosine search seeds → LLM synthesis cross-chunk hypotheses → index `agentrag_synthesis`
   → mark `consolidated=true`.
-- **`chat_memory`** — enqueue từ `main.py` sau mỗi `/chat` và `/chat/stream` response khi
-  `CHAT_STRUCTMEM_ENABLED=true`. → `chat.structmem.ChatMemoryService.process_turn()` (2 parallel
+- **`chat_memory`** — enqueue qua `chat.turns.record_turn_memory` sau mỗi chat turn (root `/chat`,
+  `/chat/stream` và adapter notebook/source chat của UI) khi `CHAT_STRUCTMEM_ENABLED=true`;
+  bỏ qua turn lỗi/rỗng. → `chat.structmem.ChatMemoryService.process_turn()` (2 parallel
   LLM calls: factual + relational → embed → index). Hàm này tự gọi `count_unconsolidated()` và,
   nếu `>= CHAT_MEMORY_CONSOLIDATION_THRESHOLD`, gọi `svc.consolidate(conversation_id)` **in-line**
   (không qua một ARQ job riêng).
@@ -128,3 +134,12 @@ Những tính năng đó nằm trong agent/ingestion/retrieval path, không qua 
   (`total_chunks >= STRUCTMEM_CONSOLIDATION_THRESHOLD`). Document nhỏ sẽ không có synthesis layer.
 - **`job_timeout` bao trùm cả document**, không phải 1 chunk; PDF nhiều hình + vision LLM chậm
   có thể chạm `STRUCTMEM_JOB_TIMEOUT_SECONDS` (3600s) — chỉnh lên nếu cần.
+
+## `upload_ingest`
+
+Enqueue từ adapter `POST /sources` (UI upload) khi `UPLOAD_INGEST_VIA_WORKER=true` (mặc định).
+API ghi file vào `UPLOAD_STAGING_DIR` (mặc định `.cache/agentrag/uploads` — **phải** nằm trên
+volume mà api và worker cùng mount; docker-compose share `/app/.cache`), tạo skeleton Document,
+rồi worker chạy `ingestion.upload_jobs.run_upload_ingest`: `ingest_folder` → link notebooks →
+activity event → xoá staging dir. File staging bị mất (volume không share) → document chuyển
+`failed` thay vì kẹt `pending`. Enqueue lỗi → fallback BackgroundTask trong api như cũ.

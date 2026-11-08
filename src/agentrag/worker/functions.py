@@ -54,6 +54,23 @@ async def vision_extract(
     await process_vision_job(job)
 
 
+async def upload_ingest(
+    ctx: dict,
+    *,
+    file_path: str,
+    user_id: str,
+    notebook_ids: list[str],
+    content_hash: str | None = None,
+    skeleton_id: str | None = None,
+) -> str | None:
+    """Ingest a UI upload staged by `POST /sources` (see ingestion.upload_jobs)."""
+    from src.agentrag.ingestion.upload_jobs import run_upload_ingest
+
+    return await run_upload_ingest(
+        file_path, user_id, notebook_ids or [], content_hash, skeleton_id=skeleton_id
+    )
+
+
 async def consolidate(
     ctx: dict,
     *,

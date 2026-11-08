@@ -4,14 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import tempfile
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import delete, func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import func, select
 
 from src.agentrag.adapter.db import adapter_notebook_sources
 from src.agentrag.adapter.models import SourceResponse, SourceStatusResponse
@@ -19,7 +17,7 @@ from src.agentrag.adapter.upload_dedupe import find_existing_document, hash_byte
 from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Document, Project, Segment
-from src.agentrag.ingestion.pipeline import ingest_folder
+from src.agentrag.ingestion.upload_jobs import link_to_notebooks, run_upload_ingest
 
 router = APIRouter(prefix="/sources")
 
@@ -201,77 +199,45 @@ def _user_upload_semaphore(user_id: str) -> asyncio.Semaphore:
     return sem
 
 
-async def _link_to_notebooks(session, doc_id: uuid.UUID, notebook_ids: list[str]) -> None:
-    for nb_id in notebook_ids:
-        try:
-            nb_uuid = uuid.UUID(nb_id)
-        except (ValueError, TypeError):
-            continue
-        await session.execute(
-            insert(adapter_notebook_sources)
-            .values(notebook_id=nb_uuid, document_id=doc_id)
-            .on_conflict_do_nothing()
-        )
+# arq's default health-check key for the default queue.
+_WORKER_HEALTH_KEY = "arq:queue:health-check"
 
 
-async def _run_ingest_background(
-    file_path: str,
-    user_id: str,
-    notebook_ids: list[str],
-    content_hash: str | None,
-) -> None:
-    """Run ingest_folder in background, then link notebooks + cleanup tmp dir."""
-    import logging
-    import time
-    from src.agentrag.observability.activity import record_event as _record_event
-    logger = logging.getLogger(__name__)
-    sem = _user_upload_semaphore(user_id)
-    parent_dir = os.path.dirname(file_path)
-    started = time.perf_counter()
-    doc_id: str | None = None
-    segment_count: int | None = None
-    error_msg: str | None = None
+async def _enqueue_upload_ingest(
+    dest: str, user_id: str, notebook_ids: list[str], content_hash: str, skeleton_id: str
+) -> bool:
+    """Hand the staged upload to the ARQ worker. False → caller runs it in-process."""
+    if not settings.UPLOAD_INGEST_VIA_WORKER:
+        return False
     try:
-        async with sem:
-            result = await ingest_folder(parent_dir, user_id=user_id)
-        docs = result.get("documents", [])
-        if not docs:
-            logger.error("Background ingest returned no documents for %s", file_path)
-            error_msg = "no documents produced"
-            return
-        doc_id = docs[0].get("document_id")
-        segment_count = docs[0].get("segments_indexed") or docs[0].get("chunks")
-        if not doc_id:
-            return
-        async with AsyncSessionLocal() as session:
-            doc = await session.get(Document, uuid.UUID(doc_id))
-            if doc is None:
-                return
-            if not doc.content_hash and content_hash:
-                doc.content_hash = content_hash
-            await _link_to_notebooks(session, doc.id, notebook_ids)
-            await session.commit()
-    except Exception as exc:
-        logger.exception("Background ingest failed for %s", file_path)
-        error_msg = str(exc)[:500]
-    finally:
-        shutil.rmtree(parent_dir, ignore_errors=True)
-        # S6 — record ingest_done / ingest_failed event
-        duration_ms = round((time.perf_counter() - started) * 1000.0, 1)
-        try:
-            await _record_event(
-                user_id=user_id,
-                event_type="ingest_failed" if error_msg else "ingest_done",
-                target_kind="document",
-                target_id=doc_id,
-                payload={
-                    "duration_ms": duration_ms,
-                    "segment_count": segment_count,
-                    "error": error_msg,
-                },
+        from src.agentrag.worker.pool import get_pool
+
+        pool = get_pool()
+        # A queue with no consumer accepts the job and the doc sits "pending"
+        # forever. The worker refreshes this key every health_check_interval.
+        if not await pool.exists(_WORKER_HEALTH_KEY):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "no live ARQ worker (%s missing); ingesting upload in-process", _WORKER_HEALTH_KEY
             )
-        except Exception:
-            pass  # never break the worker on telemetry failure
+            return False
+        job = await pool.enqueue_job(
+            "upload_ingest",
+            file_path=os.path.abspath(dest),
+            user_id=user_id,
+            notebook_ids=notebook_ids,
+            content_hash=content_hash,
+            skeleton_id=skeleton_id,
+        )
+        return job is not None
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "upload_ingest enqueue failed; ingesting in-process"
+        )
+        return False
 
 
 @router.post("")
@@ -335,15 +301,18 @@ async def create_source(
         existing = await find_existing_document(content_hash)
         if existing is not None:
             async with AsyncSessionLocal() as session:
-                await _link_to_notebooks(session, existing.id, all_notebooks)
+                await link_to_notebooks(session, existing.id, all_notebooks)
                 await session.commit()
                 doc = await session.get(Document, existing.id)
                 payload = await _doc_to_source(session, doc, all_notebooks)
                 payload["deduplicated"] = True
                 return payload
 
-    # Persist file outside request lifecycle.
-    persist_dir = tempfile.mkdtemp(prefix="adapter_upload_")
+    # Persist file outside request lifecycle, on the volume the worker shares.
+    # basename: a client-supplied "../x" must not escape the staging dir.
+    filename = os.path.basename(filename) or "upload"
+    os.makedirs(settings.UPLOAD_STAGING_DIR, exist_ok=True)
+    persist_dir = tempfile.mkdtemp(prefix="upload_", dir=settings.UPLOAD_STAGING_DIR)
     dest = os.path.join(persist_dir, filename)
     with open(dest, "wb") as f:
         f.write(raw)
@@ -383,7 +352,7 @@ async def create_source(
         session.add(skeleton)
         await session.commit()
         await session.refresh(skeleton)
-        await _link_to_notebooks(session, skeleton.id, all_notebooks)
+        await link_to_notebooks(session, skeleton.id, all_notebooks)
         await session.commit()
         payload = await _doc_to_source(session, skeleton, all_notebooks)
 
@@ -416,9 +385,13 @@ async def create_source(
         except OSError:
             pass  # not fatal — download endpoint will 404 if missing
 
-    background_tasks.add_task(
-        _run_ingest_background, dest, user_id, all_notebooks, content_hash
-    )
+    if not await _enqueue_upload_ingest(
+        dest, user_id, all_notebooks, content_hash, str(skeleton.id)
+    ):
+        background_tasks.add_task(
+            run_upload_ingest, dest, user_id, all_notebooks, content_hash,
+            skeleton_id=str(skeleton.id), semaphore=_user_upload_semaphore(user_id),
+        )
     payload["status"] = "processing"
     return payload
 
@@ -525,34 +498,16 @@ async def update_source(source_id: str, body: dict):
 
 @router.delete("/{source_id}")
 async def delete_source(source_id: str):
-    async with AsyncSessionLocal() as session:
-        doc = await session.get(Document, _parse_source_id(source_id))
-        if not doc:
-            raise HTTPException(404, "Source not found")
-        title = doc.title
-        await session.execute(
-            delete(Segment).where(Segment.document_id == doc.id)
-        )
-        await session.delete(doc)
-        await session.commit()
+    from src.agentrag.services import document_service
 
-    # Purge the search/memory layers so deleted content stops being retrievable.
-    es_result: dict = {}
-    if title:
-        try:
-            from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
-            es_result = await ElasticsearchStore().delete_document(title)
-        except Exception:
-            pass
-        # Remove the document's extracted-image folder (same sanitiser as image_parser).
-        try:
-            import re as _re
-            from pathlib import Path as _Path
-            safe_dir = _re.sub(r"[^\w\-]", "_", title)[:80]
-            shutil.rmtree(_Path(settings.IMAGE_STORAGE_DIR) / safe_dir, ignore_errors=True)
-        except Exception:
-            pass
-    return {"message": "Source deleted", "purged": es_result}
+    try:
+        doc_id = _parse_source_id(source_id)
+    except ValueError:
+        raise HTTPException(404, "Source not found") from None
+    result = await document_service.delete_document(doc_id)
+    if result is None:
+        raise HTTPException(404, "Source not found")
+    return {"message": "Source deleted", "purged": result["purged"]}
 
 
 @router.get("/{source_id}/status")

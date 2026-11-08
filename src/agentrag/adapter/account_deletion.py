@@ -3,14 +3,10 @@ image-file purges are best-effort so a search-layer hiccup can't half-delete PG.
 from __future__ import annotations
 
 import logging
-import re
-import shutil
-from pathlib import Path
 
 from sqlalchemy import delete, select
 
 from src.agentrag.adapter.db import AdapterChatFeedback
-from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import (
     ChatMessage,
@@ -59,18 +55,9 @@ async def delete_user_data(user_id: str) -> dict[str, int]:
         await s.commit()
 
     # Best-effort search/file purge — Postgres is already committed above.
-    for title in titles:
-        try:
-            from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
+    from src.agentrag.services.document_service import purge_document_artifacts
 
-            await ElasticsearchStore().delete_document(title)
-        except Exception as exc:
-            logger.debug("ES purge skipped for %r: %s", title, exc)
-        try:
-            safe = re.sub(r"[^\w\-]", "_", title)[:80]
-            shutil.rmtree(Path(settings.IMAGE_STORAGE_DIR) / safe, ignore_errors=True)
-        except Exception as exc:
-            logger.debug("image purge skipped for %r: %s", title, exc)
+    await purge_document_artifacts(titles)
 
     logger.info("account wipe user=%s counts=%s", user_id, counts)
     return counts

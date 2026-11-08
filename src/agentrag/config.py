@@ -445,6 +445,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_PER_MIN: int = 20         # per-user per-min for uploads
     UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024   # 100 MB
     UPLOAD_DEDUPE_BY_HASH: bool = True
+    #: Run UI-upload ingest as an ARQ `upload_ingest` job instead of a FastAPI
+    #: BackgroundTask. In-process, sync parsers block the api event loop and a
+    #: restart mid-ingest loses the job with the document stuck "pending".
+    #: Falls back to in-process when the job cannot be enqueued or no worker is alive.
+    UPLOAD_INGEST_VIA_WORKER: bool = True
+    #: Where uploads wait for the worker. MUST be on a volume the api and the
+    #: worker both mount (docker-compose shares /app/.cache).
+    UPLOAD_STAGING_DIR: str = ".cache/agentrag/uploads"
     #: Allow ingest to DELETE an ES index whose embedding dims differ from the
     #: embedder's. Off: a mismatch raises instead (a wrong embedding server must
     #: not wipe the corpus). Turn on only for an intentional model switch.

@@ -116,6 +116,9 @@ async def delete_preview(notebook_id: str):
 
 @router.delete("/{notebook_id}")
 async def delete_notebook(notebook_id: str, delete_exclusive_sources: bool = False):
+    from src.agentrag.services import document_service
+
+    purge_titles: list[str] = []
     async with AsyncSessionLocal() as session:
         nb_uuid = uuid.UUID(notebook_id)
         if delete_exclusive_sources:
@@ -126,15 +129,15 @@ async def delete_notebook(notebook_id: str, delete_exclusive_sources: bool = Fal
                     )
                 )
             ).scalars().all()
-            for doc_id in doc_ids:
-                doc = await session.get(Document, doc_id)
-                if doc:
-                    await session.delete(doc)
+            docs = [d for d in [await session.get(Document, i) for i in doc_ids] if d]
+            purge_titles = await document_service.delete_documents_in_session(session, docs)
         await session.execute(
             delete(AdapterNotebook).where(AdapterNotebook.id == nb_uuid)
         )
         await session.commit()
-        return {"message": "Notebook deleted"}
+    if purge_titles:
+        await document_service.purge_document_artifacts(purge_titles)
+    return {"message": "Notebook deleted"}
 
 
 @router.post("/{notebook_id}/sources/{source_id}")

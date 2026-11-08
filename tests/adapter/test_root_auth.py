@@ -55,6 +55,49 @@ def test_root_routes_accept_legacy_password(client):
     assert resp.status_code != 401
 
 
+def _jwt(admin: bool) -> str:
+    import uuid
+    from types import SimpleNamespace
+
+    from src.agentrag.adapter.auth_service import issue_token
+
+    return issue_token(SimpleNamespace(id=uuid.uuid4(), email="u@x.test", name="U", is_admin=admin))
+
+
+def test_root_routes_reject_non_admin_jwt(client):
+    # /api/auth/signup is public: "any valid JWT" would mean anyone could
+    # ingest server paths or delete other users' documents.
+    for method, path in [("POST", "/ingest/folder"), ("DELETE", "/documents/x"),
+                         ("GET", "/conversations"), ("POST", "/mcp/")]:
+        resp = client.request(method, path, json={}, headers={"Authorization": f"Bearer {_jwt(False)}"})
+        assert resp.status_code == 403, (method, path)
+
+
+def test_root_routes_accept_admin_jwt(client):
+    resp = client.post("/search", json={}, headers={"Authorization": f"Bearer {_jwt(True)}"})
+    assert resp.status_code not in (401, 403)
+
+
+def test_root_routes_accept_admin_header_token(client, monkeypatch):
+    monkeypatch.setattr(settings, "ADAPTER_ADMIN_TOKEN", "adm-tok")
+    assert client.post("/search", json={}, headers={"X-Admin-Token": "adm-tok"}).status_code not in (401, 403)
+    assert client.post("/search", json={}, headers={"X-Admin-Token": "wrong"}).status_code == 401
+
+
+def test_adapter_non_admin_jwt_still_works_under_on(client):
+    # Normal users only use /on; the root admin rule must not leak into it.
+    resp = client.get("/on/api/notebooks", headers={"Authorization": f"Bearer {_jwt(False)}"})
+    assert resp.status_code not in (401, 403)
+
+
+def test_root_middleware_is_pure_asgi():
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    from src.agentrag.adapter.auth import RootAuthMiddleware
+
+    assert not issubclass(RootAuthMiddleware, BaseHTTPMiddleware)
+
+
 def test_openapi_stays_public(client):
     assert client.get("/openapi.json").status_code == 200
 

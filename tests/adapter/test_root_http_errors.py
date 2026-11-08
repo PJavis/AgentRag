@@ -38,7 +38,12 @@ def test_missing_or_bad_input_is_400(client, path, body, needle):
 
 @pytest.mark.parametrize(
     "method,path",
-    [("DELETE", "/documents/not-a-uuid"), ("GET", "/documents/not-a-uuid/graph-status")],
+    [
+        ("DELETE", "/documents/not-a-uuid"),
+        ("GET", "/documents/not-a-uuid/graph-status"),
+        ("DELETE", "/conversations/not-a-uuid"),
+        ("GET", "/conversations/not-a-uuid/messages"),
+    ],
 )
 def test_non_uuid_document_id_is_404_not_500(client, method, path):
     # Used to reach Postgres and fail with InvalidTextRepresentation → 500.

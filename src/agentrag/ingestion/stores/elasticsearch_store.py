@@ -78,25 +78,42 @@ class ElasticsearchStore:
 
     async def _get_index_embedding_dims(self, index_name: str) -> int | None:
         """Trả về số dims hiện tại của field embedding trong index, hoặc None nếu không có."""
+        from src.agentrag.health.embedding_dims import embedding_dims_from_mapping
+
         try:
             mapping = await self.client.indices.get_mapping(index=index_name)
-            props = mapping[index_name]["mappings"].get("properties", {})
-            return props.get("embedding", {}).get("dims")
         except Exception:
             return None
+        return embedding_dims_from_mapping(dict(mapping))
 
     async def _recreate_index_if_dims_changed(
         self, index_name: str, embedding_dims: int
     ) -> bool:
-        """Xóa và trả về True nếu index tồn tại với dims khác. False nếu không cần xóa."""
+        """Refuse (raise) when the index exists with different dims.
+
+        This used to DELETE the index — so one ingest from a process pointed at
+        the wrong embedding server (e.g. bge-m3 1024-dim vs the 768-dim e5-FT
+        corpus) silently wiped the whole corpus. Deleting now requires
+        ES_ALLOW_INDEX_RECREATE_ON_DIM_CHANGE=true (an intentional model switch
+        followed by a full re-ingest). Returns True only when it deleted."""
+        from src.agentrag.config import settings as _settings
+        from src.agentrag.health.embedding_dims import EmbeddingDimMismatch
+
         exists = await self.client.indices.exists(index=index_name)
         if not exists:
             return False
         current_dims = await self._get_index_embedding_dims(index_name)
-        if current_dims is not None and current_dims != embedding_dims:
-            await self.client.indices.delete(index=index_name)
-            return True
-        return False
+        if current_dims is None or current_dims == embedding_dims:
+            return False
+        if not _settings.ES_ALLOW_INDEX_RECREATE_ON_DIM_CHANGE:
+            raise EmbeddingDimMismatch(
+                f"Index {index_name!r} holds {current_dims}-dim vectors but the embedder "
+                f"returns {embedding_dims}. Refusing to delete the index. Fix "
+                "EMBEDDING_BASE_URL, or set ES_ALLOW_INDEX_RECREATE_ON_DIM_CHANGE=true "
+                "to switch models on purpose (then re-ingest everything)."
+            )
+        await self.client.indices.delete(index=index_name)
+        return True
 
     async def delete_document(self, document_title: str) -> dict[str, Any]:
         """Purge every ES doc belonging to a source (by document_title) across the

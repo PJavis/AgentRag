@@ -47,3 +47,27 @@ export function retryQuestionFor(messages: ChatLikeMessage[], index: number): st
   }
   return null
 }
+
+interface IdentifiedMessage {
+  id: string
+  error?: string | null
+}
+
+/**
+ * Reconcile local messages with a fresh server copy without losing a
+ * client-side failure. A turn that broke mid-stream is never persisted as an
+ * assistant message, so a plain `setMessages(server)` (run whenever a send
+ * finishes) erased the error bubble and its Retry one tick after it rendered.
+ * The server copy already holds the user's question, so the failed bubble is
+ * kept after it.
+ */
+export function mergeServerMessages<T extends IdentifiedMessage>(server: T[], local: T[]): T[] {
+  const serverIds = new Set(server.map(m => m.id))
+  const failures = local.filter(m => m.error && !serverIds.has(m.id))
+  return failures.length ? [...server, ...failures] : server
+}
+
+/** A new turn supersedes an earlier failed one (it would sort after it otherwise). */
+export function dropClientFailures<T extends IdentifiedMessage>(messages: T[]): T[] {
+  return messages.some(m => m.error) ? messages.filter(m => !m.error) : messages
+}

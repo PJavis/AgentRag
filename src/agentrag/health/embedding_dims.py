@@ -23,6 +23,16 @@ class EmbeddingDimMismatch(RuntimeError):
     pass
 
 
+def embedding_dims_from_mapping(mapping: dict | None) -> int | None:
+    """`embedding.dims` from a get_mapping response. Iterates the response
+    because querying an alias returns the CONCRETE index name as the key."""
+    for body in (mapping or {}).values():
+        field = ((body or {}).get("mappings", {}).get("properties", {}) or {}).get("embedding") or {}
+        if field.get("dims"):
+            return field["dims"]
+    return None
+
+
 async def verify_embedding_dims(*, es, embedder, index: str, timeout_s: float = 10.0) -> str:
     from elasticsearch import NotFoundError
 
@@ -33,12 +43,7 @@ async def verify_embedding_dims(*, es, embedder, index: str, timeout_s: float = 
     except Exception as exc:
         return f"skipped: cannot read mapping of {index!r} ({type(exc).__name__}: {exc})"
 
-    index_dims = None
-    for body in (mapping or {}).values():
-        field = (body.get("mappings", {}).get("properties", {}) or {}).get("embedding") or {}
-        index_dims = field.get("dims")
-        if index_dims:
-            break
+    index_dims = embedding_dims_from_mapping(mapping)
     if not index_dims:
         return f"skipped: {index!r} has no embedding.dims in its mapping"
 

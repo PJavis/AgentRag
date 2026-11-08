@@ -7,6 +7,7 @@ import { getApiErrorMessage } from '@/lib/utils/error-handler'
 import { useTranslation } from '@/lib/hooks/use-translation'
 import { sourceChatApi } from '@/lib/api/source-chat'
 import { createNdjsonReader } from '@/lib/utils/ndjson'
+import { mergeServerMessages, dropClientFailures } from '@/lib/utils/chat-errors'
 import {
   SourceChatSession,
   SourceChatMessage,
@@ -41,7 +42,8 @@ export function useSourceChat(sourceId: string) {
   // Update messages when session changes
   useEffect(() => {
     if (currentSession?.messages) {
-      setMessages(currentSession.messages)
+      const serverMessages = currentSession.messages
+      setMessages(prev => mergeServerMessages(serverMessages, prev))
     }
   }, [currentSession])
 
@@ -129,11 +131,14 @@ export function useSourceChat(sourceId: string) {
       content: message,
       timestamp: new Date().toISOString()
     }
-    setMessages(prev => [...prev, userMessage])
+    setMessages(prev => [...dropClientFailures(prev), userMessage])
     setIsStreaming(true)
     // Wire Stop: cancelStreaming() aborts this controller, which ends the fetch.
     abortControllerRef.current?.abort()
     const abortController = new AbortController()
+    // Outside the try so the error path can see what already streamed.
+    let aiMessage: SourceChatMessage | null = null
+    let receivedFrame = false
     abortControllerRef.current = abortController
 
     try {
@@ -150,12 +155,11 @@ export function useSourceChat(sourceId: string) {
       // Keeps decoder state + the unfinished line across chunks (multi-byte
       // Vietnamese characters and JSON lines can be cut between reads).
       const readLines = createNdjsonReader()
-      let aiMessage: SourceChatMessage | null = null
-
       while (true) {
         const { done, value } = await reader.read()
         const lines = readLines(value, done)
 
+        if (lines.length) receivedFrame = true
         for (const line of lines) {
           // Backend yields newline-delimited JSON (no `data: ` prefix); the
           // reader also strips a standard `data: ` SSE prefix.
@@ -229,8 +233,25 @@ export function useSourceChat(sourceId: string) {
       const error = err as { response?: { data?: { detail?: string } }, message?: string };
       console.error('Error sending message:', error)
       toast.error(getApiErrorMessage(error.response?.data?.detail || error.message, (key) => t(key), 'apiErrors.failedToSendMessage'))
-      // Remove optimistic messages on error
-      setMessages(prev => prev.filter(msg => !msg.id.startsWith('temp-')))
+      if (!receivedFrame) {
+        // Never reached the backend's stream: nothing was persisted, drop the
+        // optimistic question.
+        setMessages(prev => prev.filter(msg => !msg.id.startsWith('temp-')))
+      } else {
+        // The backend stored the question and failed answering: show the
+        // failure (with any partial text) so ChatPanel offers Retry, instead of
+        // leaving a half answer that looks normal.
+        const detail = error.message || 'stream error'
+        const failedId = aiMessage?.id ?? `failed-${Date.now()}`
+        setMessages(prev => {
+          const exists = prev.some(m => m.id === failedId)
+          const failed: SourceChatMessage = {
+            id: failedId, type: 'ai', content: aiMessage?.content ?? '',
+            timestamp: new Date().toISOString(), error: detail,
+          }
+          return exists ? prev.map(m => (m.id === failedId ? failed : m)) : [...prev, failed]
+        })
+      }
     } finally {
       setIsStreaming(false)
       if (abortControllerRef.current === abortController) abortControllerRef.current = null

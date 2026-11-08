@@ -130,15 +130,63 @@ class OpenNotebookAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class RootAuthMiddleware(OpenNotebookAuthMiddleware):
-    """Same auth for the root app's own routes (main.py, /mcp). Requests under the
-    adapter mount are skipped here because the adapter authenticates them itself."""
+class RootAuthMiddleware:
+    """Auth for the root app's own routes (main.py, /mcp): ADMIN ONLY.
 
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        if path == _ADAPTER_MOUNT or path.startswith(_ADAPTER_MOUNT + "/"):
-            return await call_next(request)
-        return await super().dispatch(request, call_next)
+    These are operator endpoints — /ingest/folder reads any server path,
+    DELETE /documents and GET /conversations span every user — with no
+    per-user scoping. /api/auth/signup is public, so "any valid JWT" would mean
+    "anyone". Accepted: the legacy OPEN_NOTEBOOK_PASSWORD, an admin JWT, or
+    X-Admin-Token == ADAPTER_ADMIN_TOKEN.
+
+    Pure ASGI rather than BaseHTTPMiddleware: it wraps the whole root app, so
+    every /on SSE chunk and the long-lived /mcp stream pass through it, and
+    BaseHTTPMiddleware adds a memory-stream hop that breaks disconnect and
+    cancellation propagation. Requests under /on go straight through — the
+    adapter authenticates them itself.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        if (
+            path == _ADAPTER_MOUNT
+            or path.startswith(_ADAPTER_MOUNT + "/")
+            or not settings.AUTH_ENABLED
+            or scope.get("method") == "OPTIONS"
+            or _is_public(path)
+        ):
+            return await self.app(scope, receive, send)
+
+        from starlette.datastructures import Headers
+
+        headers = Headers(scope=scope)
+        admin_header = bool(settings.ADAPTER_ADMIN_TOKEN) and (
+            headers.get("x-admin-token", "") == settings.ADAPTER_ADMIN_TOKEN
+        )
+        auth = headers.get("authorization", "")
+        identity = _identity_from_token(auth[7:]) if auth.startswith("Bearer ") else None
+
+        if not admin_header:
+            if identity is None:
+                detail = "Invalid token" if auth.startswith("Bearer ") else "Unauthorized"
+                return await self._deny(scope, receive, send, 401, detail)
+            if not identity.is_admin:
+                return await self._deny(scope, receive, send, 403, "Admin only")
+        if identity is not None:
+            scope.setdefault("state", {})["auth_identity"] = identity
+        return await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _deny(scope, receive, send, status: int, detail: str):
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await JSONResponse(status_code=status, content={"detail": detail})(scope, receive, send)
 
 
 def is_admin(request: Request) -> bool:

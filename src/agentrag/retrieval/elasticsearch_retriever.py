@@ -237,6 +237,7 @@ class ElasticsearchRetriever:
                     query_embedding=query_embedding,
                     top_k=candidate_size,
                     document_title=document_title,
+                    scope_titles=(filters or {}).get("document_titles"),
                 )
                 hits = self._rrf_fuse_multi_source(
                     sources={
@@ -307,20 +308,42 @@ class ElasticsearchRetriever:
         query_embedding: list[float],
         top_k: int,
         document_title: str | None,
+        scope_titles: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
+        """StructMem entries + synthesis for the query, fused with chunk hits.
+
+        Must honour the same document scope as the chunk search. It used to
+        receive only `document_title`, so a notebook-scoped turn (scope passed
+        via filters["document_titles"]) fused in memory entries from EVERY
+        document: a 1-document notebook came back with citations from 14."""
         import asyncio
 
+        scoped = scope_titles is not None or bool(document_title)
+        if scope_titles is not None:
+            allowed = [t for t in scope_titles if t]
+            # An explicit document_title (from the planner) only narrows the
+            # scope; a title outside it must not pull its memory in.
+            titles = [document_title] if document_title in allowed else ([] if document_title else allowed)
+        else:
+            titles = [document_title] if document_title else []
+
         group_ids: list[str] | None = None
-        if document_title:
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(Document.source_id).where(Document.title == document_title)
-                )
-                source_ids = [row[0] for row in result.all() if row[0]]
-            if source_ids:
-                group_ids = [
-                    StructMemService.normalize_group_id(sid) for sid in source_ids
-                ]
+        if scoped:
+            if not titles:
+                return [], "scope_empty"
+            try:
+                async with AsyncSessionLocal() as session:
+                    result = await session.execute(
+                        select(Document.source_id).where(Document.title.in_(titles))
+                    )
+                    source_ids = [row[0] for row in result.all() if row[0]]
+            except Exception as exc:
+                # StructMem is an add-on to the chunk search: fail soft.
+                return [], f"entries_scope_lookup_exception:{type(exc).__name__}"
+            if not source_ids:
+                # A scope that resolves to nothing must not widen to all memory.
+                return [], "scope_empty"
+            group_ids = [StructMemService.normalize_group_id(sid) for sid in source_ids]
 
         try:
             entry_hits, synth_hits = await asyncio.gather(

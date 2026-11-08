@@ -438,6 +438,8 @@ export const ptBR = {
     starterSummary: "Resumir documento",
     readingTime: "{min} min de leitura",
     readingTimeTitle: "Tempo estimado de leitura",
+    answerFailed: "Não foi possível gerar uma resposta",
+    generationStopped: "Geração interrompida",
     sessions: "Sessões",
     sessionTitlePlaceholder: "Digite um título aqui...",
     noSessions: "Nenhuma sessão de chat ainda",

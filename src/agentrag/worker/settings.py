@@ -25,6 +25,11 @@ async def _on_startup(ctx: dict) -> None:
     from src.agentrag.config_validation import validate_settings
 
     validate_settings(app_settings)
+    # Same embedding-dims guard as the api: the worker is the process that
+    # writes vectors, so it must not start against the wrong embedding server.
+    from src.agentrag.health.embedding_dims import check_embedding_dims_at_startup
+
+    await check_embedding_dims_at_startup(app_settings)
 
 
 class WorkerSettings:

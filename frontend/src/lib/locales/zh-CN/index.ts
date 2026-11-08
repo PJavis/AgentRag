@@ -438,6 +438,8 @@ export const zhCN = {
     starterSummary: "总结文档",
     readingTime: "阅读约 {min} 分钟",
     readingTimeTitle: "预计阅读时间",
+    answerFailed: "无法生成回答",
+    generationStopped: "已停止生成",
     sessions: "会话",
     sessionTitlePlaceholder: "在此输入标题...",
     noSessions: "暂无会话",

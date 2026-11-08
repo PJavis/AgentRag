@@ -182,9 +182,9 @@ Tất cả mặc định **OFF** trừ khi ghi chú khác — flag-gated, không
   chưa có segment, tạo trước bởi `/sources` upload) hoặc doc `"failed"` → được
   populate/reset thay vì tạo mới. Hash khác → **xóa toàn bộ** doc cũ cùng `source_id`
   rồi re-ingest.
-- **ES index auto-recreate khi đổi embedding dims.** `_recreate_index_if_dims_changed`
-  **DROP** index nếu `EMBEDDING_MODEL` đổi dims (vd 1024→768). Đổi embedding model =
-  mất index segments, phải re-ingest. CLIP `image_embedding` dims cố định
+- **ES index KHÔNG tự xoá khi lệch embedding dims.** `_recreate_index_if_dims_changed`
+  raise `EmbeddingDimMismatch` (trước đây DROP index → một embedder sai là mất cả corpus).
+  Đổi model có chủ đích: set `ES_ALLOW_INDEX_RECREATE_ON_DIM_CHANGE=true`, rồi re-ingest. CLIP `image_embedding` dims cố định
   `VISUAL_EMBEDDING_DIMS` (512), độc lập text dims.
 - **StructMem index hợp nhất**: `entries_index_name` / `synthesis_index_name` chỉ là
   alias trỏ về `STRUCTMEM_INDEX` (`agentrag_memory_doc`); phân biệt entry/synthesis qua

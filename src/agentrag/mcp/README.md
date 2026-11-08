@@ -19,7 +19,7 @@ Phơi bày (expose) khả năng cốt lõi của AgentRag — **hybrid retrieval
   from src.agentrag.mcp.app import mcp
   app.mount("/mcp", mcp.streamable_http_app())   # main.py:17,52
   ```
-  Endpoint: `http://localhost:8000/mcp`. Một tool đăng ký:
+  Endpoint: `http://localhost:8000/mcp/mcp`. Một tool đăng ký:
   - `search(query: str, document_title: str | None = None, top_k: int = 5) -> str`
 
   Trả về **JSON string** (`json.dumps(..., ensure_ascii=False)`), không phải dict — vì MCP tool output là text.
@@ -52,9 +52,11 @@ Module này **không đọc trực tiếp** bất kỳ `settings.*` flag nào. H
 ## Sử dụng / Usage
 Claude Code / Claude Desktop (`.mcp.json` hoặc `~/.claude.json`):
 ```json
-{ "mcpServers": { "agentrag": { "type": "http", "url": "http://localhost:8000/mcp" } } }
+{ "mcpServers": { "agentrag": { "type": "http", "url": "http://localhost:8000/mcp/mcp",
+    "headers": { "Authorization": "Bearer <JWT hoặc OPEN_NOTEBOOK_PASSWORD>" } } } }
 ```
+`/mcp` cần bearer token như mọi route gốc (khi `AUTH_ENABLED=true`); thiếu token → 401.
 MCP Inspector:
 ```bash
-npx @modelcontextprotocol/inspector http://localhost:8000/mcp
+npx @modelcontextprotocol/inspector http://localhost:8000/mcp/mcp
 ```

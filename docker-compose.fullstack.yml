@@ -12,6 +12,10 @@
 # image, so this only matters if you want edits to apply without a rebuild — in
 # that case append `-f docker-compose.override.yml` to the command.
 services:
+  # In-network TEI is opt-in in the base file (profile bundled-tei, so it cannot
+  # collide with `make serve-embed`); this path wants it with the app.
+  tei:
+    profiles: ["app"]
   api:
     environment:
       EMBEDDING_BASE_URL: http://tei:80/v1/

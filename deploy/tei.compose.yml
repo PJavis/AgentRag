@@ -51,8 +51,10 @@ services:
     volumes:
       - tei_hf_cache:/data
     command:
-      - --model-id=BAAI/bge-m3
-      - --pooling=cls
+      # Same model as tei-gpu: the index holds 768-dim e5-FT vectors, so a
+      # different model here (it used to be bge-m3, 1024-dim) breaks search.
+      - --model-id=dung6903/agentrag-embed-v1
+      - --pooling=mean
     restart: unless-stopped
 
 volumes:

@@ -445,6 +445,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_PER_MIN: int = 20         # per-user per-min for uploads
     UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024   # 100 MB
     UPLOAD_DEDUPE_BY_HASH: bool = True
+    #: Allow ingest to DELETE an ES index whose embedding dims differ from the
+    #: embedder's. Off: a mismatch raises instead (a wrong embedding server must
+    #: not wipe the corpus). Turn on only for an intentional model switch.
+    ES_ALLOW_INDEX_RECREATE_ON_DIM_CHANGE: bool = False
 
     # Worker concurrency (for uvicorn / gunicorn)
     UVICORN_WORKERS: int = 1

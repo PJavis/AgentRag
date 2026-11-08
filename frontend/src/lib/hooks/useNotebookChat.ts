@@ -9,6 +9,7 @@ import { chatApi } from '@/lib/api/chat'
 import { QUERY_KEYS } from '@/lib/api/query-client'
 import { getApiUrl } from '@/lib/config'
 import { useAuthStore } from '@/lib/stores/auth-store'
+import { mergeServerMessages, dropClientFailures } from '@/lib/utils/chat-errors'
 import {
   NotebookChatMessage,
   CreateNotebookChatSessionRequest,
@@ -99,7 +100,8 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
   useEffect(() => {
     if (!currentSession?.messages) return
     if (isSending) return
-    setMessages(currentSession.messages)
+    const serverMessages = currentSession.messages
+    setMessages(prev => mergeServerMessages(serverMessages, prev))
   }, [currentSession, isSending])
 
   // Auto-select most recent session when sessions are loaded
@@ -410,7 +412,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
     const userId = `temp-user-${Date.now()}`
     const aiPlaceholderId = `temp-ai-${Date.now()}`
     setMessages(prev => [
-      ...prev,
+      ...dropClientFailures(prev),
       { id: userId, type: 'human', content: message, timestamp: new Date().toISOString() },
       { id: aiPlaceholderId, type: 'ai', content: '', timestamp: new Date().toISOString() },
     ])
@@ -432,6 +434,9 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
           }
         : undefined
 
+    // Declared outside the try so the error path can keep what already streamed.
+    let accumulated = ''
+    let receivedFrame = false
     try {
       const apiUrl = await getApiUrl()
       const token = useAuthStore.getState().token
@@ -464,7 +469,6 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
       const reader = resp.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let accumulated = ''
       let reasoningPath = ''
       while (true) {
         const { value, done } = await reader.read()
@@ -482,6 +486,7 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
             else if (line.startsWith('data: ')) dataLine = line.slice(6)
           }
           if (!dataLine) continue
+          receivedFrame = true
           try {
             const data = JSON.parse(dataLine)
             if (eventName === 'status' && typeof data.step === 'string') {
@@ -523,12 +528,23 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
         setMessages(prev =>
           prev.filter(m => !(m.id === aiPlaceholderId && !m.content))
         )
-        toast.info('Generation stopped')
-      } else {
-        console.warn('streaming failed, falling back to non-streaming:', err)
-        // Drop the placeholder bubbles and fall back to the existing path.
+        toast.info(t('chat.generationStopped'))
+      } else if (!receivedFrame) {
+        // The stream never started (network error, non-2xx): the backend has not
+        // run the agent, so the non-streaming path is a first attempt, not a re-run.
+        console.warn('streaming failed before any frame, falling back to non-streaming:', err)
         setMessages(prev => prev.filter(m => m.id !== userId && m.id !== aiPlaceholderId))
         await sendMessage(message, modelOverride, domainFilter, verbosity)
+      } else {
+        // The agent already ran (possibly for minutes). Re-running it silently
+        // doubled the wait and could persist the turn twice — show the failure,
+        // keep the partial answer, and let the user Retry.
+        const detail = err instanceof Error ? err.message : String(err)
+        console.warn('streaming failed mid-answer:', err)
+        setMessages(prev =>
+          prev.map(m => (m.id === aiPlaceholderId ? { ...m, content: accumulated, error: detail } : m))
+        )
+        toast.error(t('chat.answerFailed'))
       }
     } finally {
       setIsSending(false)
@@ -538,8 +554,9 @@ export function useNotebookChat({ notebookId, sources, notes, contextSelections 
         abortControllerRef.current = null
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId, currentSession, notebookId, pendingModelOverride, queryClient, t, refetchCurrentSession])
+  // sources + contextSelections build source_ids: without them the callback kept
+  // sending the document scope from when it was first created.
+  }, [currentSessionId, currentSession, notebookId, pendingModelOverride, queryClient, t, refetchCurrentSession, sources, contextSelections, sendMessage])
 
   // Regenerate a specific assistant message
   const regenerateMessage = useCallback(async (

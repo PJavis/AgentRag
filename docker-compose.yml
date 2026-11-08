@@ -60,7 +60,15 @@ services:
   # bge-m3 auto-downloads from HF Hub into the tei_hf_cache volume on first
   # start (~2.2GB, one-time); local ./models/bge-m3 no longer needed for serving.
   # .env: EMBEDDING_PROVIDER=openai, EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1/
+  # Embeddings. The host-GPU setup runs TEI from deploy/tei.compose.yml
+  # (`make serve-embed`), which uses the same container name and port — so this
+  # copy is opt-in (profile bundled-tei; docker-compose.fullstack.yml enables it)
+  # instead of colliding on a bare `docker compose up`. It MUST serve the model
+  # the index was built with: e5-FT, mean pooling, 768-dim. It used to serve
+  # bge-m3 (1024-dim), which silently searched a different vector space; the api
+  # now refuses to start on a dimension mismatch (health/embedding_dims.py).
   tei:
+    profiles: ["bundled-tei"]
     image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
     container_name: agentrag-tei
     restart: unless-stopped
@@ -69,8 +77,8 @@ services:
     volumes:
       - tei_hf_cache:/data
     command:
-      - --model-id=BAAI/bge-m3
-      - --pooling=cls
+      - --model-id=dung6903/agentrag-embed-v1
+      - --pooling=mean
       - --max-batch-tokens=16384
     deploy:
       resources:

@@ -151,6 +151,15 @@ def _http(method: str, url: str, body: object | None = None, headers: dict | Non
         return status, raw.decode(errors="replace")[:300]
 
 
+def _api_headers(settings) -> dict:
+    """Root api routes require a bearer token once auth covers them:
+    AGENTRAG_API_TOKEN (JWT or legacy password), else OPEN_NOTEBOOK_PASSWORD."""
+    import os
+
+    token = os.environ.get("AGENTRAG_API_TOKEN") or settings.OPEN_NOTEBOOK_PASSWORD
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def _tcp(url: str, default_port: int) -> tuple[str, str]:
     parsed = urlparse(url if "://" in url else f"tcp://{url}")
     host, port = parsed.hostname or "127.0.0.1", parsed.port or default_port
@@ -188,7 +197,7 @@ def run_checks(settings, api_url: str, chat: bool, chat_question: str) -> list[C
     checks.append(_timed("config", config))
 
     def api():
-        status, body = _http("GET", f"{api_url}/health/providers")
+        status, body = _http("GET", f"{api_url}/health/providers", headers=_api_headers(settings))
         if status != 200:
             return FAIL, f"HTTP {status}: {str(body)[:160]}"
         down = [k for k, v in (body.get("providers") or {}).items() if v.get("reachable") is False]
@@ -288,7 +297,8 @@ def run_checks(settings, api_url: str, chat: bool, chat_question: str) -> list[C
     if chat:
         def chat_turn():
             status, body = _http("POST", f"{api_url}/chat", {
-                "question": chat_question, "conversation_title": "stack_monitor smoke"}, timeout=300)
+                "question": chat_question, "conversation_title": "stack_monitor smoke"},
+                headers=_api_headers(settings), timeout=300)
             if status != 200:
                 return FAIL, f"HTTP {status}: {str(body)[:160]}"
             return classify_chat_payload(body)

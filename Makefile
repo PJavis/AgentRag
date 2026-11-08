@@ -444,9 +444,11 @@ eval-embed:
 	  --test data/finetune/embed_test.jsonl \
 	  $(FT_GATE_ARGS)
 
+# The compose file lives in deploy/, so compose would read deploy/.env; pass the
+# repo .env so TEI_IMAGE applies here the same as in docker-compose.yml.
 .PHONY: serve-embed
 serve-embed:
-	docker compose -f deploy/tei.compose.yml --profile gpu up -d
+	docker compose -f deploy/tei.compose.yml $(if $(wildcard .env),--env-file .env) --profile gpu up -d
 	@echo "✅ TEI on :8080. Set in .env:"
 	@echo "    EMBEDDING_PROVIDER=openai"
 	@echo "    EMBEDDING_MODEL=$$(basename $(FT_OUT_EMBED))"

@@ -19,9 +19,15 @@
 services:
   tei-gpu:
     profiles: ["gpu"]
-    # cuda-latest = all-arch PTX build; required for Blackwell sm_120 (RTX 50xx).
-    # The pinned :1.5 / :1.7 images are sm_80 only and fail on this GPU.
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+    # cuda-1.9 = all-arch build (PTX), runs on Blackwell sm_120 (RTX 50xx) too.
+    # The pinned :1.5 / :1.7 images are sm_80 only and fail on that GPU.
+    # cuda-latest is NOT used: the 2026-04 build fails with
+    # CUDA_ERROR_NO_DEVICE on Windows driver 621 (CUDA 13.5) under WSL and
+    # silently falls back to CPU (~3 s per rerank instead of ~0.03 s).
+    # cuda-1.9 JIT-compiles its PTX on every start (~4-5 min on sm_120). On an
+    # RTX 50xx set TEI_IMAGE=ghcr.io/huggingface/text-embeddings-inference:120-1.9
+    # in .env (native sm_120 build, ready in ~35 s).
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cuda-1.9}
     container_name: agentrag-tei
     ports:
       - "8080:80"

@@ -29,7 +29,7 @@ Vietnamese-medical fine-tune of [intfloat/multilingual-e5-base](https://huggingf
 ```yaml
 services:
   tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
     command:
       - --model-id=dung6903/agentrag-embed-v1
       - --pooling=mean

@@ -54,6 +54,33 @@ async def vision_extract(
     await process_vision_job(job)
 
 
+async def enrich_segments(
+    ctx: dict,
+    *,
+    document_id: str,
+    title: str,
+    content_hash: str | None = None,
+    doc_key: str | None = None,
+    contextualize: bool = True,
+    raptor: bool = True,
+    parsed_cache_path: str | None = None,
+) -> dict:
+    """Contextual retrieval + RAPTOR for a document that is already searchable."""
+    from src.agentrag.ingestion.enrich_jobs import EnrichJob, process_enrich_job
+
+    return await process_enrich_job(
+        EnrichJob(
+            document_id=document_id,
+            title=title,
+            content_hash=content_hash,
+            doc_key=doc_key,
+            contextualize=contextualize,
+            raptor=raptor,
+            parsed_cache_path=parsed_cache_path,
+        )
+    )
+
+
 async def upload_ingest(
     ctx: dict,
     *,

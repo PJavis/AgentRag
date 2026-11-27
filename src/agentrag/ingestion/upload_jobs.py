@@ -23,6 +23,7 @@ import uuid
 from sqlalchemy.dialects.postgresql import insert
 
 from src.agentrag.adapter.db import adapter_notebook_sources
+from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Document
 
@@ -109,7 +110,11 @@ async def run_upload_ingest(
             logger.error("upload ingest: %s (is the staging dir shared with the worker?)", error_msg)
             return None
         async with semaphore if semaphore is not None else contextlib.nullcontext():
-            result = await ingest_folder(parent_dir, user_id=user_id)
+            result = await ingest_folder(
+                parent_dir,
+                user_id=user_id,
+                defer_enrichment=settings.INGEST_DEFER_ENRICHMENT,
+            )
         docs = result.get("documents", [])
         if not docs:
             logger.error("upload ingest returned no documents for %s", file_path)

@@ -545,6 +545,73 @@ class ElasticsearchStore:
             return []
         return out
 
+    async def fetch_leaf_segments(self, document_id: str) -> list[dict[str, Any]]:
+        """Raw leaf (node_level 0, non-image) segments of one document, each as
+        `{"_id": <es id>, **_source}`, ordered by position. Input for the
+        deferred enrichment job, which rewrites them in place by `_id`."""
+        query = {
+            "bool": {
+                "filter": [{"term": {"document_id": str(document_id)}}],
+                "must_not": [
+                    {"term": {"segment_type": "image"}},
+                    {"range": {"node_level": {"gt": 0}}},
+                ],
+            }
+        }
+        sort = [{"position": {"order": "asc", "missing": "_last"}}, {"_doc": {"order": "asc"}}]
+        out: list[dict[str, Any]] = []
+        search_after: list[Any] | None = None
+        try:
+            while True:
+                body: dict[str, Any] = {"size": 500, "query": query, "sort": sort}
+                if search_after is not None:
+                    body["search_after"] = search_after
+                response = await self.client.search(index=self.index_name, **body)
+                hits = response.get("hits", {}).get("hits", [])
+                out.extend({"_id": h["_id"], **h.get("_source", {})} for h in hits)
+                search_after = hits[-1].get("sort") if hits else None
+                if len(hits) < body["size"] or search_after is None:
+                    break
+        except ESNotFoundError:
+            return []
+        return out
+
+    async def update_segments(self, updates: list[tuple[str, dict[str, Any]]]) -> int:
+        """Partial-update segments by ES `_id`. Returns how many were missing
+        (purged by a concurrent re-ingest); any other bulk error raises."""
+        if not updates:
+            return 0
+        actions: list[dict[str, Any]] = []
+        for seg_id, fields in updates:
+            actions.append({"update": {"_index": self.index_name, "_id": seg_id}})
+            actions.append({"doc": fields})
+        response = await self.client.bulk(body=actions, refresh=True)
+        missing = 0
+        if response.get("errors"):
+            for item in response.get("items", []):
+                result = item.get("update", {})
+                if result.get("status") == 404:
+                    missing += 1
+                elif result.get("error"):
+                    raise RuntimeError(f"Elasticsearch segment update failed: {result['error']}")
+        return missing
+
+    async def delete_summary_nodes(self, document_id: str) -> int:
+        """Drop a document's RAPTOR nodes (node_level > 0) so a rebuild
+        replaces the tree instead of stacking a second one."""
+        try:
+            resp = await self.client.delete_by_query(
+                index=self.index_name,
+                body={"query": {"bool": {"filter": [
+                    {"term": {"document_id": str(document_id)}},
+                    {"range": {"node_level": {"gt": 0}}},
+                ]}}},
+                conflicts="proceed", refresh=True, ignore_unavailable=True,
+            )
+        except ESNotFoundError:
+            return 0
+        return int(resp.get("deleted", 0))
+
     async def sparse_search(
         self,
         query: str,

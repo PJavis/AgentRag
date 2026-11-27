@@ -67,7 +67,7 @@ LangGraph node sequence (`graph_service._build_graph`):
 validate → memory → chitchat_check
   ├─[chitchat]→ chitchat_answer → END
   └→ semantic_plan → bootstrap → decide
-                                  ├─[more]→ tool_exec → decide  (loop ≤ AGENT_MAX_STEPS)
+                                  ├─[more]→ tool_exec → decide  (AGENT_MAX_STEPS − 2 rounds; 0 at default 2)
                                   └─[done]→ assemble → answer → critique
    critique ─[grounded]→ ground → END
             └[not grounded]→ corrective_retrieve → critique  (≤ AGENT_CRITIQUE_MAX_RETRIES)
@@ -103,7 +103,7 @@ chỉ áp lên **bản prompt**, packed_context trả về vẫn giữ relevance
 
 | Key | Default | Mô tả |
 |---|---|---|
-| `AGENT_MAX_STEPS` | `4` | Số bước decide→tool tối đa mỗi request |
+| `AGENT_MAX_STEPS` | `2` | 2 = chỉ bootstrap search, không gọi decide; mỗi +1 thêm một vòng decide→tool (~3 s). Xem `config.py` cho A/B 2026-11-28 |
 | `AGENT_TOOL_TOP_K` | `5` | top_k mặc định khi LLM không chỉ định |
 | `AGENT_MAX_CONTEXT_CHUNKS` | `8` | Chunk-count cap (chỉ dùng khi token budget = 0) |
 | `AGENT_MAX_CONTEXT_TOKENS` | `6000` | Token-aware budget cho packed context (ưu tiên) |

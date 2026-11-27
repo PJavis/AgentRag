@@ -108,3 +108,14 @@ def test_compiled_graph_makes_one_decide_per_runnable_tool(monkeypatch):
         calls.update(decide=0, tool_exec=0)
         asyncio.run(gs._build_graph().ainvoke({"question": "q"}))
         assert (calls["decide"], calls["tool_exec"]) == expected, max_steps
+
+
+def test_default_runs_bootstrap_only(monkeypatch):
+    # 2026-11-28 A/B: the decide round added no gold passage on c3 and cost
+    # ~3 s/answer, so the default is bootstrap-only (no decide LLM call).
+    from src.agentrag.config import Settings
+
+    default = Settings.model_fields["AGENT_MAX_STEPS"].default
+    assert default == 2
+    monkeypatch.setattr(gs.settings, "AGENT_MAX_STEPS", default)
+    assert _walk([]) == (0, 0)

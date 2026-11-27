@@ -498,7 +498,9 @@ class AgentService:
             })
             seen_calls.add(self.knowledge.fingerprint_call("search_hybrid_kg", bootstrap_input))
 
-            for _ in range(max(settings.AGENT_MAX_STEPS - 1, 0)):
+            # Same budget as the graph: AGENT_MAX_STEPS - 2 decide→tool rounds
+            # after the bootstrap search (graph_service._decide_can_act).
+            for _ in range(max(settings.AGENT_MAX_STEPS - 2, 0)):
                 yield _sse("status", {"step": "decide"})
                 decision = await self._decide(question, document_title, tool_trace, chat_history, memory_context)
                 if decision.get("done"):

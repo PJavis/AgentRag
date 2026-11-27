@@ -45,14 +45,16 @@ async def _still_current(job: EnrichJob) -> bool:
         return doc is not None and doc.content_hash == job.content_hash
 
 
-def _doc_text(job: EnrichJob, leaves: list[dict[str, Any]]) -> str:
-    path = Path(job.parsed_cache_path) if job.parsed_cache_path else None
-    if path and path.exists():
-        return path.read_text(encoding="utf-8")
+def _doc_text(job: EnrichJob, leaves: list[dict[str, Any]]) -> tuple[str, bool]:
+    """(document text, whether it is the real parse)."""
+    if job.parsed_cache_path:
+        try:
+            return Path(job.parsed_cache_path).read_text(encoding="utf-8"), True
+        except OSError:
+            pass
     # Cache gone (worker restart, other host): the leaves in order are a close
-    # stand-in. The contextualize cache is keyed on doc_key + chunk hash, not
-    # on this text, so cached blurbs still hit.
-    return "\n\n".join(str(leaf.get("content") or "") for leaf in leaves)
+    # stand-in.
+    return "\n\n".join(str(leaf.get("content") or "") for leaf in leaves), False
 
 
 async def process_enrich_job(
@@ -64,7 +66,7 @@ async def process_enrich_job(
     is_current: Any = None,
 ) -> dict[str, Any]:
     """Returns a small report: status in {done, stale, empty, failed}."""
-    from src.agentrag.ingestion.pipeline import _build_and_index_raptor, _embed_input_for_chunk
+    from src.agentrag.ingestion.pipeline import _embed_input_for_chunk
 
     if es_store is None:
         from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
@@ -97,13 +99,19 @@ async def process_enrich_job(
         if job.contextualize:
             from src.agentrag.ingestion.contextualizer import Contextualizer
 
+            doc_text, real_parse = _doc_text(job, leaves)
             await Contextualizer(gateway).contextualize_chunks(
-                doc_text=_doc_text(job, leaves),
+                doc_text=doc_text,
                 chunks=leaves,
                 document_title=job.title,
-                doc_key=job.doc_key,
+                # Blurbs from the stand-in text must not be cached under the
+                # file's key, where a later real ingest would reuse them.
+                doc_key=job.doc_key if real_parse else None,
             )
             changed = [leaf for leaf in leaves if leaf.get("context_text")]
+            if not changed:
+                # Every LLM call failed (the contextualizer swallows them).
+                return _out("failed", error="no chunk contextualized", contextualized=0)
             if changed:
                 vectors = await embedder.embed([_embed_input_for_chunk(c) for c in changed])
                 for leaf, vec in zip(changed, vectors):
@@ -124,19 +132,23 @@ async def process_enrich_job(
         if job.raptor:
             from src.agentrag.ingestion.raptor import RaptorBuilder
 
-            if not await is_current(job):
-                return _out("stale")
-            current_ids = [s["_id"] for s in await es_store.fetch_leaf_segments(job.document_id)]
-            if current_ids != leaf_ids:
-                return _out("stale")
-            # Retried/duplicate job: replace the tree, never stack a second one.
-            await es_store.delete_summary_nodes(job.document_id)
             for leaf in leaves:
                 leaf.pop("_id", None)
-            report["raptor_summary_nodes"] = await _build_and_index_raptor(
-                RaptorBuilder(gateway, embedder), es_store, leaves, job.title,
-                document_id=job.document_id,
-            )
+            nodes = await RaptorBuilder(gateway, embedder).build(leaves, job.title)
+            report["raptor_summary_nodes"] = len(nodes)
+            if nodes:
+                # The build takes minutes. Write only if the document is still
+                # this generation (not deleted, not re-ingested): nodes under a
+                # dead document_id are never purged and surface in answers.
+                if not await is_current(job):
+                    return _out("stale")
+                current_ids = [s["_id"] for s in await es_store.fetch_leaf_segments(job.document_id)]
+                if current_ids != leaf_ids:
+                    return _out("stale")
+                # Replace the tree (retry / duplicate job), never stack a
+                # second one. An empty build keeps the old tree.
+                await es_store.delete_summary_nodes(job.document_id)
+                await es_store.index_segments(nodes, job.title, document_id=job.document_id)
         return _out("done")
     except Exception as exc:
         # The plain segments are indexed and searchable; only the enrichment

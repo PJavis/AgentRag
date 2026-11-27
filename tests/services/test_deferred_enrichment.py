@@ -40,7 +40,7 @@ class _Store:
         return 0
 
     async def index_segments(self, chunks, title, document_id=None):
-        self.indexed.extend(chunks)
+        self.indexed.extend((c, document_id) for c in chunks)
 
 
 class _Embedder:
@@ -85,8 +85,31 @@ async def _superseded(job):
     return False
 
 
+class _FakeRaptor:
+    nodes = [{"content": "summary", "embedding": [1.0], "node_level": 1}]
+    on_build = None
+
+    def __init__(self, gateway, embedder):
+        pass
+
+    async def build(self, leaves, title):
+        assert all("_id" not in leaf for leaf in leaves)  # ES ids never re-indexed as fields
+        if _FakeRaptor.on_build:
+            _FakeRaptor.on_build()
+        return [dict(n) for n in _FakeRaptor.nodes]
+
+
+def _patch_raptor(monkeypatch, nodes=None, on_build=None):
+    from src.agentrag.ingestion import raptor
+
+    monkeypatch.setattr(_FakeRaptor, "nodes", _FakeRaptor.nodes if nodes is None else nodes)
+    monkeypatch.setattr(_FakeRaptor, "on_build", on_build)
+    monkeypatch.setattr(raptor, "RaptorBuilder", _FakeRaptor)
+
+
 async def test_segments_are_contextualized_in_place(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline.settings, "CONTEXTUAL_CACHE_DIR", str(tmp_path / "ctx"))
+    _patch_raptor(monkeypatch)
     store, emb, gw = _Store(_leaves()), _Embedder(), _Gateway()
     job = _job(tmp_path)
     out = await process_enrich_job(job, es_store=store, embedder=emb, gateway=gw, is_current=_current)
@@ -98,8 +121,10 @@ async def test_segments_are_contextualized_in_place(tmp_path, monkeypatch):
     assert all(u[1]["context_text"] == "ctx" for u in store.updates)
     assert emb.seen == ["ctx\n\nc0", "ctx\n\nc1"]
     assert store.updates[0][1]["embedding"] == [float(len("ctx\n\nc0"))]
-    # RAPTOR replaces any earlier tree instead of stacking a second one.
+    # RAPTOR replaces any earlier tree instead of stacking a second one, and
+    # its nodes carry the document id (delete-by-id must reach them).
     assert store.deleted_trees == 1
+    assert [(c["content"], d) for c, d in store.indexed] == [("summary", job.document_id)]
     assert not (tmp_path / "doc.enrich.txt").exists()
 
 
@@ -123,6 +148,7 @@ async def test_segments_purged_mid_run_stop_before_raptor(tmp_path, monkeypatch)
 
 async def test_reindexed_leaves_stop_raptor(tmp_path, monkeypatch):
     # Same doc re-populated (failed/skeleton path keeps id + hash) → new ES ids.
+    _patch_raptor(monkeypatch)
     store = _Store(_leaves(), refetch=[{"_id": "new0"}, {"_id": "new1"}])
     out = await process_enrich_job(_job(tmp_path, contextualize=False), es_store=store,
                                    embedder=_Embedder(), gateway=_Gateway(), is_current=_current)
@@ -137,11 +163,105 @@ async def test_failure_keeps_document_searchable_and_cleans_cache(tmp_path):
     assert not (tmp_path / "doc.enrich.txt").exists()
 
 
-async def test_raptor_only_job_uses_indexed_embeddings(tmp_path):
+async def test_raptor_only_job_uses_indexed_embeddings(tmp_path, monkeypatch):
+    _patch_raptor(monkeypatch)
     store, gw = _Store(_leaves()), _Gateway()
     out = await process_enrich_job(_job(tmp_path, contextualize=False), es_store=store,
                                    embedder=_Embedder(), gateway=gw, is_current=_current)
     assert out["status"] == "done" and not store.updates and store.deleted_trees == 1
+
+
+async def test_document_deleted_during_raptor_build_gets_no_nodes(tmp_path, monkeypatch):
+    # Review finding: nodes written under a dead document_id are never purged.
+    state = {"current": True}
+    _patch_raptor(monkeypatch, on_build=lambda: state.update(current=False))
+
+    async def is_current(job):
+        return state["current"]
+
+    store = _Store(_leaves())
+    out = await process_enrich_job(_job(tmp_path, contextualize=False), es_store=store,
+                                   embedder=_Embedder(), gateway=_Gateway(), is_current=is_current)
+    assert out["status"] == "stale"
+    assert not store.indexed and store.deleted_trees == 0
+
+
+async def test_empty_rebuild_keeps_the_old_tree(tmp_path, monkeypatch):
+    _patch_raptor(monkeypatch, nodes=[])
+    store = _Store(_leaves())
+    out = await process_enrich_job(_job(tmp_path, contextualize=False), es_store=store,
+                                   embedder=_Embedder(), gateway=_Gateway(), is_current=_current)
+    assert out["status"] == "done" and store.deleted_trees == 0 and not store.indexed
+
+
+async def test_all_llm_calls_failing_is_not_done(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline.settings, "CONTEXTUAL_CACHE_DIR", str(tmp_path / "ctx"))
+
+    class Down:
+        async def text_response(self, **kw):
+            raise RuntimeError("llm down")
+
+    store = _Store(_leaves())
+    out = await process_enrich_job(_job(tmp_path), es_store=store, embedder=_Embedder(),
+                                   gateway=Down(), is_current=_current)
+    assert out["status"] == "failed" and not store.updates
+
+
+async def test_stand_in_text_is_not_cached_under_the_file_key(tmp_path, monkeypatch):
+    from src.agentrag.ingestion import contextualizer
+
+    seen = {}
+
+    class Spy:
+        def __init__(self, gateway):
+            pass
+
+        async def contextualize_chunks(self, doc_text, chunks, document_title, doc_key=None):
+            seen["doc_key"] = doc_key
+            for c in chunks:
+                c["context_text"] = "ctx"
+            return chunks
+
+    monkeypatch.setattr(contextualizer, "Contextualizer", Spy)
+    job = _job(tmp_path, raptor=False, parsed_cache_path=str(tmp_path / "gone.txt"))
+    await process_enrich_job(job, es_store=_Store(_leaves()), embedder=_Embedder(),
+                             gateway=_Gateway(), is_current=_current)
+    assert seen["doc_key"] is None
+    await process_enrich_job(_job(tmp_path, raptor=False), es_store=_Store(_leaves()),
+                             embedder=_Embedder(), gateway=_Gateway(), is_current=_current)
+    assert seen["doc_key"] == "K"
+
+
+class _Client:
+    def __init__(self, response):
+        self.response = response
+        self.body = None
+
+    async def bulk(self, body, refresh):
+        self.body = body
+        return self.response
+
+
+async def test_update_segments_counts_missing_and_raises_on_other_errors():
+    import pytest
+
+    from src.agentrag.ingestion.stores.elasticsearch_store import ElasticsearchStore
+
+    store = ElasticsearchStore.__new__(ElasticsearchStore)
+    store.index_name = "segs"
+    store.client = _Client({"errors": True, "items": [
+        {"update": {"status": 404, "error": {"type": "document_missing_exception"}}},
+        {"update": {"status": 200}},
+    ]})
+    assert await store.update_segments([("a", {"x": 1}), ("b", {"x": 2})]) == 1
+    assert store.client.body[0] == {"update": {"_index": "segs", "_id": "a"}}
+    assert store.client.body[1] == {"doc": {"x": 1}}
+
+    store.client = _Client({"errors": True, "items": [
+        {"update": {"status": 400, "error": {"type": "mapper_parsing_exception"}}},
+    ]})
+    with pytest.raises(RuntimeError):
+        await store.update_segments([("a", {"x": 1})])
 
 
 def test_only_uploads_defer():
@@ -157,7 +277,9 @@ def test_only_uploads_defer():
 
 def test_pipeline_skips_inline_work_when_deferring():
     src = inspect.getsource(pipeline.ingest_folder)
-    assert 'defer = defer_enrichment and mode == "async"' in src
+    assert 'defer_mode = defer_enrichment and mode == "async"' in src
+    assert "defer = defer_mode and source_type not in _IMAGE_SOURCE_TYPES" in src
+    assert 'f"{doc_id}.enrich.txt"' in src
     assert src.index("elif want_contextualize and defer:") < src.index("elif want_contextualize:")
     assert src.index("if want_raptor and defer:") < src.index("elif want_raptor:")
     assert '"enrich_segments"' in src

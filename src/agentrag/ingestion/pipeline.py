@@ -153,7 +153,7 @@ async def ingest_folder(
         `enrich_segments` job instead of ahead of "searchable".
     """
     mode = graph_ingest_mode or settings.STRUCTMEM_INGEST_MODE
-    defer = defer_enrichment and mode == "async"
+    defer_mode = defer_enrichment and mode == "async"
 
     connector = FolderConnector(folder_path)
     documents = connector.list_documents()
@@ -352,6 +352,9 @@ async def ingest_folder(
             # chunk BEFORE embedding so dense + BM25 see the contextualized text.
             await _mark_ingest_progress(doc["source_id"], 0, len(chunks_search))
             ctx_skip = _contextualize_skip_reason(source_type, len(chunks_search))
+            # Image-only documents are all image segments, which the deferred
+            # job does not read (vision adds those later) — keep them inline.
+            defer = defer_mode and source_type not in _IMAGE_SOURCE_TYPES
             want_contextualize = settings.CONTEXTUAL_RETRIEVAL_ENABLED and not ctx_skip
             # A summary tree over table rows is not useful, and on a big
             # workbook it is hundreds more LLM calls.
@@ -566,9 +569,9 @@ async def ingest_folder(
                     try:
                         _cache_dir = Path(settings.STRUCTMEM_CACHE_DIR) / "parsed"
                         _cache_dir.mkdir(parents=True, exist_ok=True)
-                        _f = _cache_dir / (
-                            hashlib.sha256(content.encode()).hexdigest() + ".enrich.txt"
-                        )
+                        # Per document: two uploads with the same text must
+                        # not share (and delete) one file.
+                        _f = _cache_dir / f"{doc_id}.enrich.txt"
                         _f.write_text(content, encoding="utf-8")
                         enrich_cache_path = str(_f)
                     except Exception:

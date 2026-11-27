@@ -143,12 +143,17 @@ async def ingest_folder(
     graph_ingest_mode: Literal["sync", "async"] | None = None,
     user_id: str | None = None,
     only: set[str] | None = None,
+    defer_enrichment: bool = False,
 ) -> dict[str, Any]:
     """
     Ingest thư mục: hỗ trợ .md, .pdf, .docx, .xlsx, .xls, .csv
     graph_ingest_mode: override env STRUCTMEM_INGEST_MODE (sync = chờ Graphiti xong; async = hàng đợi).
+    defer_enrichment: (async mode only) index plain chunks, mark the document
+        searchable, and run contextual retrieval + RAPTOR in the background
+        `enrich_segments` job instead of ahead of "searchable".
     """
     mode = graph_ingest_mode or settings.STRUCTMEM_INGEST_MODE
+    defer = defer_enrichment and mode == "async"
 
     connector = FolderConnector(folder_path)
     documents = connector.list_documents()
@@ -347,10 +352,16 @@ async def ingest_folder(
             # chunk BEFORE embedding so dense + BM25 see the contextualized text.
             await _mark_ingest_progress(doc["source_id"], 0, len(chunks_search))
             ctx_skip = _contextualize_skip_reason(source_type, len(chunks_search))
+            want_contextualize = settings.CONTEXTUAL_RETRIEVAL_ENABLED and not ctx_skip
+            # A summary tree over table rows is not useful, and on a big
+            # workbook it is hundreds more LLM calls.
+            want_raptor = settings.RAPTOR_ENABLED and source_type not in _EXCEL_SOURCE_TYPES
             if settings.CONTEXTUAL_RETRIEVAL_ENABLED and ctx_skip:
                 report["contextualize_skipped"] = ctx_skip
                 logger.info("contextualize skipped for %r: %s", doc["title"], ctx_skip)
-            elif settings.CONTEXTUAL_RETRIEVAL_ENABLED:
+            elif want_contextualize and defer:
+                report["contextualize"] = "deferred"
+            elif want_contextualize:
                 t0 = time.perf_counter()
                 from src.agentrag.ingestion.contextualizer import Contextualizer
                 from src.agentrag.services.llm_gateway import LLMGateway
@@ -415,9 +426,9 @@ async def ingest_folder(
                     chunks_search, doc["title"], document_id=str(doc_id)
                 )
                 timings["elasticsearch_ms"] = (time.perf_counter() - t0) * 1000
-                # A summary tree over table rows is not useful, and on a big
-                # workbook it is hundreds more LLM calls.
-                if settings.RAPTOR_ENABLED and source_type not in _EXCEL_SOURCE_TYPES:
+                if want_raptor and defer:
+                    report["raptor"] = "deferred"
+                elif want_raptor:
                     t0 = time.perf_counter()
                     from src.agentrag.ingestion.raptor import RaptorBuilder
                     from src.agentrag.services.llm_gateway import LLMGateway
@@ -546,6 +557,39 @@ async def ingest_folder(
                         title=doc["title"],
                         parsed_cache_path=parsed_cache_path,
                     )
+
+                if defer and status != "retry" and (want_contextualize or want_raptor):
+                    # Own copy of the parsed text: graph_ingest deletes its
+                    # cache file when it finishes, possibly before this job
+                    # reads it.
+                    enrich_cache_path: str | None = None
+                    try:
+                        _cache_dir = Path(settings.STRUCTMEM_CACHE_DIR) / "parsed"
+                        _cache_dir.mkdir(parents=True, exist_ok=True)
+                        _f = _cache_dir / (
+                            hashlib.sha256(content.encode()).hexdigest() + ".enrich.txt"
+                        )
+                        _f.write_text(content, encoding="utf-8")
+                        enrich_cache_path = str(_f)
+                    except Exception:
+                        pass  # the job falls back to the indexed segments
+                    try:
+                        await get_pool().enqueue_job(
+                            "enrich_segments",
+                            document_id=str(doc_id),
+                            title=doc["title"],
+                            content_hash=doc.get("content_hash"),
+                            doc_key=doc.get("source_bytes_sha"),
+                            contextualize=want_contextualize,
+                            raptor=want_raptor,
+                            parsed_cache_path=enrich_cache_path,
+                        )
+                        report["enrich_status"] = "queued"
+                    except Exception as exc:
+                        # Already searchable on plain chunks: losing the
+                        # enrichment must not mark the document failed.
+                        logger.warning("enrich_segments enqueue failed for %r: %s", doc["title"], exc)
+                        report["enrich_status"] = "enqueue_failed"
 
                 # Queue vision describe job nếu async + có pending images
                 if _pending_vision_records:

@@ -362,6 +362,14 @@ class Settings(BaseSettings):
     #: chunks far into a huge document get context from the wrong part anyway.
     CONTEXTUAL_MAX_CHUNKS: int = 1500
 
+    #: UI uploads: index plain chunks first so the document is chattable in
+    #: minutes, then run contextual retrieval + RAPTOR as a background
+    #: `enrich_segments` job that rewrites the segments in place. Inline
+    #: contextualize was ~1 LLM call per chunk ahead of "searchable". Only
+    #: uploads defer — CLI/eval ingest stays inline so a benchmark never
+    #: queries half-enriched chunks. Needs STRUCTMEM_INGEST_MODE=async.
+    INGEST_DEFER_ENRICHMENT: bool = True
+
     # ── WS2: RAPTOR summary layer ────────────────────────────────────────────
     RAPTOR_ENABLED: bool = False
     RAPTOR_MAX_LEVELS: int = 3

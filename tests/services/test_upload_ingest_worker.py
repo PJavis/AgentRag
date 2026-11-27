@@ -123,7 +123,7 @@ async def test_success_links_notebooks_and_cleans_staging(monkeypatch, tmp_path)
     linked = {}
     events = []
 
-    async def fake_ingest(folder, user_id):
+    async def fake_ingest(folder, user_id, **_kw):
         assert folder == str(stage)
         return {"documents": [{"document_id": str(doc_id), "segments_indexed": 4}]}
 
@@ -200,7 +200,7 @@ async def test_timeout_cancellation_marks_failed_and_keeps_staging(monkeypatch, 
     (stage / "a.pdf").write_bytes(b"%PDF")
     marked, events = {}, []
 
-    async def slow_ingest(folder, user_id):
+    async def slow_ingest(folder, user_id, **_kw):
         raise asyncio.CancelledError()
 
     async def fake_mark(doc_id, error):
@@ -233,7 +233,7 @@ async def test_skeleton_deleted_while_queued_is_not_resurrected(monkeypatch, tmp
     (stage / "a.pdf").write_bytes(b"%PDF")
     called = []
 
-    async def fake_ingest(folder, user_id):
+    async def fake_ingest(folder, user_id, **_kw):
         called.append(folder)
         return {"documents": []}
 
@@ -271,7 +271,7 @@ async def test_new_layout_ingests_the_staging_root(monkeypatch, tmp_path):
     (stage / str(doc_id) / "a.pdf").write_bytes(b"%PDF")
     seen = {}
 
-    async def fake_ingest(folder, user_id):
+    async def fake_ingest(folder, user_id, **_kw):
         seen["folder"] = folder
         from src.agentrag.ingestion.connectors.folder import FolderConnector
 

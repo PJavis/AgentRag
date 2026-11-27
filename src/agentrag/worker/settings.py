@@ -16,6 +16,7 @@ from src.agentrag.config import settings as app_settings
 from src.agentrag.worker.functions import (
     chat_memory,
     consolidate,
+    enrich_segments,
     graph_ingest,
     upload_ingest,
     vision_extract,
@@ -43,7 +44,9 @@ async def _on_startup(ctx: dict) -> None:
 
 
 class WorkerSettings:
-    functions = [graph_ingest, consolidate, chat_memory, vision_extract, upload_ingest]
+    functions = [
+        graph_ingest, consolidate, chat_memory, vision_extract, upload_ingest, enrich_segments,
+    ]
     on_startup = _on_startup
     redis_settings = RedisSettings.from_dsn(
         app_settings.REDIS_URL or "redis://127.0.0.1:6379/0"

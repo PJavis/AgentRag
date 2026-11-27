@@ -187,7 +187,14 @@ class Settings(BaseSettings):
     #: at floor 0.6: out-of-corpus refusal_rate 0→0.467, hedged_cited 0.533→0, in-corpus flat.
     ANSWER_ABSTAIN_ON_THIN_CONTEXT: bool = True
 
-    AGENT_MAX_STEPS: int = 3   # serial decide→tool round-trips; lower = faster p50
+    #: Retrieval rounds per request: 1 bootstrap search + (AGENT_MAX_STEPS - 2)
+    #: decide→tool rounds. 2 = bootstrap only, no decide LLM call. Lowered from
+    #: 3 on 2026-11-28: on the c3 set (41 q, temp 0) the decide round added no
+    #: gold passage to the packed context (45/46 both ways) and no measurable
+    #: answer change, while costing ~3 s/answer (mean 6.9 s → 3.8 s). The local
+    #: 3B decide mostly re-issued the original question. Raise it if a stronger
+    #: decide model is routed in and an A/B shows it earns the round.
+    AGENT_MAX_STEPS: int = 2
     #: Per-request timeout (seconds) for every AsyncOpenAI client (make_async_openai).
     #: Guards against a stalled provider connection hanging a call indefinitely — a
     #: 42-min agent.chat hang was observed under gemini high-demand (2026-06-26). On

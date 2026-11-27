@@ -442,13 +442,38 @@ def _route_chitchat(state: ChatState) -> str:
     return "chitchat_answer" if state.get("is_chitchat") else "semantic_plan"
 
 
+def _step_limit() -> int:
+    return max(settings.AGENT_MAX_STEPS - 1, 1)
+
+
 def _route_decide(state: ChatState) -> str:
     decision = state.get("decide_decision") or {}
     if decision.get("done"):
         return "assemble"
-    if state.get("step_count", 0) >= max(settings.AGENT_MAX_STEPS - 1, 1):
+    if state.get("step_count", 0) >= _step_limit():
         return "assemble"
     return "tool_exec"
+
+
+def _decide_can_act(state: ChatState) -> bool:
+    """A decide call is only worth its LLM round-trip (~2 s on the local 3B)
+    if the tool it picks can still run. `decide` bumps step_count and
+    `_route_decide` sends step_count >= limit straight to assemble, so the
+    call that reaches the limit only had its tool choice thrown away. (Its one
+    other effect — a `done` decision carrying an `answer` field short-cuts
+    answer_node — is not something the decide prompt asks for, and would
+    answer from the 3B model instead of the answer model.)"""
+    return state.get("step_count", 0) + 1 < _step_limit()
+
+
+def _route_after_bootstrap(state: ChatState) -> str:
+    return "decide" if _decide_can_act(state) else "assemble"
+
+
+def _route_after_tool(state: ChatState) -> str:
+    # A duplicate call (tool_exec marks it done) still goes back to decide
+    # when steps remain: the next decide can pick a different query.
+    return "decide" if _decide_can_act(state) else "assemble"
 
 
 def _route_critique(state: ChatState) -> str:
@@ -487,10 +512,12 @@ def _build_graph():
                             {"chitchat_answer": "chitchat_answer", "semantic_plan": "semantic_plan"})
     g.add_edge("chitchat_answer", END)
     g.add_edge("semantic_plan", "bootstrap")
-    g.add_edge("bootstrap", "decide")
+    g.add_conditional_edges("bootstrap", _route_after_bootstrap,
+                            {"decide": "decide", "assemble": "assemble"})
     g.add_conditional_edges("decide", _route_decide,
                             {"tool_exec": "tool_exec", "assemble": "assemble"})
-    g.add_edge("tool_exec", "decide")
+    g.add_conditional_edges("tool_exec", _route_after_tool,
+                            {"decide": "decide", "assemble": "assemble"})
     g.add_edge("assemble", "answer")
     g.add_edge("answer", "critique")
     g.add_conditional_edges("critique", _route_critique,

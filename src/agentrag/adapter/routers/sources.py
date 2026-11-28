@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from src.agentrag.adapter.db import adapter_notebook_sources
 from src.agentrag.adapter.models import SourceResponse, SourceStatusResponse
 from src.agentrag.adapter.upload_dedupe import find_existing_document, hash_bytes
+from src.agentrag.ingestion.connectors.folder import content_cache_key
 from src.agentrag.config import settings
 from src.agentrag.database import AsyncSessionLocal
 from src.agentrag.database.models import Document, Project, Segment
@@ -294,11 +295,20 @@ async def create_source(
     else:
         raise HTTPException(400, "URL ingestion not yet supported")
 
-    content_hash = hash_bytes(raw)
+    # Same key the ingest stores as Document.content_hash (bytes + parse
+    # settings for PDFs), so the skeleton row below matches its ingest.
+    content_hash = content_cache_key(raw, os.path.splitext(filename)[1])
+    bytes_sha = hash_bytes(raw)
+    owner_uuid: uuid.UUID | None = None
+    if user_id and user_id != "anonymous":
+        try:
+            owner_uuid = uuid.UUID(str(user_id))
+        except (ValueError, TypeError):
+            owner_uuid = None
 
-    # Dedupe: identical bytes already ingested → link + return real doc.
+    # Dedupe: the same owner already has these bytes indexed → link + return it.
     if settings.UPLOAD_DEDUPE_BY_HASH:
-        existing = await find_existing_document(content_hash)
+        existing = await find_existing_document(bytes_sha, owner_uuid)
         if existing is not None:
             async with AsyncSessionLocal() as session:
                 await link_to_notebooks(session, existing.id, all_notebooks)
@@ -339,13 +349,7 @@ async def create_source(
             proj = Project(name="Default Project", description="Auto created")
             session.add(proj)
             await session.flush()
-        # S6 — owner tagging (NULL for anonymous bucket)
-        owner_uuid: uuid.UUID | None = None
-        if user_id and user_id != "anonymous":
-            try:
-                owner_uuid = uuid.UUID(str(user_id))
-            except (ValueError, TypeError):
-                owner_uuid = None
+        # S6 — owner tagging (NULL for anonymous bucket): owner_uuid above
         skeleton = Document(
             id=doc_uuid,
             project_id=proj.id,
@@ -355,6 +359,7 @@ async def create_source(
             # = FolderConnector.source_id for <staging>/<doc id>/<filename>
             source_id=f"{doc_uuid}/{filename}",
             content_hash=content_hash,
+            source_bytes_sha=bytes_sha,
             graph_synced=False,
             graph_status="pending",
         )

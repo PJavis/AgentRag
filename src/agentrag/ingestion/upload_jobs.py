@@ -114,6 +114,9 @@ async def run_upload_ingest(
                 parent_dir,
                 user_id=user_id,
                 defer_enrichment=settings.INGEST_DEFER_ENRICHMENT,
+                # The skeleton already holds this content; the upload's own
+                # dedupe (UPLOAD_DEDUPE_BY_HASH) decided to ingest it anyway.
+                skip_content_duplicates=False,
             )
         docs = result.get("documents", [])
         if not docs:

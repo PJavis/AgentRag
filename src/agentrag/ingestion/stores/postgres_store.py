@@ -32,7 +32,13 @@ class PostgresStore:
             if existing_docs:
                 # 2. Kiểm tra xem có bản ghi nào trùng khớp content_hash không
                 for doc in existing_docs:
-                    if doc.content_hash == doc_data["content_hash"]:
+                    # A pending/parsing row under this source_id is the upload
+                    # skeleton: populate it whatever its hash says. Its hash is
+                    # computed in the api process; if the api's parse settings
+                    # differ from the worker's, a hash mismatch used to delete
+                    # the skeleton and mint a new id (and drop its user_id).
+                    if (doc.content_hash == doc_data["content_hash"]
+                            or doc.graph_status in ("pending", "parsing")):
                         # Skeleton (pre-created via /sources upload) → populate it
                         # instead of creating a new doc. "parsing" = a skeleton the
                         # pipeline reports progress on (pipeline._mark_ingest_progress).
@@ -49,6 +55,8 @@ class PostgresStore:
                             )
                             doc.title = doc_data.get("title") or doc.title
                             doc.source_type = doc_data.get("source_type") or doc.source_type
+                            doc.content_hash = doc_data["content_hash"]
+                            doc.source_bytes_sha = doc_data.get("source_bytes_sha") or getattr(doc, "source_bytes_sha", None)
                             doc.graph_status = "pending"
                             doc.graph_synced = False
                             doc.graph_last_error = None
@@ -88,6 +96,7 @@ class PostgresStore:
                 source_id=doc_data["source_id"],
                 title=doc_data["title"],
                 content_hash=doc_data["content_hash"],
+                source_bytes_sha=doc_data.get("source_bytes_sha"),
                 graph_synced=False,
                 graph_status="pending",
                 graph_last_error=None,

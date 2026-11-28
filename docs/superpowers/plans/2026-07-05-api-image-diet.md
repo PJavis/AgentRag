@@ -161,8 +161,6 @@ directly (no uv in runtime image). CUDA torch kept (GPU-ready image)."
 git push
 gh pr create --base master --title "build: api image diet — multi-stage Dockerfile (25.7GB -> ~9GB)" --body "$(cat <<'EOF'
 Multi-stage Dockerfile per docs/superpowers/specs/2026-07-05-api-image-diet-design.md. Builder owns uv/compilers/caches; runtime = slim + venv + source. No pyc, no uv binary in runtime; worker compose command calls arq directly. CUDA torch kept. Local verified: image ~9GB, imports/gunicorn/arq/health all green.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```

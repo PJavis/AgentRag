@@ -167,6 +167,8 @@ async def _indexed_duplicate_of(source_bytes_sha: str | None, source_id: str) ->
                 Document.source_bytes_sha == source_bytes_sha,
                 Document.user_id.is_(None),
                 exists().where(Segment.document_id == Document.id),
+                Document.graph_status.is_distinct_from("pending"),
+                Document.graph_status.is_distinct_from("parsing"),
             )
             .order_by(Document.created_at)
             .limit(1)

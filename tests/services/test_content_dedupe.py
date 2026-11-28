@@ -173,3 +173,109 @@ def test_backfill_finds_folder_and_upload_originals(tmp_path):
     paths = _candidate_paths(tmp_path, "D", "abc.pdf")
     assert tmp_path / "abc.pdf" in paths and tmp_path / "D.pdf" in paths
     assert _candidate_paths(tmp_path, "D", None) == []
+
+
+def test_backfill_trusts_only_an_unchanged_file(tmp_path, monkeypatch):
+    # Review: hashing an edited file would group a stale document with a
+    # current copy, and the cleanup could keep the stale one.
+    import datetime as dt
+    import os
+
+    from src.agentrag.ingestion.dedupe_corpus import _file_is_what_was_ingested
+
+    f = tmp_path / "a.md"
+    f.write_bytes(b"v1")
+    key = folder.content_cache_key(b"v1", ".md")
+    now = dt.datetime.now(dt.timezone.utc)
+    assert _file_is_what_was_ingested(f, key, None)  # ingest key still matches
+    old = now - dt.timedelta(days=1)
+    os.utime(f, (old.timestamp() - 60, old.timestamp() - 60))
+    assert _file_is_what_was_ingested(f, "stale-settings-key", old)  # untouched since ingest
+    f.write_bytes(b"v2")  # edited after ingest (mtime = now)
+    assert not _file_is_what_was_ingested(f, "stale-settings-key", old)
+    assert not _file_is_what_was_ingested(f, None, None)
+
+
+def test_dedupe_lookups_require_a_searchable_copy(monkeypatch):
+    import asyncio
+
+    from src.agentrag.adapter import upload_dedupe
+
+    sess = _patch_session(monkeypatch, upload_dedupe, [None])
+    asyncio.run(upload_dedupe.find_existing_document("abc", None))
+    sess2 = _patch_session(monkeypatch, pipeline, [None, None])
+    asyncio.run(pipeline._indexed_duplicate_of("abc", "new.pdf"))
+    for q in (sess.sql[0], sess2.sql[1]):
+        assert "documents.graph_status IS DISTINCT FROM 'pending'" in q
+        assert "documents.graph_status IS DISTINCT FROM 'parsing'" in q
+
+
+class _Doc:
+    def __init__(self, status, content_hash, id_="d"):
+        self.graph_status = status
+        self.content_hash = content_hash
+        self.id = id_
+
+
+def test_skeleton_populated_despite_hash_drift_but_not_an_inflight_run(monkeypatch):
+    """Upload skeleton (pending, no segments) under the same source_id is
+    populated even when the api computed a different hash; a pending row that
+    already has segments (another run) is not hijacked on a mismatch."""
+    import asyncio
+
+    from src.agentrag.ingestion.stores.postgres_store import PostgresStore
+
+    async def run(existing, has_segments):
+        store = PostgresStore()
+
+        async def _has(_s, _id):
+            return has_segments
+
+        monkeypatch.setattr(PostgresStore, "_has_segments", staticmethod(_has))
+        decided = {}
+
+        class _R:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return existing
+
+        class _S:
+            def add(self, obj):
+                decided.setdefault("added", []).append(obj)
+
+            async def execute(self, stmt):
+                return _R()
+
+            async def flush(self):
+                pass
+
+            async def commit(self):
+                pass
+
+            async def rollback(self):
+                pass
+
+            async def delete(self, obj):
+                decided["deleted"] = obj
+
+        doc_id, status = await store.save_document_and_segments(
+            _S(), {"source_id": "s", "content_hash": "worker-key", "title": "t",
+                   "source_type": "pdf", "source_bytes_sha": "b"}, [], project_id="p")
+        return doc_id, status, decided
+
+    skel = _Doc("pending", "api-key", "SKEL")
+    doc_id, status, decided = asyncio.run(run([skel], has_segments=False))
+    assert (doc_id, status) == ("SKEL", "ingested") and "deleted" not in decided
+    assert skel.content_hash == "worker-key" and skel.source_bytes_sha == "b"
+
+    inflight = _Doc("pending", "older-key", "RUN")
+    _doc_id, _status, decided = asyncio.run(run([inflight], has_segments=True))
+    assert decided.get("deleted") is inflight  # old replace behaviour, not hijacked
+
+    # a "done" twin under the same source_id must not short-circuit the skeleton
+    done = _Doc("done", "worker-key", "DONE")
+    skel2 = _Doc("pending", "api-key", "SKEL2")
+    doc_id, status, _ = asyncio.run(run([done, skel2], has_segments=False))
+    assert (doc_id, status) == ("SKEL2", "ingested")

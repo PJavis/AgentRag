@@ -41,6 +41,11 @@ async def find_existing_document(source_bytes_sha: str, owner: uuid.UUID | None)
                 Document.source_bytes_sha == source_bytes_sha,
                 owner_clause,
                 exists().where(Segment.document_id == Document.id),
+                # Segments are saved before the ES index call; a row still
+                # pending/parsing may not be searchable (graph_status "failed"
+                # is the StructMem step — still searchable).
+                Document.graph_status.is_distinct_from("pending"),
+                Document.graph_status.is_distinct_from("parsing"),
             )
             .order_by(Document.created_at.desc())
             .limit(1)

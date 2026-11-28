@@ -11,7 +11,7 @@ passage crowd out everything else.
         python -m src.agentrag.ingestion.dedupe_corpus --backfill
     # 2. dry run: groups, which copy is kept, what goes
     ... python -m src.agentrag.ingestion.dedupe_corpus
-    # 3. back up the extra copies' ES segments, then delete them
+    # 3. back up the extra copies (ES docs + PG segments), then delete them
     ... python -m src.agentrag.ingestion.dedupe_corpus --apply --backup-dir /app/data/dedupe_backup
 
 Groups are (file bytes, owner): two users' copies of one file are separate
@@ -50,9 +50,23 @@ def _candidate_paths(root: Path, doc_id: str, source_id: str | None) -> list[Pat
     return paths
 
 
+def _file_is_what_was_ingested(path: Path, content_hash: str | None, ingested_at) -> bool:
+    """Only trust today's file for a row whose ingest it provably fed: its
+    ingest key still matches, or it has not been modified since the row was
+    written. An edited file would otherwise group a stale document with a
+    current copy, and the cleanup could keep the stale one."""
+    from src.agentrag.ingestion.connectors.folder import content_cache_key
+
+    if content_hash and content_cache_key(path.read_bytes(), path.suffix) == content_hash:
+        return True
+    if ingested_at is None:
+        return False
+    return path.stat().st_mtime <= ingested_at.timestamp()
+
+
 async def backfill(root: Path | None = None) -> tuple[int, int]:
-    """Set source_bytes_sha where it is NULL, from the original file. Returns
-    (filled, unresolved)."""
+    """Set source_bytes_sha where it is NULL, from the original file, when the
+    file is provably unchanged since ingest. Returns (filled, unresolved)."""
     from sqlalchemy import select, update
 
     from src.agentrag.database import AsyncSessionLocal
@@ -62,12 +76,13 @@ async def backfill(root: Path | None = None) -> tuple[int, int]:
     filled = unresolved = 0
     async with AsyncSessionLocal() as session:
         rows = (await session.execute(
-            select(Document.id, Document.source_id).where(Document.source_bytes_sha.is_(None))
+            select(Document.id, Document.source_id, Document.content_hash, Document.created_at)
+            .where(Document.source_bytes_sha.is_(None))
         )).all()
         for r in rows:
             found = next((p for p in _candidate_paths(root, str(r.id), r.source_id)
                           if p.is_file()), None)
-            if found is None:
+            if found is None or not _file_is_what_was_ingested(found, r.content_hash, r.created_at):
                 unresolved += 1
                 continue
             sha = hashlib.sha256(found.read_bytes()).hexdigest()
@@ -125,33 +140,39 @@ async def _documents() -> list[dict[str, Any]]:
     ]
 
 
-async def _backup_segments(es_store: Any, document_id: str, out_dir: Path) -> int:
-    """Every ES doc of one document (leaves, images, RAPTOR nodes, with
-    embeddings) as JSON lines `{"_id", "_source"}` — re-indexable with a bulk
-    `index` call."""
-    hits_out: list[dict[str, Any]] = []
-    search_after = None
-    while True:
-        body: dict[str, Any] = {
-            "size": 1000,
-            "query": {"term": {"document_id": document_id}},
-            "sort": [{"_doc": "asc"}],
-        }
-        if search_after is not None:
-            body["search_after"] = search_after
-        resp = await es_store.client.search(index=es_store.index_name, **body)
-        hits = resp.get("hits", {}).get("hits", [])
-        hits_out += [{"_id": h["_id"], "_source": h["_source"]} for h in hits]
-        if len(hits) < body["size"]:
-            break
-        search_after = hits[-1]["sort"]
+async def _backup(es_store: Any, session: Any, document_id: str, out_dir: Path) -> int:
+    """Write one document's ES docs (leaves, images, RAPTOR nodes, with
+    embeddings; `{"_id", "_source"}` lines, re-indexable with a bulk `index`)
+    and its Postgres segment rows. Raises when the capture is incomplete.
+    Not covered: the StructMem graph group and the image dir."""
+    from sqlalchemy import select
+
+    from src.agentrag.database.models import Segment
+
+    q = {"term": {"document_id": document_id}}
+    expected = (await es_store.client.count(index=es_store.index_name, query=q))["count"]
+    if expected > 10000:
+        raise RuntimeError(f"{expected} ES docs: too many for a one-page backup")
+    resp = await es_store.client.search(index=es_store.index_name, query=q, size=max(expected, 1))
+    hits = resp.get("hits", {}).get("hits", [])
+    if len(hits) != expected:
+        raise RuntimeError(f"ES backup captured {len(hits)} of {expected} docs")
     with (out_dir / f"{document_id}.es.jsonl").open("w", encoding="utf-8") as f:
-        for h in hits_out:
-            f.write(json.dumps(h, ensure_ascii=False) + "\n")
-    return len(hits_out)
+        for h in hits:
+            f.write(json.dumps({"_id": h["_id"], "_source": h["_source"]}, ensure_ascii=False) + "\n")
+    segs = (await session.execute(
+        select(Segment).where(Segment.document_id == uuid.UUID(document_id))
+    )).scalars().all()
+    with (out_dir / f"{document_id}.pg_segments.jsonl").open("w", encoding="utf-8") as f:
+        for seg in segs:
+            f.write(json.dumps({c.name: getattr(seg, c.name) for c in Segment.__table__.columns},
+                               ensure_ascii=False, default=str) + "\n")
+    return len(hits)
 
 
-async def apply(groups: list[Group], backup_dir: Path) -> dict[str, int]:
+async def apply(groups: list[Group], backup_dir: Path) -> dict[str, Any]:
+    """Back up, relink, delete — one copy at a time. Stops at the first copy
+    whose ES purge reports an error (its chunks would stay retrievable)."""
     from sqlalchemy import select
 
     from src.agentrag.adapter.db import adapter_notebook_sources
@@ -163,32 +184,50 @@ async def apply(groups: list[Group], backup_dir: Path) -> dict[str, int]:
 
     backup_dir.mkdir(parents=True, exist_ok=True)
     es = ElasticsearchStore()
-    stats = {"deleted": 0, "backed_up_segments": 0, "relinked": 0, "missing": 0}
+    stats: dict[str, Any] = {"deleted": 0, "backed_up_es_docs": 0, "relinked": 0,
+                             "skipped": [], "errors": []}
     manifest = backup_dir / "manifest.jsonl"
-    for g in groups:
-        for d in g.drop:
-            async with AsyncSessionLocal() as session:
-                row = await session.get(Document, uuid.UUID(d["id"]))
-                if row is None:
-                    stats["missing"] += 1
-                    continue
-                pg_row = {c.name: getattr(row, c.name) for c in Document.__table__.columns}
-                nbs = [str(n) for n in (await session.execute(
-                    select(adapter_notebook_sources.c.notebook_id)
-                    .where(adapter_notebook_sources.c.document_id == row.id)
-                )).scalars()]
-                # Keep the content reachable from every notebook the copy was in.
-                await link_to_notebooks(session, uuid.UUID(g.keep["id"]), nbs)
-                await session.commit()
-                stats["relinked"] += len(nbs)
-            n = await _backup_segments(es, d["id"], backup_dir)
-            stats["backed_up_segments"] += n
-            with manifest.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({"document": pg_row, "notebooks": nbs, "kept": g.keep["id"],
-                                    "es_segments": n}, ensure_ascii=False, default=str) + "\n")
-            await delete_document(uuid.UUID(d["id"]))
-            stats["deleted"] += 1
-    return stats
+    try:
+        for g in groups:
+            for d in g.drop:
+                try:
+                    async with AsyncSessionLocal() as session:
+                        row = await session.get(Document, uuid.UUID(d["id"]))
+                        keeper = await session.get(Document, uuid.UUID(g.keep["id"]))
+                        if row is None or keeper is None:
+                            stats["skipped"].append((d["id"], "copy or keeper gone"))
+                            continue
+                        # The plan came from a dry run; things may have moved.
+                        if row.graph_status in _IN_FLIGHT or keeper.graph_status in _IN_FLIGHT:
+                            stats["skipped"].append((d["id"], "ingest in flight"))
+                            continue
+                        pg_row = {c.name: getattr(row, c.name) for c in Document.__table__.columns}
+                        nbs = [str(n) for n in (await session.execute(
+                            select(adapter_notebook_sources.c.notebook_id)
+                            .where(adapter_notebook_sources.c.document_id == row.id)
+                        )).scalars()]
+                        n = await _backup(es, session, d["id"], backup_dir)
+                        # Keep the content reachable from every notebook the
+                        # copy was in (same owner: groups are per owner).
+                        await link_to_notebooks(session, keeper.id, nbs)
+                        await session.commit()
+                    with manifest.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps({"document": pg_row, "notebooks": nbs, "kept": g.keep["id"],
+                                            "es_docs": n}, ensure_ascii=False, default=str) + "\n")
+                    result = await delete_document(uuid.UUID(d["id"]))
+                    purge = (result or {}).get("purged")
+                    stats["backed_up_es_docs"] += n
+                    stats["relinked"] += len(nbs)
+                    stats["deleted"] += 1
+                    if isinstance(purge, str) and purge.startswith("error"):
+                        stats["errors"].append((d["id"], f"ES purge: {purge}"))
+                        return stats
+                except Exception as exc:  # keep going; report it
+                    logger.exception("dedupe: copy %s failed", d["id"])
+                    stats["errors"].append((d["id"], f"{type(exc).__name__}: {exc}"[:300]))
+        return stats
+    finally:
+        print(json.dumps(stats, default=str))
 
 
 async def _main(argv: list[str] | None = None) -> int:
@@ -206,7 +245,8 @@ async def _main(argv: list[str] | None = None) -> int:
     try:
         if args.backfill:
             filled, unresolved = await backfill()
-            print(f"source_bytes_sha filled for {filled} document(s); {unresolved} without a findable original")
+            print(f"source_bytes_sha filled for {filled} document(s); {unresolved} left NULL "
+                  "(no original found, or it changed since ingest)")
             return 0
         docs = await _documents()
         missing_sha = sum(1 for d in docs if not d["source_bytes_sha"])
@@ -228,8 +268,7 @@ async def _main(argv: list[str] | None = None) -> int:
             print("refusing: --apply needs --backup-dir")
             return 2
         stats = await apply(groups, args.backup_dir)
-        print(json.dumps(stats))
-        return 0
+        return 1 if stats["errors"] else 0
     finally:
         await close_shared_es_client()
 

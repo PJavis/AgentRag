@@ -596,6 +596,43 @@ class ElasticsearchStore:
                     raise RuntimeError(f"Elasticsearch segment update failed: {result['error']}")
         return missing
 
+    async def enrichment_counts(self, document_ids: list[str]) -> dict[str, dict[str, int]]:
+        """Per document: leaf segments, image segments, leaves carrying a
+        context_text, and RAPTOR summary nodes. Documents with no segments are
+        absent. A missing index raises: an empty answer would read as "nothing
+        to enrich"."""
+        if not document_ids:
+            return {}
+        leaf = {"bool": {"must_not": [
+            {"term": {"segment_type": "image"}},
+            {"range": {"node_level": {"gt": 0}}},
+        ]}}
+        body = {
+            "size": 0,
+            "query": {"terms": {"document_id": [str(d) for d in document_ids]}},
+            "aggs": {"docs": {
+                "terms": {"field": "document_id", "size": len(document_ids)},
+                "aggs": {
+                    "leaves": {"filter": leaf},
+                    "contextualized": {"filter": {"bool": {
+                        "filter": [leaf, {"exists": {"field": "context_text"}}],
+                    }}},
+                    "summaries": {"filter": {"range": {"node_level": {"gt": 0}}}},
+                    "images": {"filter": {"term": {"segment_type": "image"}}},
+                },
+            }},
+        }
+        resp = await self.client.search(index=self.index_name, **body)
+        return {
+            b["key"]: {
+                "leaves": b["leaves"]["doc_count"],
+                "images": b["images"]["doc_count"],
+                "contextualized": b["contextualized"]["doc_count"],
+                "summaries": b["summaries"]["doc_count"],
+            }
+            for b in resp.get("aggregations", {}).get("docs", {}).get("buckets", [])
+        }
+
     async def delete_summary_nodes(self, document_id: str) -> int:
         """Drop a document's RAPTOR nodes (node_level > 0) so a rebuild
         replaces the tree instead of stacking a second one."""

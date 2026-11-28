@@ -282,7 +282,7 @@ def test_pipeline_skips_inline_work_when_deferring():
     assert 'f"{doc_id}.enrich.txt"' in src
     assert src.index("elif want_contextualize and defer:") < src.index("elif want_contextualize:")
     assert src.index("if want_raptor and defer:") < src.index("elif want_raptor:")
-    assert '"enrich_segments"' in src
+    assert "await enqueue_enrich(" in src  # queues enrich_segments (enrich_sweep.py)
 
 
 def test_worker_registers_the_job():

@@ -126,6 +126,16 @@ def _should_drop_abstention_citations(answer: str, packed_context: list[dict[str
     return thin or gray
 
 
+# Same shape the UI links ([n] not followed by "(", i.e. not a markdown link).
+_CITATION_MARKER_RE = re.compile(r"[ \t]*\[\d{1,3}\](?!\()")
+
+
+def _strip_citation_markers(answer: str) -> str:
+    """Remove inline [n] markers. Used when the citations are dropped: the UI
+    links each [n] to citation n, so leftover markers become dead links."""
+    return _CITATION_MARKER_RE.sub("", answer or "")
+
+
 # Wording deliberately includes a canonical uncertainty marker ("không có thông
 # tin" / "no information") so _has_uncertainty + classify_refusal + the UI all
 # recognise this as a clean abstention, not a confident answer.

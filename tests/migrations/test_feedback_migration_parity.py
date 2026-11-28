@@ -16,8 +16,10 @@ def test_migration_covers_every_orm_column():
 
 
 def test_single_head_is_new_revision():
-    """The revision graph stays linear and the new revision is the sole head."""
+    """The revision graph stays linear: one head, and the feedback revision
+    sits in it (2026112801 source_bytes_sha was added on top)."""
     script = ScriptDirectory.from_config(Config("alembic.ini"))
-    assert script.get_heads() == ["2026062501"]  # get_heads() returns a list
+    assert script.get_heads() == ["2026112801"]  # get_heads() returns a list
+    assert script.get_revision("2026112801").down_revision == "2026062501"
     rev = script.get_revision("2026062501")
     assert rev.down_revision == "2026060501"

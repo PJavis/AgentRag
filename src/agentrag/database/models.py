@@ -47,6 +47,10 @@ class Document(Base):
     source_id = Column(String)
     title = Column(String, nullable=False)
     content_hash = Column(String(64))
+    #: sha256 of the source file's bytes. content_hash is the re-ingest key
+    #: (bytes + parse settings) and changes with every parse-setting change, so
+    #: duplicate detection keys on this instead. NULL = row predates it.
+    source_bytes_sha = Column(String(64), nullable=True, index=True)
     graph_synced = Column(Boolean, default=False)
     #: queued | parsing | searchable | enriching | done | done_partial | failed
     #: (NULL = bản ghi cũ trước migration). searchable+ = usable for chat.

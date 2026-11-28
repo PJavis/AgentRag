@@ -138,12 +138,52 @@ async def _title_shared(session: Any, title: str, document_id: Any) -> bool:
     return row.first() is not None
 
 
+async def _indexed_duplicate_of(source_bytes_sha: str | None, source_id: str) -> str | None:
+    """Id of a shared-corpus document holding the same file bytes under another
+    source_id, with segments; None means ingest the file.
+
+    Only for a source_id never ingested before: an existing one always goes
+    through the normal replace path, or editing a file into a copy of a
+    sibling would keep serving its old content. Shared corpus only (user_id
+    NULL — folder ingest never sets an owner): a user's private upload must
+    not make the shared copy disappear. A copy without segments (failed
+    parse) is no copy to fall back on.
+    """
+    if not source_bytes_sha:
+        return None
+    from sqlalchemy import exists
+
+    from src.agentrag.database.models import Segment
+
+    async with AsyncSessionLocal() as session:
+        known = await session.execute(
+            select(Document.id).where(Document.source_id == source_id).limit(1)
+        )
+        if known.scalar_one_or_none() is not None:
+            return None
+        row = await session.execute(
+            select(Document.id)
+            .where(
+                Document.source_bytes_sha == source_bytes_sha,
+                Document.user_id.is_(None),
+                exists().where(Segment.document_id == Document.id),
+                Document.graph_status.is_distinct_from("pending"),
+                Document.graph_status.is_distinct_from("parsing"),
+            )
+            .order_by(Document.created_at)
+            .limit(1)
+        )
+        found = row.scalar_one_or_none()
+    return str(found) if found else None
+
+
 async def ingest_folder(
     folder_path: str,
     graph_ingest_mode: Literal["sync", "async"] | None = None,
     user_id: str | None = None,
     only: set[str] | None = None,
     defer_enrichment: bool = False,
+    skip_content_duplicates: bool = True,
 ) -> dict[str, Any]:
     """
     Ingest thư mục: hỗ trợ .md, .pdf, .docx, .xlsx, .xls, .csv
@@ -151,6 +191,12 @@ async def ingest_folder(
     defer_enrichment: (async mode only) index plain chunks, mark the document
         searchable, and run contextual retrieval + RAPTOR in the background
         `enrich_segments` job instead of ahead of "searchable".
+    skip_content_duplicates: skip a NEW source_id whose file bytes are already
+        indexed in the shared corpus (status "duplicate", document_id = the
+        existing copy). Dedupe used to be by source_id only, and UI uploads are
+        stored as <uuid>.pdf, so re-ingesting data/originals turned 35 files
+        into 122 documents (2026-09-07). Uploads pass False: their dedupe is
+        UPLOAD_DEDUPE_BY_HASH (owner-scoped), before the skeleton.
     """
     mode = graph_ingest_mode or settings.STRUCTMEM_INGEST_MODE
     defer_mode = defer_enrichment and mode == "async"
@@ -212,6 +258,17 @@ async def ingest_folder(
             }
             timings: dict[str, float] = {}
             _pdf_images: list[dict] = []
+
+            if skip_content_duplicates:
+                dup_of = await _indexed_duplicate_of(doc.get("source_bytes_sha"), doc["source_id"])
+                if dup_of:
+                    report["status"] = "duplicate"
+                    report["duplicate_of"] = dup_of
+                    report["document_id"] = dup_of
+                    logger.info("ingest: %r has the same content as document %s; skipped",
+                                doc["source_id"], dup_of)
+                    doc_reports.append(report)
+                    continue
 
             # ── Parse theo source_type ─────────────────────────────────────
             source_type = doc.get("source_type", "markdown")

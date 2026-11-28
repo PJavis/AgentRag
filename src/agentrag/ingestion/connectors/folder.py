@@ -95,8 +95,16 @@ def _document_cache_key(file_path: Path, suffix: str) -> str:
     `_PARSE_AFFECTING_SETTINGS` governs the PDF path, so mixing it into other
     source types would invalidate them for a change that cannot reach them.
     """
-    digest = hashlib.sha256(file_path.read_bytes())
-    if suffix == ".pdf":
+    return content_cache_key(file_path.read_bytes(), suffix)
+
+
+def content_cache_key(data: bytes, suffix: str) -> str:
+    """`_document_cache_key` for bytes already in memory. The upload path must
+    use this (not a plain sha256): it is the value stored as
+    `Document.content_hash`, so the upload dedupe lookup and the upload
+    skeleton row only match the ingested document when both use it."""
+    digest = hashlib.sha256(data)
+    if suffix.lower() == ".pdf":
         fingerprint = _parse_config_fingerprint()
         if fingerprint:
             digest.update(b"|parse:" + fingerprint.encode("utf-8"))

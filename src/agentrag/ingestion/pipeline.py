@@ -577,17 +577,24 @@ async def ingest_folder(
                     except Exception:
                         pass  # the job falls back to the indexed segments
                     try:
-                        await get_pool().enqueue_job(
-                            "enrich_segments",
+                        from .enrich_sweep import enqueue_enrich
+
+                        # Same job id the sweep uses, so it cannot queue a
+                        # second copy while this one waits or runs.
+                        queued = await enqueue_enrich(
+                            get_pool(),
                             document_id=str(doc_id),
-                            title=doc["title"],
                             content_hash=doc.get("content_hash"),
+                            title=doc["title"],
                             doc_key=doc.get("source_bytes_sha"),
                             contextualize=want_contextualize,
                             raptor=want_raptor,
                             parsed_cache_path=enrich_cache_path,
                         )
-                        report["enrich_status"] = "queued"
+                        # Not queued = the previous generation's job is still
+                        # queued/running for this row; it reads the segments
+                        # just replaced and stops as stale. The sweep re-queues.
+                        report["enrich_status"] = "queued" if queued else "already_queued"
                     except Exception as exc:
                         # Already searchable on plain chunks: losing the
                         # enrichment must not mark the document failed.

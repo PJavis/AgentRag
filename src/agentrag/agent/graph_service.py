@@ -415,9 +415,12 @@ async def ground(state: ChatState) -> dict[str, Any]:
     # so the UI citation list must be the full ordered packed context (tagged
     # with `source` = n), not the model's free-form citation subset.
     grounded = _INNER._build_packed_citations(state.get("packed_context") or [])
-    from src.agentrag.agent.service import _should_drop_abstention_citations
+    from src.agentrag.agent.service import _should_drop_abstention_citations, _strip_citation_markers
+    extra: dict[str, Any] = {}
     if _should_drop_abstention_citations(state.get("answer", ""), state.get("packed_context"), settings.RETRIEVAL_RELEVANCE_MIN_PROB):
         grounded = []
+        # The [n] markers pointed at the citations just dropped.
+        extra["answer"] = _strip_citation_markers(state.get("answer", ""))
     await _attach_source_ids(grounded)
     elapsed = (time.perf_counter() - state["total_started"]) * 1000
     timings = {
@@ -433,6 +436,7 @@ async def ground(state: ChatState) -> dict[str, Any]:
         "citations": grounded,
         "reasoning_path": "semantic",
         "timings_ms": timings,
+        **extra,
     }
 
 

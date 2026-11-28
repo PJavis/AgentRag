@@ -417,8 +417,6 @@ Ask the user to do (cannot be automated):
 git push -u origin feat/ragas-langfuse-reranker
 gh pr create --base master --title "feat: DockerHub CI publish + HF Hub model hosting" --body "$(cat <<'EOF'
 CI builds api+frontend images and pushes to DockerHub (master/tags); TEI serves the finetuned embedding from HF Hub. Spec: docs/superpowers/specs/2026-07-05-dockerhub-hf-publish-design.md
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
 )"
 ```
